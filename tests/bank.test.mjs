@@ -155,3 +155,12 @@ test("narration keys group the same payer", () => {
   assert.equal(B.narrationKey("CHQ PAID-MICR CTS-SHRINIWAS SHANKAR ADAM"), "TXT:SHRINIWAS SHANKAR ADAM");
 });
 
+
+test("co-operative bank headings: Tran Dt, Particulars, Instr, Dr Amt, Cr Amt, Bal Amt (balance with Cr)", () => {
+  const text = ["Sahakari Bank Ltd", "A/c 001234", "Tran Dt\tParticulars\tInstr\tDr Amt\tCr Amt\tBal Amt",
+    "11-10-2026\tTO CLG SHREE TRADERS\t4411\t2500.00\t\t7500.00 Cr", "12-10-2026\tBY CASH\t\t\t1000.00\t8500.00 Cr"].join("\n");
+  const r = B.fromSheetText(text);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.rows.map((x) => [x.date, x.ref, x.debit, x.credit, x.balance, x.ok]),
+    [["2026-10-11", "4411", 2500, 0, 7500, true], ["2026-10-12", "", 0, 1000, 8500, true]]);
+});

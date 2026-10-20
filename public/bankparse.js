@@ -10,12 +10,12 @@ const KEYS = {
   date: [/^(txn|tran|transaction|trans|post(ing)?|book(ing)?)?\s*\.?\s*date$/, /^date$/, /^(txn|tran|transaction)\s*dt\.?$/, /^dt\.?$/],
   vdate: [/^value\s*(date|dt\.?)$/],
   narration: [/narration/, /description/, /particular/, /remark/, /details/, /^transaction$/, /^naration$/],
-  ref: [/ch(e)?q(ue)?\.?\s*(\/|&|and)?\s*(ref)?/, /ref(erence)?\.?\s*(no|number)?/, /instrument/, /utr/],
-  debit: [/withdrawal/, /^debits?(\s*amount)?(\s*\(.*\))?$/, /^dr\.?(\s*amount)?$/, /paid\s*out/, /^debit\b/],
-  credit: [/deposits?/, /^credits?(\s*amount)?(\s*\(.*\))?$/, /^cr\.?(\s*amount)?$/, /paid\s*in/, /^credit\b/],
+  ref: [/ch(e)?q(ue)?\.?\s*(\/|&|and)?\s*(ref)?/, /ref(erence)?\.?\s*(no|number)?/, /instrument/, /^instr\.?(\s*no\.?)?$/, /utr/],
+  debit: [/withdrawal/, /^debits?(\s*amount)?(\s*\(.*\))?$/, /^dr\.?(\s*(amount|amt\.?))?$/, /paid\s*out/, /^debit\b/],
+  credit: [/deposits?/, /^credits?(\s*amount)?(\s*\(.*\))?$/, /^cr\.?(\s*(amount|amt\.?))?$/, /paid\s*in/, /^credit\b/],
   amount: [/^(txn|transaction)?\s*amount(\s*\(.*\))?$/, /^amt\.?$/],
   drcr: [/^(dr|cr)\s*\/\s*(cr|dr)$/, /^type$/, /^d\/c$/, /^c\/d$/, /^txn\s*type$/],
-  balance: [/balance/, /^bal\.?$/],
+  balance: [/balance/, /^bal\.?(\s*(amount|amt\.?))?$/],
 };
 
 const clean = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
