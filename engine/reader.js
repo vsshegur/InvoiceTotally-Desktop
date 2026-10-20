@@ -19,9 +19,15 @@ async function local(env) {
   return { AI, aiEnv: await env.OWNER.aiEnv() };
 }
 const aiCompany = (c) => ({ ...slim(c), settings: { ai_mode: c?.settings?.ai || "gemini_lite" } });
+/** Owner mode: the AI module's messages talk about the service's keys; here the keys are on this PC. */
+export function ownerMessage(msg) {
+  return String(msg || "")
+    .replace(/(\w+_API_KEY) is not set( on the service)?[^.]*\.?[^.]*\.?/, (m, k) => `The ${({ GEMINI_API_KEY: "Gemini free", GEMINI_PAID_API_KEY: "Gemini (billing on)", GROQ_API_KEY: "Groq", ANTHROPIC_API_KEY: "Claude" })[k] || k} key isn't saved on this PC. Add it under ⚙ → AI keys on this PC.`)
+    .replace(/check the (\w+) secret in Cloudflare/i, "check the key saved under ⚙ → AI keys on this PC");
+}
 async function viaLocal(fn) {
   try { return await fn(); }
-  catch (e) { if (e instanceof AIError) throw e; throw new AIError(e.message || String(e), !!e.retryable); }
+  catch (e) { if (e instanceof AIError) throw e; throw new AIError(ownerMessage(e.message || String(e)), !!e.retryable); }
 }
 
 async function service(env, path, body) {

@@ -4,7 +4,7 @@ import * as P from "./pipeline.js";
 import * as M from "./matching.js";
 import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
 import { parseAmount } from "./num.js";
-import { AI_CHOICES, AI_LABELS } from "./reader.js";
+import { AI_CHOICES, AI_LABELS, ownerMessage } from "./reader.js";
 import * as BK from "./bank.js";
 import * as GS from "./gstr2b.js";
 
@@ -166,7 +166,7 @@ route("POST", "/api/ai/test", async ({ env, body }) => {
     const AI = await import("./ai.js");
     const provider = body.ai;
     try { return json({ ok: true, ...(await AI.testAI(await env.OWNER.aiEnv(), provider)) }); }
-    catch (e) { return json({ ok: false, error: e.message }); }
+    catch (e) { return json({ ok: false, error: ownerMessage(e.message) }); }
   }
   try { return json({ ok: true, ...(await env.LIC.call("/api/lic/ai/test", { ai: body.ai })) }); }
   catch (e) { return json({ ok: false, error: e.message }); }
