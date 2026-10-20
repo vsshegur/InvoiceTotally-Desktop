@@ -1,6 +1,6 @@
 // GSTR-2B ↔ Tally purchase register. Runs in the browser (and in tests).
 //
-// Tally side: TallyBridge sends inward vouchers with their ledger lines; here the GST
+// Tally side: the app reads inward vouchers from Tally with their ledger lines; here the GST
 // ledgers (from the masters: Duties & Taxes + IGST/CGST/SGST/Cess in the name) turn
 // those lines into IGST / CGST / SGST / cess, taxable value and invoice value.
 //

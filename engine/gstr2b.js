@@ -1,4 +1,4 @@
-// GSTR-2B reconciliation: the 2B file is read in the browser and stored here, TallyBridge reads the
+// GSTR-2B reconciliation: the 2B file is read in the browser and stored here, the app reads the
 // purchase register (inward vouchers with their GST ledgers) from Tally, the browser matches the two,
 // and the review keeps your decisions (link to another voucher, accept a difference, ignore).
 // Nothing is posted to Tally from here.
@@ -81,7 +81,7 @@ export async function askTally(D, rid) {
     D.updateStmt("gst_returns", rid, { tally_asked_at: t, books_from: w.from, books_to: w.to })]);
 }
 
-/** TallyBridge uploads the inward vouchers in parts; part 0 replaces what was read for that window before. */
+/** The inward vouchers read from Tally are stored in parts; part 0 replaces what was read for that window before. */
 export async function storeTallyRows(D, job, rows, part) {
   const g = job.invoice_id ? await D.first("SELECT books_from, books_to FROM gst_returns WHERE id=?", job.invoice_id) : null;
   const t = now();

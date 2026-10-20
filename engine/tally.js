@@ -1,4 +1,4 @@
-// Tally XML: requests the bridge forwards to TallyPrime (http://localhost:9000) and response parsing.
+// Tally XML: requests this app sends to TallyPrime (http://localhost:9000) and response parsing.
 
 export const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const amt = (v) => (Math.round((+v + Number.EPSILON) * 100) / 100).toFixed(2);
@@ -211,7 +211,7 @@ export function bankEntriesRequest(company, ledger, from, to) {
 // ------------------------------------------------------------ GSTR-2B reconciliation
 /**
  * Inward vouchers between two dates for the GSTR-2B check: purchases and debit notes, plus
- * journals / payments / credit notes (TallyBridge keeps those only when they touch a GST ledger).
+ * journals / payments / credit notes (only those when they touch a GST ledger).
  * Read-only. ITKIND tells purchase (inv), debit note (dn), credit note (cn), journal (jv), payment (pay)
  * apart even for renamed voucher types.
  */

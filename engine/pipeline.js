@@ -1,4 +1,4 @@
-// Processing work units, matching, tax, push to Tally, bridge results.
+// Processing work units, matching, tax, push to Tally, Tally results.
 import { newId, now, jload } from "./db.js";
 import { readInvoice, readSheet, splitPages, AIError, makeMeter } from "./reader.js";
 import * as M from "./matching.js";
@@ -358,7 +358,7 @@ export async function queueImportMasters(D, cid) {
 
 const KIND = { export_groups: "group", export_ledgers: "ledger", export_stock: "stock_item", export_units: "unit" };
 
-/** Bridge uploads parsed masters in chunks: first chunk (part=0) replaces existing non-pending rows. */
+/** Masters read from Tally are stored in chunks: first chunk (part=0) replaces existing non-pending rows. */
 export async function storeMastersChunk(D, cid, jobKind, rows, part) {
   const kind = KIND[jobKind];
   const stmts = [];
@@ -451,12 +451,12 @@ export async function jobResult(D, job, ok, response, error) {
       if (KIND[job.kind]) w.push(D.stmt("UPDATE companies SET masters_imported_at=? WHERE id=?", t, job.company_id));
     }
   } else if (job.kind === "import_bank") {
-    const res = ok ? T.parseImportResponse(response) : { ok: false, messages: [error || "Bridge error"] };
+    const res = ok ? T.parseImportResponse(response) : { ok: false, messages: [error || "Tally error"] };
     status = res.ok ? "done" : "failed";
     note = res.messages.join("; ") || (res.ok ? "Created" : "Tally rejected it");
     if (job.invoice_id) w.push(D.updateStmt("bank_lines", job.invoice_id, res.ok ? { status: "synced", synced_at: t, sync_error: null } : { status: "failed", sync_error: note }));
   } else if (job.kind === "import_master" || job.kind === "import_voucher") {
-    const res = ok ? T.parseImportResponse(response) : { ok: false, messages: [error || "Bridge error"] };
+    const res = ok ? T.parseImportResponse(response) : { ok: false, messages: [error || "Tally error"] };
     status = res.ok ? "done" : "failed";
     note = res.messages.join("; ") || (res.ok ? "Created" : "Tally rejected it");
     if (job.kind === "import_master" && res.ok) {

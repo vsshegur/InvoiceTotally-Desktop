@@ -1,5 +1,5 @@
 /* GSTR-2B reconciliation: upload the portal file, match it with the Tally purchase register (read by
-   TallyBridge), review differences, export for the CA, and message suppliers. Matching runs here. */
+   Tally), review differences, export for the CA, and message suppliers. Matching runs here. */
 "use strict";
 
 const GstLib = (() => {
@@ -30,7 +30,7 @@ async function companyGst(c, el) {
         <td class="num ${s?.booksOnly?.n ? "warn" : "muted"}">${s ? s.booksOnly.n : "—"}</td><td class="num">${s ? money(s.b2b.tax) : "—"}</td></tr>`;
     }).join("")}</tbody></table>`
     : `<div class="card empty" style="text-align:left;max-width:760px"><b>Match GSTR-2B with your purchase register</b>
-      <p class="muted" style="margin:8px 0 12px">Download GSTR-2B from the GST portal (JSON or Excel) and drop it here. TallyBridge reads your purchases, debit notes and GST journals from Tally;
+      <p class="muted" style="margin:8px 0 12px">Download GSTR-2B from the GST portal (JSON or Excel) and drop it here. The app reads your purchases from Tally, debit notes and GST journals from Tally;
       every supplier invoice is matched by GSTIN and invoice number — even when the number is written differently — and the tax is compared head by head.
       You see what matches, where the amounts differ, what is missing in Tally (input tax credit you could claim) and what your suppliers haven't filed yet — with a ready message for each supplier and an Excel for your CA.</p>
       <a class="btn primary" href="#/c/${c.id}/gstr2b/upload">⇪ Upload GSTR-2B</a></div>`;
@@ -168,7 +168,6 @@ async function viewGst(rid) {
   const byMid = r.byMid;
   const job = (ctx.jobs || [])[0];
   const reading = job && (job.status === "pending" || job.status === "sent");
-  const outdated = /does not know|unknown|export_purchase_gst/i.test(job?.result || "");
 
   // one list of rows: 2B documents + Tally vouchers missing from 2B
   const items = [
@@ -185,8 +184,7 @@ async function viewGst(rid) {
 
   // big figure = GST amount; under it, how many documents
   const card = (title, x, cls = "", sub = "") => `<div class="${cls}"><span>${title}</span><b>${money(x.tax)}</b><span class="muted">${x.n} document${x.n === 1 ? "" : "s"}${sub}</span></div>`;
-  const tallyNote = reading ? `<span class="warn"><span class="spin" style="display:inline-block;vertical-align:-2px"></span> Reading purchases from Tally… ${c.bridge_online ? "" : "(waiting for TallyBridge on the PC)"}</span>`
-    : outdated ? `<span class="bad">Update TallyBridge on the PC to 2.8 or newer — it reads purchases for this check.</span>`
+  const tallyNote = reading ? `<span class="warn"><span class="spin" style="display:inline-block;vertical-align:-2px"></span> Reading purchases from Tally… ${c.tally_status === "ok" ? "" : "(waiting for TallyPrime to be open)"}</span>`
     : job?.status === "failed" ? `<span class="bad">Couldn't read purchases from Tally: ${esc(job.result || "")}</span>`
     : ctx.books_at ? `<span class="muted">${ctx.books.length} purchase vouchers read from Tally ${ago(ctx.books_at)} (${fmtDate(s.books_from)} – ${fmtDate(s.books_to)})</span>`
     : `<span class="muted">Purchases haven't been read from Tally yet.</span>`;
@@ -317,7 +315,7 @@ async function viewGst(rid) {
   keymap.arrowdown = () => { GST_UI.sel = Math.min(vis.length - 1, GST_UI.sel + 1); route(); };
   keymap.arrowup = () => { GST_UI.sel = Math.max(0, GST_UI.sel - 1); route(); };
   $("#g-tol").onchange = async (e) => { await act(() => api(`/gstr2b/${rid}/tolerance`, { body: { tol: +e.target.value } }), "Matching again…"); route(); };
-  $("#g-tally").onclick = async () => { await act(() => api(`/gstr2b/${rid}/tally`, { body: {} }), c.bridge_online ? "Reading from Tally…" : "Queued — runs when TallyBridge connects"); refresh(); };
+  $("#g-tally").onclick = async () => { await act(() => api(`/gstr2b/${rid}/tally`, { body: {} }), c.tally_status === "ok" ? "Reading from Tally…" : "Queued — runs when TallyPrime is open"); refresh(); };
   $("#g-del").onclick = async () => { if (confirm(`Delete GSTR-2B ${label} here? Nothing in Tally changes.`)) { await api(`/gstr2b/${rid}`, { method: "DELETE" }); location.hash = `#/c/${c.id}/gstr2b`; } };
   $("#g-xl").onclick = () => gstExport({ c, s, r, sm, label, GM, XW });
   $("#g-sup").onclick = () => gstSuppliers({ c, r, label, GM });

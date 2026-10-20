@@ -83,7 +83,7 @@ async function getUser(env, D, email) {
   let u = await D.first("SELECT * FROM lic_users WHERE email=?", email);
   if (!u && isAdmin(env, email)) {
     await D.run("INSERT INTO lic_users (email, name, active, company_limit, can_post, ai_options, created_at, updated_at) VALUES (?,?,1,999,1,?,?,?) ON CONFLICT(email) DO NOTHING",
-      email, "Admin", JSON.stringify(AI_CHOICES), now(), now());
+      email, "", JSON.stringify(AI_CHOICES), now(), now());
     u = await D.first("SELECT * FROM lic_users WHERE email=?", email);
   }
   if (!u) return null;

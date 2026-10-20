@@ -74,11 +74,17 @@ const Ingest = (() => {
   }
 
   /** Bank statements: text with positions from every page; pages without text (scans) are also rendered. */
-  async function pdfBank(file, onPage) {
+  async function pdfBank(file, onPage, password) {
     const lib = await loadPdfJs();
-    const task = lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
+    const task = lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), ...(password ? { password } : {}) });
     let doc;
-    try { doc = await task.promise; } catch (e) { throw new Error(`${file.name}: ${/password/i.test(e.message) ? "the PDF is password-protected — remove the password (open it, print to PDF) and try again" : "not a readable PDF"}`); }
+    try { doc = await task.promise; } catch (e) {
+      if (e.name === "PasswordException" || /password/i.test(e.message)) {
+        const err = new Error(password ? `${file.name}: that password didn't open it` : `${file.name} is password-protected`);
+        err.password = true; throw err;
+      }
+      throw new Error(`${file.name}: not a readable PDF`);
+    }
     const out = [];
     for (let i = 1; i <= doc.numPages; i++) {
       const page = await doc.getPage(i);
@@ -86,16 +92,7 @@ const Ingest = (() => {
       const tc = await page.getTextContent();
       const items = tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({ s: it.str, x: it.transform[4], y: vp.height - it.transform[5], w: it.width }));
       const p = { items, hasText: items.length >= 12 };
-      if (!p.hasText) {
-        const scale = Math.min(3, MAX_SIDE / Math.max(vp.width, vp.height));
-        const v2 = page.getViewport({ scale });
-        const c = document.createElement("canvas");
-        c.width = Math.ceil(v2.width); c.height = Math.ceil(v2.height);
-        const ctx = c.getContext("2d");
-        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
-        await page.render({ canvasContext: ctx, viewport: v2, canvas: c }).promise;
-        p.image = (await encodePage(c, c.width, c.height)).image_b64;
-      }
+      // a page without text is a scan: statements are read without AI, so it is reported, not rendered
       out.push(p);
       onPage?.(i, doc.numPages);
       page.cleanup();

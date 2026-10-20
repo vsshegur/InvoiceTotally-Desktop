@@ -1,4 +1,4 @@
-/* InvoiceTotally web app — no build step, plain modern JavaScript. */
+/* InvoiceTotally for Windows — the app window. No build step, plain modern JavaScript. */
 "use strict";
 
 // ---------------------------------------------------------------------------
@@ -13,9 +13,20 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const fmtDate = (s) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || ""); return m ? `${+m[3]} ${MONTHS[+m[2] - 1]} ${m[1]}` : (s || "—"); };
 const ago = (t) => { if (!t) return "never"; const s = Date.now() / 1000 - t; if (s < 60) return "just now"; if (s < 3600) return `${Math.floor(s / 60)} min ago`; if (s < 86400) return `${Math.floor(s / 3600)} h ago`; return new Date(t * 1000).toLocaleDateString(); };
 const debounce = (fn, ms = 200) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const plural = (n, one, many = one + "s") => `${n.toLocaleString("en-IN")} ${n === 1 ? one : many}`;
 
-let TOKEN = (() => { try { return localStorage.getItem("it_token") || ""; } catch { return ""; } })();
-function setToken(t) { TOKEN = t; try { localStorage.setItem("it_token", t); } catch {} }
+// The app window is opened with a key (by the desktop icon); only it can talk to the app on this PC.
+function takeKey() {
+  const m = /[#&?]k=([\w-]{32,})/.exec(location.hash);
+  if (m) {
+    try { localStorage.setItem("it_key", m[1]); } catch {}
+    history.replaceState(null, "", location.pathname + "#/");
+    return m[1];
+  }
+  try { return localStorage.getItem("it_key") || ""; } catch { return ""; }
+}
+let KEY = takeKey();
+let ME = null; // the account on this PC, its licence and Tally's state (GET /me)
 
 // ---- activity feedback: top loading bar + spinner on the button you clicked -------------
 let QUIET_RENDER = false, quietNext = false;
@@ -47,20 +58,25 @@ function loadingEnd() {
 }
 
 async function api(path, opts = {}) {
-  const headers = { ...(opts.headers || {}) };
-  if (TOKEN) headers.Authorization = "Bearer " + TOKEN;
+  const headers = { ...(opts.headers || {}), "x-it-key": KEY };
   let body = opts.body;
   if (body && !(body instanceof FormData)) { headers["Content-Type"] = "application/json"; body = JSON.stringify(body); }
   loadingStart(opts.quiet ?? QUIET_RENDER);
   try {
     let r;
     try { r = await fetch("/api" + path, { method: opts.method || (body ? "POST" : "GET"), headers, body }); }
-    catch { throw new Error("Can't reach the server — check your internet connection and try again."); }
-    if (r.status === 401 && path !== "/login" && !path.startsWith("/auth/")) { setToken(""); location.hash = "#/login"; throw new Error("Please sign in"); }
+    catch { throw new Error("InvoiceTotally has stopped. Close this window and open it again from the desktop icon."); }
     const data = r.headers.get("content-type")?.includes("json") ? await r.json() : await r.text();
-    if (!r.ok) throw new Error(data?.error || `Server error ${r.status} — please try again.`);
+    if (r.status === 401 && data?.code === "window") { showNoKey(); throw new Error(data.error); }
+    if (r.status === 401 && data?.code === "signin" && !path.startsWith("/signin")) { ME = null; location.hash = "#/signin"; throw new Error("Please sign in"); }
+    if (!r.ok) { const e = new Error(data?.error || `Something went wrong (${r.status}) — please try again.`); e.code = data?.code; e.status = r.status; throw e; }
     return data;
   } finally { loadingEnd(); }
+}
+function showNoKey() {
+  app().innerHTML = `<div class="page signin"><div class="brandmark">IT</div><h1>Open InvoiceTotally from its icon</h1>
+    <p class="muted">This page was opened in an ordinary browser. For your data's safety, InvoiceTotally only works in its own window —
+    double-click <b>InvoiceTotally</b> on the desktop or in the Start menu.</p></div>`;
 }
 const IMG_CACHE = new Map();
 async function loadPageImages(root) {
@@ -104,55 +120,58 @@ const app = () => $("#app");
 let CURRENT = { company: null };
 
 // ---------------------------------------------------------------------------
-// top bar
+// top bar: where you are · Tally · your account
 // ---------------------------------------------------------------------------
-const postingOff = (c) => c.bridge_online && c.bridge && c.bridge.posting === false;
-function bridgeState(c) {
-  if (!c.bridge_online) return ["off", "Bridge offline"];
-  if (!c.tally_online) return ["off", "Bridge on · Tally not reachable"];
-  if (postingOff(c)) return ["warn", "Connected · posting off on the PC"];
-  return ["on", "Connected to Tally"];
+function tallyState(company) {
+  const t = ME?.tally || {};
+  if (company) {
+    if (company.tally_status === "down" || t.status === "down") return ["off", "Tally not running"];
+    if (company.tally_status === "ok" && !company.company_open) return ["warn", `“${company.tally_company || company.name}” not open in Tally`];
+    if (company.tally_status === "ok") return ["on", "Connected to Tally"];
+    return ["warn", "Checking Tally…"];
+  }
+  return t.status === "ok" ? ["on", "Tally connected"] : t.status === "down" ? ["off", "Tally not running"] : ["warn", "Checking Tally…"];
+}
+function creditsChip() {
+  const l = ME?.licence;
+  if (!l) return "";
+  if (l.unlimited) return `<a class="pill" href="#/admin" title="Admin: users, limits and credits">★ Admin</a>`;
+  const low = l.invoice_credits < 10;
+  return `<a class="pill ${low ? "warnpill" : ""}" href="#/account" title="Credits left">${plural(l.invoice_credits, "invoice credit")} · ${plural(l.statement_credits, "statement credit")}</a>`;
 }
 function topBar(crumbs = [], company = null) {
   const cr = crumbs.map((c, i) => i === crumbs.length - 1
     ? `<span class="here">${esc(c[0])}</span>`
     : `<a href="${c[1]}">${esc(c[0])}</a><span class="sep">›</span>`).join("");
-  let right = "";
-  if (company) {
-    const st = bridgeState(company);
-    right = `<a class="pill" href="#/c/${company.id}/bridge" title="Desktop bridge"><span class="dot ${st[0]}"></span>${st[1]}</a>
-      <button class="btn sm" id="importMasters" title="Import masters (Alt+M)" aria-label="Import masters">⟳<span class="lbl"> Import masters</span> <kbd>Alt+M</kbd></button>`;
-  }
+  const st = tallyState(company);
+  const right = ME?.signed_in ? `<span class="pill" id="tallyPill" title="${esc(ME?.tally?.detail || "")}"><span class="dot ${st[0]}"></span>${esc(st[1])}</span>
+      ${company ? `<button class="btn sm" id="importMasters" title="Read ledgers, groups, units and stock items from Tally (Alt+M)" aria-label="Import masters">⟳<span class="lbl"> Import masters</span> <kbd>Alt+M</kbd></button>` : ""}
+      ${creditsChip()}
+      <a class="btn sm ghost" href="#/account" title="Your account and this PC's settings" aria-label="Account and settings">⚙</a>` : "";
   return `<header class="top">
     <a class="logo" href="#/"><span class="mark">IT</span>InvoiceTotally</a>
     <nav class="crumbs">${cr ? '<span class="sep">›</span>' + cr : ""}</nav>
     <div class="spacer"></div>${right}
     <button class="btn sm ghost icon" id="themeBtn" title="Switch between light and dark" aria-label="Switch between light and dark"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="currentColor"/></svg></button>
-    ${TOKEN ? `<button class="btn sm ghost" id="signOut" title="Sign out on this computer">Sign out</button>` : ""}
-  </header>`;
+  </header>${ME?.licence?.stale ? `<div class="banner warn">Your licence hasn't been checked for a while — connect this PC to the internet so it can be confirmed.</div>` : ""}`;
 }
 function wireTop(company) {
   $("#themeBtn")?.addEventListener("click", () => {
     const cur = document.documentElement.dataset.theme === "light" ? "dark" : "light";
     document.documentElement.dataset.theme = cur; try { localStorage.setItem("it_theme", cur); } catch {}
   });
-  $("#signOut")?.addEventListener("click", () => {
-    setToken("");
-    try { localStorage.removeItem("it_token"); sessionStorage.removeItem("it_seen_list"); sessionStorage.setItem("it_signed_out", "1"); } catch {}
-    try { window.google?.accounts?.id?.disableAutoSelect(); } catch {}
-    location.hash = "#/login"; route();
+  const pill = $("#tallyPill");
+  every(10000, async () => {
+    try {
+      ME = await api("/me", { quiet: true });
+      const c = company ? await api(`/companies/${company.id}`, { quiet: true }) : null;
+      const st = tallyState(c);
+      if (pill?.isConnected) pill.innerHTML = `<span class="dot ${st[0]}"></span>${esc(st[1])}`;
+    } catch {}
   });
   if (company) {
-    const pill = $(".top .pill");
-    every(12000, async () => {
-      try {
-        const c = await api(`/companies/${company.id}`, { quiet: true });
-        const st = bridgeState(c);
-        if (pill?.isConnected) pill.innerHTML = `<span class="dot ${st[0]}"></span>${st[1]}`;
-      } catch {}
-    });
     const go = () => act(() => api(`/companies/${company.id}/import-masters`, { method: "POST" }),
-      company.bridge_online ? "Importing masters from Tally…" : "Queued — will run when the bridge connects");
+      company.tally_status === "ok" ? "Reading masters from Tally…" : "Queued — runs when TallyPrime is open");
     $("#importMasters")?.addEventListener("click", go);
     keymap["Alt+m"] = go;
   }
@@ -171,10 +190,13 @@ function wireTop(company) {
 // router
 // ---------------------------------------------------------------------------
 const routes = [
-  [/^#\/login$/, viewLogin],
+  [/^#\/signin$/, viewSignin],
   [/^#\/?$/, viewCompanies],
+  [/^#\/account$/, viewAccount],
+  [/^#\/admin$/, viewAdmin],
+  [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "batches")],
-  [/^#\/c\/(\w+)\/(bridge|settings|masters|jobs|bank|gstr2b)$/, viewCompany],
+  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
   [/^#\/s\/(\w+)$/, (sid) => viewStatement(sid)],
   [/^#\/c\/(\w+)\/gstr2b\/upload$/, (cid) => viewGstUpload(cid)],
@@ -187,6 +209,8 @@ const routes = [
 // One render at a time: a refresh asked for while rendering runs once more afterwards (no flicker, no stale overwrite).
 let routing = false, routeAgain = false, lastHash = null;
 async function route() {
+  if (/[#&?]k=/.test(location.hash)) KEY = takeKey();
+  if (!KEY) { showNoKey(); return; }
   if (routing) { routeAgain = true; return; }
   routing = true;
   try {
@@ -200,11 +224,14 @@ async function route() {
       cleanups = []; keymap = {};
       if (!app().children.length) app().innerHTML = `<div class="boot"><span class="spin"></span> Loading…</div>`;
       else if (navigating && !$(".boot", app())) app().classList.add("dim");
-      const hit = routes.find(([re]) => re.test(h));
-      if (!hit) { location.hash = "#/"; break; }
-      try { await hit[1](...hit[0].exec(h).slice(1)); }
-      catch (e) {
-        if (!/sign in/.test(e.message)) {
+      try {
+        if (!ME || navigating) ME = await api("/me", { quiet: true });
+        if (!ME.signed_in && h !== "#/signin") { location.hash = "#/signin"; continue; }
+        const hit = routes.find(([re]) => re.test(h));
+        if (!hit) { location.hash = "#/"; break; }
+        await hit[1](...hit[0].exec(h).slice(1));
+      } catch (e) {
+        if (!/sign in|Open InvoiceTotally from/.test(e.message)) {
           app().innerHTML = topBar() + `<div class="page"><div class="alert bad"><b>Couldn't load this page.</b> ${esc(e.message)}</div>
             <p><button class="btn" onclick="route()">↻ Try again</button> <a class="btn ghost" href="#/">Home</a></p></div>`;
         }
@@ -218,128 +245,199 @@ const refresh = () => { if (!routing) quietNext = true; route(); };
 window.addEventListener("hashchange", route);
 
 // ---------------------------------------------------------------------------
-// login + companies
+// signing in (Google, on the InvoiceTotally service's page)
 // ---------------------------------------------------------------------------
-// Sign-in: Google with the owner's account, and each new browser approved once on the PC in TallyBridge
-// (the same way TallyBridge approves a phone). The app password is only for first setup, before that.
-const DEVICE_KEY = "it_device";
-const deviceCreds = () => { try { return JSON.parse(localStorage.getItem(DEVICE_KEY) || "null"); } catch { return null; } };
-function browserName() {
-  const ua = navigator.userAgent;
-  const b = /Edg\//.test(ua) ? "Edge" : /OPR\//.test(ua) ? "Opera" : /Firefox\//.test(ua) ? "Firefox" : /Chrome\//.test(ua) ? "Chrome" : /Safari\//.test(ua) ? "Safari" : "Browser";
-  const os = /Windows/.test(ua) ? "Windows" : /Android/.test(ua) ? "Android" : /iPhone|iPad/.test(ua) ? "iPhone" : /Mac OS/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux" : "";
-  return os ? `${b} on ${os}` : b;
-}
-let gisLoading = null;
-const loadGis = () => gisLoading ||= new Promise((ok, fail) => {
-  if (window.google?.accounts?.id) return ok();
-  const s = document.createElement("script");
-  s.src = "https://accounts.google.com/gsi/client"; s.async = true;
-  s.onload = () => ok(); s.onerror = () => { gisLoading = null; fail(new Error("Could not load Google sign-in — check your internet connection.")); };
-  document.head.appendChild(s);
-});
-
-async function viewLogin() {
-  let cfg = { mode: "password" };
-  try { cfg = await api("/auth/config", { quiet: true }); } catch {}
-  if (cfg.mode === "open") { location.hash = "#/"; return; }
-  if (cfg.mode === "google") return loginGoogle(cfg);
+async function viewSignin() {
+  if (ME?.signed_in) { location.hash = "#/"; return; }
   app().innerHTML = topBar() + `<div class="page signin">
-    <h1>Sign in</h1>
-    ${cfg.mode === "setup" ? `<div class="alert warn">Sign-in is not set up yet. Install <b>TallyBridge 2.9</b> on your PC and connect it to InvoiceTotally — Google sign-in turns on by itself.</div>` : `
-    <p class="muted">Enter the app password. After <b>TallyBridge 2.9</b> on your PC connects, you'll sign in with Google instead.</p>
-    <form id="f"><div class="field"><label for="pw">Password</label><input class="in" id="pw" type="password" name="password" autocomplete="current-password" autofocus required></div>
-    <button class="btn primary">Sign in</button></form>`}</div>`;
+    <div class="brandmark">IT</div>
+    <h1>Sign in to InvoiceTotally</h1>
+    <p class="muted">Use the Google account the admin added for you. Sign in once on this PC — it stays signed in.</p>
+    <button class="btn primary big" id="go">Sign in with Google</button>
+    <div id="msg" style="margin-top:16px"></div>
+    ${ME?.service ? "" : `<div class="alert bad" style="margin-top:16px">This copy of the app doesn't know the InvoiceTotally service address. Ask the admin for the right installer.</div>`}
+  </div>`;
   wireTop();
-  $("#f")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const r = await act(() => api("/login", { body: { password: e.target.password.value } }));
-    setToken(r.token); location.hash = "#/";
-  });
-}
-
-async function loginGoogle(cfg) {
-  app().innerHTML = topBar() + `<div class="page signin">
-    <h1>Sign in</h1>
-    <p class="muted">Use the owner's Google account — the same one TallyBridge uses. A new browser is approved once on your PC.</p>
-    <div id="gbtn" class="gbtn"><span class="spin"></span> Loading Google sign-in…</div>
-    <div id="gmsg"></div>
-    ${cfg.password ? `<details class="small" style="margin-top:14px"><summary>Use the app password instead</summary>
-      <p class="muted">The password stops working once the first browser has been approved with Google.</p>
-      <form id="f"><div class="field"><label for="pw">Password</label><input class="in" id="pw" type="password" name="password" autocomplete="current-password" required></div>
-      <button class="btn">Sign in with password</button></form></details>` : ""}
-    <details class="muted small" style="margin-top:18px"><summary>Google says this address isn't allowed?</summary>
-      <p>Once only: in Google Cloud Console → APIs &amp; Services → Credentials, open the <b>Web client</b> that TallyBridge uses and add
-      <code>${esc(location.origin)}</code> under <b>Authorized JavaScript origins</b>. It can take a few minutes to start working.</p></details></div>`;
-  wireTop();
-  $("#f")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const r = await act(() => api("/login", { body: { password: e.target.password.value } }));
-    setToken(r.token); location.hash = "#/";
-  });
-  try { await loadGis(); } catch (e) { $("#gbtn").innerHTML = `<div class="alert bad">${esc(e.message)}</div>`; return; }
-  if (!$("#gbtn")) return;
-  const signedOut = sessionStorage.getItem("it_signed_out") === "1";
-  google.accounts.id.initialize({ client_id: cfg.client_id, callback: (r) => googleSignedIn(r.credential).catch(() => {}),
-    auto_select: !signedOut && !!deviceCreds(), cancel_on_tap_outside: true, itp_support: true, use_fedcm_for_prompt: true });
-  $("#gbtn").innerHTML = "";
-  google.accounts.id.renderButton($("#gbtn"), { type: "standard", size: "large", shape: "pill", text: "signin_with", logo_alignment: "left",
-    theme: document.documentElement.dataset.theme === "dark" ? "filled_black" : "outline" });
-  // An approved browser signs straight back in when its week-long session ends.
-  if (!signedOut && deviceCreds()) google.accounts.id.prompt();
-}
-
-async function googleSignedIn(credential) {
-  sessionStorage.removeItem("it_signed_out");
-  const r = await act(() => api("/auth/google", { body: { credential, device: deviceCreds(), name: browserName() } }));
-  if (r.device) localStorage.setItem(DEVICE_KEY, JSON.stringify(r.device));
-  if (r.token) { setToken(r.token); toast(r.first ? "Signed in — this is the first browser" : "Signed in"); location.hash = "#/"; return; }
-  if (r.pending) waitForPc(r);
-}
-
-function waitForPc(r) {
-  const code = String(r.code || "");
-  $("#gbtn").style.display = "none";
-  $("#gmsg").innerHTML = `<div class="card approve">
-    <div class="eyebrow">Approve this browser on your PC</div>
-    <div class="code" aria-label="Code ${esc(code.split("").join(" "))}">${esc(code.slice(0, 3))}&thinsp;${esc(code.slice(3))}</div>
-    <ol>
-      <li>On the PC, open <b>TallyBridge → InvoiceTotally</b>.</li>
-      <li>Under <b>Browsers waiting for approval</b>, check the code is <b>${esc(code)}</b> and press <b>Approve</b>.</li>
-    </ol>
-    <p class="muted" id="pcstate">${r.pc_online ? "Your PC is connected — waiting for you to approve…" : "Your PC looks offline. Open TallyBridge on the PC — this page keeps waiting."}</p>
-    <button class="btn" id="apCancel">Cancel</button></div>`;
-  let done = false;
-  const stop = (msg) => {
-    done = true;
-    $("#gmsg").innerHTML = `<div class="alert bad">${esc(msg)}</div><button class="btn" id="apAgain" style="margin-top:10px">Sign in again</button>`;
-    $("#apAgain").onclick = () => viewLogin();
+  let polling = false;
+  const say = (html) => { $("#msg").innerHTML = html; };
+  $("#go").onclick = async () => {
+    const r = await act(() => api("/signin/start", { body: {} }));
+    const w = window.open(r.url, "itsignin", "width=480,height=660");
+    say(`<div class="card approve"><span class="spin"></span> <b>Finish signing in in the window that opened…</b>
+      <p class="muted small" style="margin:8px 0 0">${w ? "" : "The window didn't open. "}<a href="${esc(r.url)}" target="itsignin"><u>Open the sign-in page</u></a></p></div>`);
+    if (polling) return;
+    polling = true;
+    const until = Date.now() + 10 * 60_000;
+    while (polling && Date.now() < until && location.hash === "#/signin") {
+      await new Promise((ok) => setTimeout(ok, 2000));
+      try {
+        const p = await api("/signin/poll", { body: {}, quiet: true });
+        if (p.ok) { polling = false; ME = null; toast("Signed in"); location.hash = "#/"; return; }
+        if (p.error) { polling = false; say(`<div class="alert bad">${esc(p.error)}</div>`); return; }
+      } catch (e) { polling = false; say(`<div class="alert bad">${esc(e.message)}</div>`); return; }
+    }
+    polling = false;
   };
-  $("#apCancel").onclick = () => { done = true; viewLogin(); };
-  every(3000, async () => {
-    if (done) return;
-    try {
-      const x = await api("/auth/poll", { body: { device: deviceCreds() }, quiet: true });
-      if (x.token) { done = true; setToken(x.token); toast("Approved — signed in"); location.hash = "#/"; return; }
-      const st = $("#pcstate");
-      if (st) st.textContent = x.pc_online ? "Your PC is connected — waiting for you to approve…" : "Your PC looks offline. Open TallyBridge on the PC — this page keeps waiting.";
-    } catch (e) { if (!/reach the server/.test(e.message)) stop(e.message); }
+  onCleanup(() => { polling = false; });
+}
+
+// ---------------------------------------------------------------------------
+// account (this PC) · admin (users, limits, credits)
+// ---------------------------------------------------------------------------
+async function viewAccount() {
+  const [me, s] = await Promise.all([api("/licence/refresh", { body: {} }).catch(() => ({ licence: ME?.licence })), api("/settings")]);
+  ME.licence = me.licence || ME.licence;
+  const l = ME.licence || {};
+  const tick = (b) => b ? `<span class="good">Yes</span>` : `<span class="bad">No</span>`;
+  app().innerHTML = topBar([["Account & settings"]]) + `<div class="page" style="max-width:820px">
+    <h1>Your account</h1>
+    <div class="card"><div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+      <div class="avatar">${esc((l.name || l.email || "?")[0].toUpperCase())}</div>
+      <div style="flex:1"><b>${esc(l.name || l.email)}</b><div class="muted">${esc(l.email)}${l.admin ? " · admin" : ""}</div></div>
+      <button class="btn" id="signout">Sign out on this PC</button></div>
+      <div class="kv" style="margin-top:14px">
+        ${l.unlimited ? `<div><span>Credits</span><b>Unlimited (admin)</b></div>` : `
+        <div><span>Invoice credits left</span><b class="${l.invoice_credits < 10 ? "warn" : ""}">${(l.invoice_credits ?? 0).toLocaleString("en-IN")}</b></div>
+        <div><span>Statement credits left</span><b class="${l.statement_credits < 3 ? "warn" : ""}">${(l.statement_credits ?? 0).toLocaleString("en-IN")}</b></div>`}
+        <div><span>Companies</span><b>${ME.companies} of ${l.unlimited ? "unlimited" : l.company_limit}</b></div>
+        <div><span>Can post to Tally</span><b>${tick(l.can_post)}</b></div>
+        <div><span>AI for reading</span><b>${(l.ai_options || []).map((a) => esc(ME.ai_labels[a] || a)).join(", ") || "—"}</b></div>
+        <div><span>Licence checked</span><b>${me.online === false ? `<span class="warn">offline — last ${ago(l.issued_at)}</span>` : ago(l.issued_at)}</b></div>
+      </div>
+      ${l.unlimited ? "" : `<p class="muted small" style="margin:12px 0 0">One invoice credit is used for each invoice read; one statement credit for each bank statement saved. To buy more, contact the admin.</p>`}</div>
+    ${l.admin ? `<div class="card" style="margin-top:12px"><b>Admin</b><p class="muted" style="margin:4px 0 10px">Add the people who may use InvoiceTotally, set their limits and give them credits.</p>
+      <a class="btn primary" href="#/admin">Open the admin panel</a></div>` : ""}
+    <h2 style="margin-top:26px">This PC</h2>
+    <form class="card" id="bk">
+      <div class="field"><label>Daily backup folder</label>
+        <input class="in" name="backup_dir" value="${esc(s.backup_dir)}" placeholder="${esc(s.data_dir ? s.data_dir + "\\backups" : "")}">
+        <div class="muted small" style="margin-top:4px">A copy of everything is saved here once a day (the last 14 days are kept). A Google Drive or OneDrive folder on this PC is ideal — then a copy is also kept online.</div></div>
+      <div class="muted small">${s.backup_last ? (s.backup_last.error ? `<span class="bad">Last backup failed: ${esc(s.backup_last.error)}</span>` : `Last backup ${ago(s.backup_last.at)} — ${esc(s.backup_last.file)}`) : "No backup yet (the first one is made a minute after the app starts)."}</div>
+      <div style="margin-top:12px;display:flex;gap:8px"><button class="btn primary">Save</button><button type="button" class="btn" id="bknow">Back up now</button></div></form>
+    <div class="kv muted small" style="margin-top:14px"><div><span>App version</span><b>${esc(ME.version)}</b></div><div><span>Data folder</span><b class="mono">${esc(s.data_dir)}</b></div>
+      <div><span>Tally</span><b>${esc(ME.tally.detail || ME.tally.status)}${ME.tally.companies?.length ? ` — open: ${ME.tally.companies.map(esc).join(", ")}` : ""}</b></div></div>
+  </div>`;
+  wireTop();
+  $("#signout").onclick = async () => { if (!confirm("Sign out on this PC? Work that is waiting stays here for when you sign in again.")) return; await api("/signout", { body: {} }); ME = null; location.hash = "#/signin"; };
+  $("#bk").onsubmit = async (e) => { e.preventDefault(); await act(() => api("/settings", { body: { backup_dir: e.target.backup_dir.value } }), "Saved"); route(); };
+  $("#bknow").onclick = async () => { const r = await act(() => api("/backup", { body: {} })); if (r.error) toast(r.error, true); else toast("Backup saved"); route(); };
+}
+
+const AI_HELP = {
+  gemini_lite: "Google Gemini Flash-Lite on the free tier. Good for clear, printed invoices; limited reads per day.",
+  gemini: "Google Gemini Flash (paid). Accurate and cheap — about ₹1 per invoice.",
+  groq: "Qwen on Groq's free tier. Free, but about 25 invoices a day and at most 3 pages per invoice.",
+  claude: "Anthropic Claude. The most accurate, especially for handwritten bills; costs more.",
+};
+async function viewAdmin() {
+  if (!ME?.licence?.admin) { location.hash = "#/"; return; }
+  const r = await api("/admin/users", { body: {} });
+  const keyNote = Object.entries(r.ai || {}).filter(([, ok]) => !ok).map(([k]) => ME.ai_labels[k] || k);
+  app().innerHTML = topBar([["Admin"]]) + `<div class="page wide">
+    <div class="bar" style="padding:0 0 14px;border:0"><h1>Users</h1><div class="spacer"></div><button class="btn primary" id="add">+ Add user</button></div>
+    ${keyNote.length ? `<div class="alert warn" style="margin-bottom:12px">No API key on the service for: ${keyNote.map(esc).join(", ")}. Users given only these can't read invoices until the key is added in Cloudflare.</div>` : ""}
+    <table class="grid"><thead><tr><th>User</th><th class="num">Invoice credits</th><th class="num">Statement credits</th><th class="num">Companies</th><th>Posting</th><th>AI</th><th>Last seen</th></tr></thead><tbody>
+    ${r.users.map((u) => `<tr class="click" data-href="#/admin/u/${encodeURIComponent(u.email)}"><td><b>${esc(u.name || u.email)}</b>${u.admin ? ' <span class="tag">admin</span>' : ""}${u.active ? "" : ' <span class="tag bad">off</span>'}<div class="muted small">${esc(u.email)}</div></td>
+      <td class="num">${u.admin ? "∞" : u.invoice_credits.toLocaleString("en-IN")}${u.used?.invoice ? `<div class="muted small">${u.used.invoice.credits} used</div>` : ""}</td>
+      <td class="num">${u.admin ? "∞" : u.statement_credits.toLocaleString("en-IN")}${u.used?.statement ? `<div class="muted small">${u.used.statement.credits} used</div>` : ""}</td>
+      <td class="num">${u.companies} of ${u.admin ? "∞" : u.company_limit}</td><td>${u.admin || u.can_post ? '<span class="good">Allowed</span>' : '<span class="bad">Blocked</span>'}</td>
+      <td class="small">${(u.admin ? Object.keys(AI_HELP) : u.ai_options).map((a) => esc(ME.ai_labels[a] || a)).join(", ")}</td>
+      <td class="muted small">${u.last_seen ? ago(u.last_seen) : "not signed in yet"}</td></tr>`).join("")}</tbody></table>
+    <p class="muted small" style="margin-top:12px">A user signs in with their Google account on their own PC. Give credits when they pay you; switch a user off to sign them out everywhere.</p></div>`;
+  wireTop();
+  $$("tr[data-href]").forEach((tr) => tr.onclick = () => location.hash = tr.dataset.href);
+  $("#add").onclick = () => userModal(null);
+}
+
+function userModal(u) {
+  const ai = u?.ai_options || ["gemini_lite"];
+  modal(`<h2>${u ? "Edit " + esc(u.name || u.email) : "Add user"}</h2>
+    <div class="field"><label>Google email</label><input class="in" name="email" type="email" value="${esc(u?.email || "")}" ${u ? "readonly" : "required"} placeholder="name@gmail.com"></div>
+    <div class="field"><label>Name</label><input class="in" name="name" value="${esc(u?.name || "")}"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="field"><label>Companies allowed</label><input class="in" name="company_limit" type="number" min="0" max="999" value="${u?.company_limit ?? 1}"></div>
+      <div class="field"><label>Posting to Tally</label><select class="in" name="can_post"><option value="1" ${u?.can_post !== false ? "selected" : ""}>Allowed</option><option value="0" ${u?.can_post === false ? "selected" : ""}>Blocked — can read and review only</option></select></div></div>
+    ${u ? "" : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="field"><label>Invoice credits to start with</label><input class="in" name="invoice" type="number" min="0" value="0"></div>
+      <div class="field"><label>Statement credits to start with</label><input class="in" name="statement" type="number" min="0" value="0"></div></div>`}
+    <div class="field"><label>AI this user may use</label>${Object.keys(AI_HELP).map((k) => `<label class="check-row"><input type="checkbox" name="ai_${k}" ${ai.includes(k) ? "checked" : ""}> <span><b>${esc(ME.ai_labels[k])}</b> <span class="muted small">— ${esc(AI_HELP[k])}</span></span></label>`).join("")}</div>
+    <div class="field"><label>Note (only you see it)</label><input class="in" name="note" value="${esc(u?.note || "")}" placeholder="e.g. paid ₹2,000 on 20 Oct by UPI"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${u ? "Save" : "Add user"}</button></div>`,
+  async (d) => {
+    const body = { email: d.email, name: d.name, company_limit: +d.company_limit, can_post: d.can_post === "1", note: d.note,
+      ai_options: Object.keys(AI_HELP).filter((k) => d["ai_" + k]) };
+    if (!body.ai_options.length) throw new Error("Tick at least one AI");
+    await api("/admin/save-user", { body });
+    if (!u && (+d.invoice || +d.statement)) await api("/admin/add-credits", { body: { email: d.email, invoice: +d.invoice || 0, statement: +d.statement || 0, note: d.note } });
+    toast(u ? "Saved" : "User added — they can sign in now");
+    if (u) route(); else location.hash = `#/admin/u/${encodeURIComponent(d.email.toLowerCase())}`;
   });
 }
 
+async function viewAdminUser(email) {
+  if (!ME?.licence?.admin) { location.hash = "#/"; return; }
+  const r = await api("/admin/user-detail", { body: { email } });
+  const u = r.user;
+  const KIND = { invoice: "Invoice read", statement: "Statement saved", split: "Pages split", add_invoice: "Invoice credits added", add_statement: "Statement credits added" };
+  app().innerHTML = topBar([["Admin", "#/admin"], [u.name || u.email]]) + `<div class="page wide">
+    <div class="bar" style="padding:0 0 14px;border:0"><div><h1 style="margin:0">${esc(u.name || u.email)}</h1><div class="muted">${esc(u.email)}${u.note ? " · " + esc(u.note) : ""}</div></div><div class="spacer"></div>
+      <button class="btn" id="edit">Edit limits</button>
+      ${u.admin ? "" : `<button class="btn ${u.active ? "danger" : ""}" id="toggle">${u.active ? "Switch off" : "Switch on"}</button>`}</div>
+    <div class="stats">
+      <div><div class="eyebrow">Invoice credits</div><div class="v">${u.admin ? "∞" : u.invoice_credits.toLocaleString("en-IN")}</div></div>
+      <div><div class="eyebrow">Statement credits</div><div class="v">${u.admin ? "∞" : u.statement_credits.toLocaleString("en-IN")}</div></div>
+      <div><div class="eyebrow">Companies</div><div class="v">${u.companies} <span class="muted" style="font-size:14px">of ${u.admin ? "∞" : u.company_limit}</span></div></div>
+      <div><div class="eyebrow">Posting to Tally</div><div class="v" style="font-size:18px">${u.admin || u.can_post ? '<span class="good">Allowed</span>' : '<span class="bad">Blocked</span>'}</div></div></div>
+    ${u.admin ? "" : `<form class="card" id="cr" style="margin:14px 0;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+      <div class="field" style="margin:0"><label>Invoice credits</label><input class="in" name="invoice" type="number" value="0" style="width:130px"></div>
+      <div class="field" style="margin:0"><label>Statement credits</label><input class="in" name="statement" type="number" value="0" style="width:130px"></div>
+      <div class="field" style="margin:0;flex:1;min-width:200px"><label>Note</label><input class="in" name="note" placeholder="e.g. paid ₹2,000 by UPI"></div>
+      <button class="btn primary">Add credits</button><span class="muted small" style="width:100%">Use a minus number to take credits away.</span></form>`}
+    <div class="cols2">
+      <div><h2>Companies</h2>${r.companies.length ? `<table class="grid"><tbody>${r.companies.map((c) => `<tr><td><b>${esc(c.name)}</b><div class="muted small">${esc(c.gstin || "")} · added ${ago(c.created_at)}</div></td>
+        <td style="text-align:right"><button class="btn sm" data-free="${esc(c.company_id)}" title="Frees one place under the limit">Remove</button></td></tr>`).join("")}</tbody></table>` : `<p class="muted">None yet.</p>`}
+        <h2 style="margin-top:20px">PCs signed in</h2>${r.devices.filter((d) => !d.revoked).length ? `<table class="grid"><tbody>${r.devices.filter((d) => !d.revoked).map((d) => `<tr><td>${esc(d.name)}<div class="muted small">since ${ago(d.created_at)} · last seen ${ago(d.last_seen)}</div></td>
+        <td style="text-align:right"><button class="btn sm" data-dev="${esc(d.id)}">Sign out</button></td></tr>`).join("")}</tbody></table>` : `<p class="muted">None.</p>`}</div>
+      <div><h2>History</h2>${r.usage.length ? `<table class="grid"><thead><tr><th>When</th><th>What</th><th class="num">Credits</th></tr></thead><tbody>${r.usage.map((x) => `<tr><td class="muted small">${ago(x.at)}</td>
+        <td>${esc(KIND[x.kind] || x.kind)}<div class="muted small">${esc(x.detail || "")}${x.ai ? " · " + esc(ME.ai_labels[x.ai] || x.ai) : ""}${x.cost_usd ? ` · AI ≈ ₹${(x.cost_usd * 88).toFixed(2)}` : ""}</div></td>
+        <td class="num ${x.credits > 0 ? "good" : ""}">${x.credits > 0 ? "+" : ""}${x.credits || "—"}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">Nothing yet.</p>`}</div></div>
+    ${u.admin ? "" : `<p style="margin-top:20px"><button class="btn danger sm" id="remove">Remove this user</button></p>`}</div>`;
+  wireTop();
+  $("#edit").onclick = () => userModal(u);
+  $("#toggle")?.addEventListener("click", async () => {
+    if (u.active && !confirm(`Switch off ${u.email}? They are signed out on every PC and can't sign in until you switch them on.`)) return;
+    await act(() => api("/admin/save-user", { body: { email: u.email, active: !u.active } }), u.active ? "Switched off" : "Switched on"); route();
+  });
+  $("#cr")?.addEventListener("submit", async (e) => {
+    e.preventDefault(); const f = e.target;
+    await act(() => api("/admin/add-credits", { body: { email: u.email, invoice: +f.invoice.value || 0, statement: +f.statement.value || 0, note: f.note.value } }), "Credits updated");
+    route();
+  });
+  $$("[data-free]").forEach((b) => b.onclick = async () => { if (confirm("Remove this company from the user's count? Their data on their PC is not touched.")) { await act(() => api("/admin/free-company", { body: { email: u.email, company_id: b.dataset.free } }), "Removed"); route(); } });
+  $$("[data-dev]").forEach((b) => b.onclick = async () => { await act(() => api("/admin/sign-out-device", { body: { id: b.dataset.dev } }), "Signed out"); route(); });
+  $("#remove")?.addEventListener("click", async () => { if (confirm(`Remove ${u.email} completely? Their credits and history are deleted.`)) { await act(() => api("/admin/remove-user", { body: { email: u.email } }), "Removed"); location.hash = "#/admin"; } });
+}
+
+// ---------------------------------------------------------------------------
+// companies
+// ---------------------------------------------------------------------------
 async function viewCompanies() {
   const list = await api("/companies");
+  const l = ME.licence || {};
+  const full = !l.unlimited && list.length >= (l.company_limit || 0);
   if (list.length === 1 && !sessionStorage.getItem("it_seen_list")) { sessionStorage.setItem("it_seen_list", 1); location.hash = `#/c/${list[0].id}`; return; }
   app().innerHTML = topBar([["Companies", "#/"]]) + `<div class="page">
     <div class="bar" style="padding:0 0 14px;border:0"><h1>Companies</h1><div class="spacer"></div>
-    <button class="btn primary" id="add">+ Add company</button></div>
-    ${list.length ? `<div class="cards">${list.map((c) => `<a class="card" href="#/c/${c.id}">
+    ${l.unlimited ? "" : `<span class="muted small" style="margin-right:10px">${list.length} of ${l.company_limit} used</span>`}
+    <button class="btn primary" id="add" ${full ? `disabled title="Your account allows ${l.company_limit} — ask the admin for more"` : ""}>+ Add company</button></div>
+    ${ME.tally.status === "down" ? `<div class="alert warn" style="margin-bottom:12px"><b>TallyPrime isn't answering.</b> Open TallyPrime on this PC. If it is open, turn on its connectivity: <b>F1 Help → Settings → Connectivity</b> → <i>TallyPrime acts as</i> <b>Both</b>, port <b>9000</b>.</div>` : ""}
+    ${list.length ? `<div class="cards">${list.map((c) => { const st = tallyState(c); return `<a class="card" href="#/c/${c.id}">
       <div class="big">${esc(c.name)}</div>
       <div class="muted" style="font-size:13px">${esc(c.gstin || "No GSTIN")} ${c.state_name ? "· " + esc(c.state_name) : ""}</div>
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
-        <span class="pill"><span class="dot ${c.tally_online ? "on" : "off"}"></span>${c.tally_online ? "Tally connected" : "Tally offline"}</span>
-        <span class="pill">${c.masters.ledger} ledgers · ${c.masters.stock_item} items</span></div></a>`).join("")}</div>`
-      : `<div class="card empty">Add your first company — it's the Tally company you'll post invoices into.</div>`}
+        <span class="pill"><span class="dot ${st[0]}"></span>${esc(st[1])}</span>
+        <span class="pill">${c.masters.ledger} ledgers · ${c.masters.stock_item} items</span></div></a>`; }).join("")}</div>`
+      : `<div class="card empty">Add your first company — the Tally company you'll post invoices into.${ME.tally.companies?.length ? `<div class="muted small" style="margin-top:6px">Open in Tally now: ${ME.tally.companies.map(esc).join(", ")}</div>` : ""}</div>`}
   </div>`;
   wireTop();
   $("#add").onclick = () => companyModal();
@@ -352,19 +450,29 @@ function modal(html, onSubmit) {
   bg.addEventListener("mousedown", (e) => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
   const f = $("form", bg);
-  setTimeout(() => $("input,select", f)?.focus(), 20);
+  setTimeout(() => $("input:not([readonly]),select", f)?.focus(), 20);
   f.onsubmit = async (e) => { e.preventDefault(); const data = Object.fromEntries(new FormData(f)); try { await onSubmit(data); bg.remove(); } catch (err) { toast(err.message, true); } };
   $$("[data-close]", f).forEach((b) => b.onclick = () => bg.remove());
   return bg;
 }
 
 function companyModal() {
+  const open = ME.tally.companies || [];
   modal(`<h2>Add company</h2>
-    <div class="field"><label>Company name</label><input class="in" name="name" required></div>
-    <div class="field"><label>Name exactly as in Tally (if different)</label><input class="in" name="tally_company"></div>
+    <div class="field"><label>Company in Tally</label>${open.length ? `<select class="in" name="tally_company">${open.map((n) => `<option>${esc(n)}</option>`).join("")}<option value="">Other (type below)</option></select>` : ""}
+      <input class="in" name="tally_other" placeholder="${open.length ? "…or type the name exactly as in Tally" : "Name exactly as in Tally"}" ${open.length ? "" : "required"} style="margin-top:6px">
+      ${open.length ? "" : `<div class="muted small" style="margin-top:4px">Open TallyPrime to pick the company from a list.</div>`}</div>
+    <div class="field"><label>Short name in this app (optional)</label><input class="in" name="name"></div>
     <div class="field"><label>Your GSTIN (decides intra- vs inter-state tax)</label><input class="in mono" name="gstin" maxlength="15"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Add</button></div>`,
-    async (d) => { const c = await api("/companies", { body: d }); location.hash = `#/c/${c.id}/bridge`; });
+  async (d) => {
+    const tc = (d.tally_other || d.tally_company || "").trim();
+    if (!tc) throw new Error("Pick or type the company's name in Tally");
+    const c = await api("/companies", { body: { name: (d.name || tc).trim(), tally_company: tc, gstin: d.gstin } });
+    await api(`/companies/${c.id}/import-masters`, { method: "POST" }).catch(() => {});
+    toast("Company added — reading its masters from Tally");
+    location.hash = `#/c/${c.id}`;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -373,10 +481,10 @@ function companyModal() {
 async function viewCompany(cid, tab) {
   const c = await api(`/companies/${cid}`);
   CURRENT.company = c;
-  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["gstr2b", "GSTR-2B"], ["bridge", "Tally bridge"], ["masters", "Masters"], ["jobs", "Sync log"], ["settings", "Settings"]];
+  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["gstr2b", "GSTR-2B"], ["masters", "Masters"], ["jobs", "Tally log"], ["settings", "Settings"]];
   const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"] }[tab] || ["upload", "⇪ Upload invoices"];
   app().innerHTML = topBar([[c.name, `#/c/${cid}`]], c) + `<div class="bar">
-      <div class="status">${c.masters.ledger} ledgers · ${c.masters.stock_item} stock items · masters ${c.masters_imported_at ? "imported " + ago(c.masters_imported_at) : "not imported yet"}</div>
+      <div class="status">${c.masters.ledger} ledgers · ${c.masters.stock_item} stock items · masters ${c.masters_imported_at ? "imported " + ago(c.masters_imported_at) : c.pending_jobs ? "being read from Tally…" : "not imported yet"}</div>
       <div class="spacer"></div><a class="btn primary" href="#/c/${cid}/${upload[0]}">${upload[1]} <kbd>U</kbd></a></div>
     <div class="page wide"><nav class="tabs">${tabs.map(([k, l]) => `<a href="#/c/${cid}${k === "batches" ? "" : "/" + k}" class="${tab === k ? "on" : ""}">${l}</a>`).join("")}</nav>
     <div id="tab"></div></div>`;
@@ -384,7 +492,6 @@ async function viewCompany(cid, tab) {
   keymap.u = () => location.hash = `#/c/${cid}/${upload[0]}`;
   const el = $("#tab");
   if (tab === "batches") return companyBatches(c, el);
-  if (tab === "bridge") return companyBridge(c, el);
   if (tab === "masters") return companyMasters(c, el);
   if (tab === "jobs") return companyJobs(c, el);
   if (tab === "settings") return companySettings(c, el);
@@ -392,9 +499,16 @@ async function viewCompany(cid, tab) {
   if (tab === "gstr2b") return companyGst(c, el);
 }
 
+function tallyHelp(c) {
+  if (c.tally_status === "down") return `<b>TallyPrime isn't answering.</b> Open TallyPrime on this PC, with <b>F1 Help → Settings → Connectivity</b> → <i>TallyPrime acts as</i> <b>Both</b>, port <b>9000</b>.`;
+  if (c.tally_status === "ok" && !c.company_open) return `<b>“${esc(c.tally_company || c.name)}” is not open in Tally.</b> Open it (several companies can be open with <b>Alt+F3</b>), or fix the Tally name in Settings.`;
+  return "";
+}
 async function companyBatches(c, el) {
   const rows = await api(`/companies/${c.id}/batches`);
-  if (!c.masters.ledger) el.insertAdjacentHTML("beforebegin", `<div class="alert warn" style="margin-bottom:12px">Masters aren't imported yet. Connect the <a href="#/c/${c.id}/bridge"><u>Tally bridge</u></a>, then press <b>Import masters</b> so invoices can be matched to your ledgers and stock items.</div>`);
+  const help = tallyHelp(c);
+  if (!c.masters.ledger) el.insertAdjacentHTML("beforebegin", `<div class="alert warn" style="margin-bottom:12px">${help || (c.pending_jobs ? "Reading your ledgers and stock items from Tally…" : "Masters aren't imported yet. Press <b>Import masters</b> (top right) so invoices can be matched to your ledgers and stock items.")}</div>`);
+  else if (help && c.pending_jobs) el.insertAdjacentHTML("beforebegin", `<div class="alert warn" style="margin-bottom:12px">${help} ${plural(c.pending_jobs, "entry is", "entries are")} waiting to go to Tally.</div>`);
   const stageLbl = { find: "Finding invoices…", split: "Checking the split…", read: "Reading…", review: "", error: "Failed" };
   el.innerHTML = rows.length ? `<table class="grid"><thead><tr><th>Batch</th><th>Type</th><th>Uploaded</th><th class="num">Invoices</th><th>Progress</th></tr></thead><tbody>
     ${rows.map((b) => { const n = b.counts || {}; const done = n.synced || 0;
@@ -403,39 +517,7 @@ async function companyBatches(c, el) {
         `<span class="${done === b.invoices && done ? "good" : ""}">${done} of ${b.invoices} in Tally</span>${n.failed ? ` · <span class="bad">${n.failed} failed</span>` : ""}`}</td></tr>`; }).join("")}
     </tbody></table>` : `<div class="card empty">No invoices yet. <a class="btn primary" style="margin-left:8px" href="#/c/${c.id}/upload">Upload invoices</a></div>`;
   $$("tr[data-href]", el).forEach((tr) => tr.onclick = () => location.hash = tr.dataset.href);
-  every(5000, async () => { if (rows.some((b) => b.stage !== "review" && b.stage !== "error")) refresh(); });
-}
-
-function companyBridge(c, el) {
-  const server = location.origin;
-  const br = c.bridge || {};
-  const who = br.client ? `${esc(br.client)}${br.version ? " " + esc(br.version) : ""}` : "Bridge";
-  const openList = Array.isArray(br.open) && br.open.length ? br.open : null;
-  const tc = c.tally_company || c.name;
-  el.innerHTML = `<div style="max-width:780px">
-    <div class="card" style="margin-bottom:12px"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-      <span class="dot ${bridgeState(c)[0]}"></span><b>${c.bridge_online ? `${who} is online` : "Bridge is offline"}</b>
-      <span class="muted">· last seen ${ago(c.bridge_last_seen)} · Tally ${c.tally_online ? '<span class="good">reachable</span>' : '<span class="bad">not reachable</span>'}</span>
-      ${c.pending_jobs ? `<span class="pill">${c.pending_jobs} job(s) waiting</span>` : ""}</div>
-      ${postingOff(c) ? `<div class="alert warn" style="margin-top:10px">Posting is switched off in TallyBridge on the PC. Master imports still work; vouchers wait until you press <b>Turn on</b> under <b>Posting to Tally</b> on its <b>InvoiceTotally</b> page (older versions: <b>Purchase bills</b>).</div>` : ""}
-      ${c.bridge_online && openList && !openList.includes(tc) ? `<div class="alert warn" style="margin-top:10px">“${esc(tc)}” is not open in Tally (open: ${openList.map(esc).join(", ")}). Vouchers for this company wait until it's open — or fix the Tally company name in Settings.</div>` : ""}
-      ${br.phone ? `<p class="muted" style="margin:10px 0 0">📱 Bills photographed in the TallyBridge phone app arrive here as batches marked 📱.</p>` : ""}</div>
-    <h2>Connect this company to Tally</h2>
-    <p class="muted" style="margin-top:-4px">Use <b>TallyBridge</b> (recommended — the same PC app also lets you send bills from your phone) or the standalone InvoiceTotally Bridge. Run only one of them.</p>
-    <ol style="line-height:1.9;padding-left:18px">
-      <li>On the PC with TallyPrime: <b>F1 Help → Settings → Connectivity → Client/Server configuration</b>, set <i>TallyPrime acts as</i> = <b>Both</b>, <i>Port</i> = <b>9000</b>. Keep the company <b>${esc(tc)}</b> open.</li>
-      <li><b>TallyBridge:</b> open it on the PC → <b>InvoiceTotally</b> (<b>Purchase bills</b> in 2.6–2.7) → paste the web app URL and this company's token → <b>Test &amp; save</b>, then press <b>Turn on</b> under <b>Posting to Tally</b>.<br>
-        <span class="muted"><b>InvoiceTotally Bridge</b> instead: run InvoiceTotallyBridge.exe from your GitHub repo's Releases page and paste the same two values.</span></li>
-      <li>One PC app serves all your companies: add each company's token to the same app.</li>
-      <li>Keep <b>${esc(tc)}</b> open in TallyPrime (load several companies with <b>Alt+F3</b>). Vouchers for a company that isn't open wait until it is.</li></ol>
-    <div class="field"><label>Web app URL</label><div class="tokenbox">${esc(server)}</div></div>
-    <div class="field"><label>Bridge token (keep it private)</label><div class="tokenbox" id="tok">${esc(c.bridge_token)}</div></div>
-    <button class="btn sm" id="copy">Copy token</button> <button class="btn sm" id="copyUrl">Copy URL</button>
-    <p class="muted" style="margin-top:16px">Once it shows <span class="good">Connected to Tally</span>, press <b>Import masters</b> (top right) to pull ledgers, groups, units and stock items.</p></div>`;
-  $("#copy").onclick = () => navigator.clipboard?.writeText(c.bridge_token).then(() => toast("Copied"));
-  $("#copyUrl").onclick = () => navigator.clipboard?.writeText(server).then(() => toast("Copied"));
-  const sig = (x) => [x.bridge_online, x.tally_online, JSON.stringify(x.bridge || null)].join("|");
-  every(5000, async () => { const n = await api(`/companies/${c.id}`, { quiet: true }); if (sig(n) !== sig(c)) refresh(); });
+  every(5000, async () => { if (rows.some((b) => b.stage !== "review" && b.stage !== "error") || (!c.masters.ledger && c.pending_jobs)) refresh(); });
 }
 
 async function companyMasters(c, el) {
@@ -449,7 +531,7 @@ async function companyMasters(c, el) {
   const load = async () => {
     const r = await api(`/companies/${c.id}/masters?kind=${kind}&q=${encodeURIComponent($("#q").value)}`);
     $("#list").innerHTML = `<table class="grid"><thead><tr><th>Name</th><th>${kind === "stock_item" ? "HSN" : "Under"}</th><th>${kind === "stock_item" ? "GST" : kind === "ledger" ? "GSTIN" : ""}</th><th>${kind === "stock_item" ? "Unit" : kind === "ledger" ? "Group" : ""}</th></tr></thead><tbody>
-      ${r.items.map((m) => `<tr><td>${esc(m.name)} ${m.pending ? '<span class="tag warn">pending</span>' : ""}</td>
+      ${r.items.map((m) => `<tr><td>${esc(m.name)} ${m.pending ? '<span class="tag warn">being created in Tally</span>' : ""}</td>
       <td class="muted">${esc(kind === "stock_item" ? m.hsn || "" : m.parent || "")}</td>
       <td class="mono muted">${esc(kind === "stock_item" ? (m.gst_rate ?? "") + (m.gst_rate != null ? "%" : "") : kind === "ledger" ? m.gstin || "" : "")}</td>
       <td class="muted">${esc(kind === "stock_item" ? m.unit || "" : kind === "ledger" ? m.primary_group || "" : "")}</td></tr>`).join("")}</tbody></table>
@@ -462,47 +544,37 @@ async function companyMasters(c, el) {
 
 async function companyJobs(c, el) {
   const rows = await api(`/companies/${c.id}/jobs`);
-  const lbl = { import_voucher: "Post voucher", import_master: "Create master", import_bank: "Post bank entry", export_ledgers: "Import ledgers", export_stock: "Import stock items",
-    export_groups: "Import groups", export_units: "Import units", export_bills_receivable: "Read pending sales bills", export_bills_payable: "Read pending purchase bills",
-    export_bank_entries: "Read bank entries in Tally", export_purchase_gst: "Read purchases for GSTR-2B" };
+  const lbl = { import_voucher: "Post voucher", import_master: "Create master", import_bank: "Post bank entry", export_ledgers: "Read ledgers", export_stock: "Read stock items",
+    export_groups: "Read groups", export_units: "Read units", export_purchase_gst: "Read purchases for GSTR-2B" };
   // where each job's "open" goes: the invoice, the bank statement or the GSTR-2B it belongs to
   const link = (j) => j.kind === "import_voucher" ? `#/i/${j.invoice_id}` : j.kind === "import_bank" && j.statement_id ? `#/s/${j.statement_id}`
-    : j.kind === "export_bank_entries" ? `#/s/${j.invoice_id}` : j.kind === "export_purchase_gst" ? `#/g/${j.invoice_id}` : "";
-  el.innerHTML = rows.length ? `<table class="grid"><thead><tr><th>When</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>
+    : j.kind === "export_purchase_gst" ? `#/g/${j.invoice_id}` : "";
+  const help = tallyHelp(c);
+  el.innerHTML = (help && rows.some((j) => j.status === "pending") ? `<div class="alert warn" style="margin-bottom:12px">${help}</div>` : "") + (rows.length ? `<table class="grid"><thead><tr><th>When</th><th>Job</th><th>Status</th><th>Result</th></tr></thead><tbody>
     ${rows.map((j) => `<tr><td class="muted">${ago(j.created_at)}</td><td>${lbl[j.kind] || esc(j.kind)} ${j.invoice_id && link(j) ? `<a href="${link(j)}"><u>open</u></a>` : ""}</td>
-    <td class="${j.status === "done" ? "good" : j.status === "failed" ? "bad" : "warn"}">${{ done: "Done", failed: "Failed", pending: "Waiting", sent: "With TallyBridge" }[j.status] || esc(j.status)}</td><td class="muted">${esc(j.result || "")}</td></tr>`).join("")}</tbody></table>`
-    : `<div class="card empty">Nothing has been sent to Tally yet.</div>`;
-  every(4000, () => { if (rows.some((j) => j.status === "pending" || j.status === "sent")) refresh(); });
+    <td class="${j.status === "done" ? "good" : j.status === "failed" ? "bad" : "warn"}">${{ done: "Done", failed: "Failed", pending: "Waiting", sent: "With Tally" }[j.status] || esc(j.status)}</td><td class="muted">${esc(j.result || "")}</td></tr>`).join("")}</tbody></table>`
+    : `<div class="card empty">Nothing has been sent to Tally yet.</div>`);
+  every(3000, () => { if (rows.some((j) => j.status === "pending" || j.status === "sent")) refresh(); });
 }
 
-const inr = (usd, rate) => "₹" + (usd * rate < 1 ? (usd * rate).toFixed(2) : (usd * rate).toFixed(usd * rate < 10 ? 1 : 0));
-function aiChoiceHtml(cur, hz) {
-  const r = hz.usd_inr || 88;
-  // Rough per-invoice estimates (one page, a few lines); the batch page shows the real cost.
-  const opts = [
-    ["claude", "Claude only", "Most accurate, especially handwritten. Claude Sonnet reads; Claude Opus re-reads any invoice that doesn't add up.", 0.035, ["claude"]],
-    ["gemini_then_claude", "Gemini first, Claude checks", "Best value. Gemini Flash reads every invoice; Claude re-reads only the ones whose totals or GSTIN don't add up.", 0.02, ["gemini", "claude"]],
-    ["gemini", "Gemini only", "Cheapest. Gemini Flash reads, and re-reads itself when something doesn't add up.", 0.01, ["gemini"]],
-  ];
-  return `<div class="field"><label>AI that reads your invoices</label><div class="choices" style="margin-top:4px">
-    ${opts.map(([v, title, sub, usd, needs]) => {
-      const missing = needs.filter((k) => !hz[k]);
-      return `<label class="choice ${cur === v ? "on" : ""}" style="${missing.length ? "opacity:.6" : ""}">
-        <input type="radio" name="ai_mode" value="${v}" ${cur === v ? "checked" : ""} ${missing.length ? "disabled" : ""} style="margin-right:10px">
-        <div style="flex:1"><div><b>${title}</b> <span class="muted">· about ${inr(usd, r)} per invoice, ${inr(usd * 60, r)} for 60</span></div>
-        <div class="sub">${sub}${missing.length ? ` <span class="warn">Needs the ${missing.map((k) => k === "claude" ? "ANTHROPIC_API_KEY" : "GEMINI_API_KEY").join(" and ")} secret in Cloudflare.</span>` : ""}</div></div></label>`;
-    }).join("")}</div>
-    <div class="muted" style="font-size:12px;margin-top:6px">Estimates for a typical one-page invoice. Each batch shows what it actually cost.</div>
-    <div style="margin-top:8px"><button type="button" class="btn" id="aiTest">Test the AI</button> <span class="muted small">Sends one tiny request (no invoice) to check the key, model and credit.</span><div id="aiTestOut" style="margin-top:8px"></div></div></div>`;
+function aiChoiceHtml(cur, opts) {
+  return `<div class="field"><label>AI that reads this company's invoices</label><div class="choices" style="margin-top:4px">
+    ${opts.map((v) => `<label class="choice ${cur === v ? "on" : ""}">
+        <input type="radio" name="ai" value="${v}" ${cur === v ? "checked" : ""} style="margin-right:10px">
+        <div style="flex:1"><div><b>${esc(ME.ai_labels[v] || v)}</b></div><div class="sub">${esc(AI_HELP[v] || "")}</div></div></label>`).join("")}</div>
+    ${opts.length < 4 ? `<div class="muted small" style="margin-top:6px">The admin decides which AI you can use.</div>` : ""}
+    <div style="margin-top:8px"><button type="button" class="btn" id="aiTest">Test the AI</button> <span class="muted small">One tiny request (no invoice, no credit used).</span><div id="aiTestOut" style="margin-top:8px"></div></div></div>`;
 }
 
 async function companySettings(c, el) {
   const s = c.settings || {};
-  const [ledR, hz] = await Promise.all([api(`/companies/${c.id}/masters?kind=ledger&groups=${encodeURIComponent("Purchase Accounts|Sales Accounts")}`), api("/health")]);
+  const ledR = await api(`/companies/${c.id}/masters?kind=ledger&groups=${encodeURIComponent("Purchase Accounts|Sales Accounts")}`);
   const led = ledR.items;
+  const aiOpts = ME.licence?.ai_options || [];
+  const curAI = aiOpts.includes(s.ai) ? s.ai : aiOpts[0];
   const opts = (grp, cur) => `<option value="">— suggest automatically —</option>` + led.filter((l) => l.primary_group === grp).map((l) => `<option ${l.name === cur ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   el.innerHTML = `<form id="f" style="max-width:640px">
-    ${aiChoiceHtml(s.ai_mode || "claude", hz)}
+    ${aiChoiceHtml(curAI, aiOpts)}
     <div class="field"><label>Company name</label><input class="in" name="name" value="${esc(c.name)}"></div>
     <div class="field"><label>Company name in Tally (must match exactly)</label><input class="in" name="tally_company" value="${esc(c.tally_company || "")}"></div>
     <div class="field"><label>Your GSTIN</label><input class="in mono" name="gstin" value="${esc(c.gstin || "")}" maxlength="15"></div>
@@ -510,39 +582,23 @@ async function companySettings(c, el) {
     <div class="field"><label>Default sales ledger</label><select class="in" name="default_sales_ledger">${opts("Sales Accounts", s.default_sales_ledger)}</select></div>
     <label style="display:flex;gap:8px;margin:8px 0"><input type="checkbox" name="send_descriptions" ${s.send_descriptions !== false ? "checked" : ""}> Send the invoice's item description under each stock item</label>
     <label style="display:flex;gap:8px;margin:8px 0 16px"><input type="checkbox" name="round_off" ${s.round_off !== false ? "checked" : ""}> Round the bill to the nearest rupee</label>
-    <button class="btn primary">Save</button> <button type="button" class="btn danger" id="del" style="margin-left:8px">Delete company</button></form>
-    <div class="card" style="max-width:560px;margin-top:20px"><h2>Speed check</h2>
-      <p class="muted" style="margin-top:0">Shows where the app runs and how fast the database answers. Under ~50 ms per query is good.</p>
-      <button class="btn" id="diag">Run speed check</button><div id="diagOut" style="margin-top:10px"></div></div>`;
-  $$("input[name=ai_mode]").forEach((r) => r.onchange = () => $$("input[name=ai_mode]").forEach((x) => x.closest(".choice").classList.toggle("on", x.checked)));
+    <button class="btn primary">Save</button> <button type="button" class="btn danger" id="del" style="margin-left:8px">Delete company</button></form>`;
+  $$("input[name=ai]").forEach((r) => r.onchange = () => $$("input[name=ai]").forEach((x) => x.closest(".choice").classList.toggle("on", x.checked)));
   $("#aiTest").onclick = async () => {
-    const mode = ($("input[name=ai_mode]:checked") || {}).value || "claude";
-    const providers = mode === "claude" ? ["claude"] : mode === "gemini" ? ["gemini"] : ["gemini", "claude"];
+    const ai = ($("input[name=ai]:checked") || {}).value || curAI;
     $("#aiTestOut").innerHTML = '<span class="spin" style="display:inline-block;vertical-align:-2px"></span> Testing…';
-    const out = [];
-    for (const pr of providers) {
-      const r = await api("/ai/test", { body: { provider: pr } }).catch((e) => ({ ok: false, provider: pr, error: e.message }));
-      out.push(r.ok ? `<div class="alert ok">${pr === "gemini" ? "Gemini" : "Claude"} is working — ${esc(r.model)} answered in ${(r.ms / 1000).toFixed(1)} s.</div>`
-        : `<div class="alert bad"><b>${pr === "gemini" ? "Gemini" : "Claude"}:</b> ${esc(r.error)}</div>`);
-    }
-    $("#aiTestOut").innerHTML = out.join('<div style="height:6px"></div>');
-  };
-  $("#diag").onclick = async () => {
-    const r = await act(() => api("/diag"));
-    const avg = Math.round(r.d1_ms.reduce((a, b) => a + b, 0) / r.d1_ms.length);
-    $("#diagOut").innerHTML = `<div class="alert ${avg < 60 ? "ok" : avg < 150 ? "warn" : "bad"}">Database: <b>${avg} ms</b> per query
-      ${r.d1?.served_by_region ? ` · region <b>${esc(r.d1.served_by_region)}</b>` : ""} · app running in <b>${esc(r.colo || "?")}</b>${r.placement ? ` (${esc(r.placement)})` : ""}
-      ${avg >= 150 ? "<br>The database is far from where the app runs. Send this result to your developer to move the app next to it." : ""}</div>
-      <pre class="code">${esc(JSON.stringify(r, null, 2))}</pre>`;
+    const r = await api("/ai/test", { body: { ai } }).catch((e) => ({ ok: false, error: e.message }));
+    $("#aiTestOut").innerHTML = r.ok ? `<div class="alert ok">${esc(ME.ai_labels[ai] || ai)} is working — answered in ${((r.ms || 0) / 1000).toFixed(1)} s.</div>`
+      : `<div class="alert bad"><b>${esc(ME.ai_labels[ai] || ai)}:</b> ${esc(r.error)}</div>`;
   };
   $("#f").onsubmit = async (e) => {
     e.preventDefault(); const f = e.target;
     await act(() => api(`/companies/${c.id}`, { method: "PATCH", body: { name: f.name.value, tally_company: f.tally_company.value, gstin: f.gstin.value,
       settings: { default_purchase_ledger: f.default_purchase_ledger.value, default_sales_ledger: f.default_sales_ledger.value, send_descriptions: f.send_descriptions.checked, round_off: f.round_off.checked,
-        ai_mode: (f.querySelector("input[name=ai_mode]:checked") || {}).value || "claude" } } }), "Saved");
+        ai: (f.querySelector("input[name=ai]:checked") || {}).value || curAI } } }), "Saved");
     route();
   };
-  $("#del").onclick = async () => { if (confirm(`Delete ${c.name} and all its data here? (Nothing in Tally is touched.)`)) { await api(`/companies/${c.id}`, { method: "DELETE" }); location.hash = "#/"; } };
+  $("#del").onclick = async () => { if (confirm(`Delete ${c.name} and all its data in this app? (Nothing in Tally is touched. It still counts towards your company limit.)`)) { await api(`/companies/${c.id}`, { method: "DELETE" }); location.hash = "#/"; } };
 }
 
 // ---------------------------------------------------------------------------
@@ -635,29 +691,13 @@ async function loadBatchCtx(bid) {
   return { b, c };
 }
 
-// The browser helps process the batch (two parallel workers); a server cron does the same when the page is closed.
-const DRIVERS = new Map();
-function driveBatch(bid) {
-  if (DRIVERS.has(bid)) return;
-  const st = { running: 0, stop: false };
-  DRIVERS.set(bid, st);
-  const loop = async () => {
-    st.running++;
-    try {
-      for (let idle = 0; !st.stop && idle < 3;) {
-        const r = await api(`/batches/${bid}/work`, { body: {}, quiet: true }).catch(() => ({ did: false }));
-        if (r.stage === "review" || r.stage === "error") break;
-        if (!r.did) { idle++; await new Promise((res) => setTimeout(res, 4000)); } else idle = 0;
-      }
-    } finally { if (--st.running === 0) DRIVERS.delete(bid); }
-  };
-  loop(); setTimeout(loop, 700);
-}
+// The app reads in the background (it keeps going while you look at other screens); this page just refreshes.
+function driveBatch() {}
 
 async function viewBatch(bid) {
   const { b, c } = await loadBatchCtx(bid);
   const working = ["find", "read", "uploading"].includes(b.stage);
-  if (working && b.stage !== "uploading") driveBatch(bid);
+  if (working) every(2500, refresh);
   const filesDone = b.files.filter((f) => f.status === "done" || f.status === "failed").length;
   const read = b.invoices.filter((i) => !["pending", "reading"].includes(i.status)).length;
   const stepIdx = { uploading: 0, find: 0, read: 1, review: 2, error: 2 }[b.stage];
@@ -841,7 +881,7 @@ function createLedgerModal(name, g, group) {
     <div class="field"><label>GSTIN</label><input class="in mono" name="gstin" value="${esc(g?.gstin || "")}" maxlength="15"></div>
     <div class="field"><label>State</label><input class="in" name="state" value="${esc(g?.state || "")}"></div>
     <div class="field"><label>Address</label><textarea class="in" name="address" rows="2">${esc(g?.address || "")}</textarea></div>
-    <p class="muted" style="font-size:12.5px">It's created in Tally through the bridge before the voucher is posted.</p>
+    <p class="muted" style="font-size:12.5px">It's created in Tally first, then the voucher is posted.</p>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Create &amp; use</button></div>`,
     async (d) => { await api(`/batches/${location.hash.split("/")[2]}/party`, { body: { invoice_ids: g.invoice_ids, create: d } }); toast(`Ledger ${d.name} will be created`); route(); });
 }
@@ -1029,10 +1069,10 @@ function reviewSync(ctx) {
         <td class="${i.status === "synced" ? "good" : i.status === "failed" ? "bad" : i.status === "queued" ? "warn" : ""}">${i.status === "synced" ? `In Tally · bill ${esc(i.number)}` : i.status === "queued" ? "Sending to Tally…" : i.status === "failed" ? "Failed" : i.steps.ready ? "Ready to sync" : `<span class="warn">Needs fixing:</span> ${esc((i.steps.blockers || []).join("; "))} <a href="#/i/${i.id}"><u>open invoice</u></a>`}
         ${i.error ? `<div class="muted" style="font-size:12px">${esc(i.error)}</div>` : ""}</td></tr>`).join("")}</tbody></table>
       ${n.synced === items.length && items.length ? `<p class="good" style="margin-top:16px">Everything in this batch is in Tally.</p>` : ""}
-      ${!c.bridge_online ? `<div class="alert warn" style="margin-top:14px">The bridge is offline — pushed invoices will wait until it connects. <a href="#/c/${c.id}/bridge"><u>Set up the bridge</u></a></div>`
-        : postingOff(c) ? `<div class="alert warn" style="margin-top:14px">Posting to Tally is switched off in TallyBridge on the PC — pushed invoices wait until you press <b>Turn on</b> under <b>Posting to Tally</b> on its InvoiceTotally page.</div>` : ""}</div>`;
+      ${!ME.licence?.can_post ? `<div class="alert warn" style="margin-top:14px">Posting to Tally is not allowed for your account — you can read and review. Ask the admin to allow posting.</div>`
+        : tallyHelp(c) ? `<div class="alert warn" style="margin-top:14px">${tallyHelp(c)} Pushed invoices wait until then.</div>` : ""}</div>`;
     wireTop(c);
-    $("#extraBtns").innerHTML = `<button class="btn primary" id="push" ${n.ready + n.failed ? "" : "disabled"}>Push to Tally <kbd>P</kbd></button>`;
+    $("#extraBtns").innerHTML = `<button class="btn primary" id="push" ${n.ready + n.failed && ME.licence?.can_post ? "" : "disabled"} ${ME.licence?.can_post ? "" : 'title="Posting to Tally is not allowed for your account"'}>Push to Tally <kbd>P</kbd></button>`;
     $("#stat").textContent = `${items.length} invoice(s) · ${n.review} in review · ${n.ready} ready · ${n.synced} in Tally`;
     $$(".stats [data-f]").forEach((d) => d.onclick = () => { filter = d.dataset.f; draw(); });
     $("#q").oninput = debounce((e) => { q = e.target.value; draw(); $("#q").focus(); }, 250);
@@ -1047,7 +1087,7 @@ function reviewSync(ctx) {
         toast(`${r.pushed} sent · ${r.skipped.length} skipped: ${r.skipped[0].reason}`, true);
         if (dups.length && confirm(`${dups.length} invoice(s) look like duplicates of vouchers already in Tally. Post them anyway?`))
           await act(() => api(`/batches/${bid}/push`, { body: { invoice_ids: dups.map((x) => x.id), force: true } }), "Sent");
-      } else toast(`${r.pushed} invoice(s) sent to the bridge`);
+      } else toast(`${r.pushed} invoice(s) sent to Tally`);
       route();
     };
     const bulk = async (action, label) => { if (!sel().length) return toast("Tick the invoices first", true); for (const id of sel()) await api(`/invoices/${id}/${action}`, { method: "POST" }); toast(label); route(); };
@@ -1088,9 +1128,9 @@ async function viewInvoice(iid) {
       <span class="status"><b class="${inv.status === "synced" ? "good" : inv.status === "failed" || inv.status === "error" ? "bad" : ""}">${statusLbl}</b> · ${b.voucher_type} · steps: ${["party", "stock", "ledger", "tax"].map((s) => `${s} ${inv.steps[s] ? '<span class="good">✓</span>' : '<span class="faint">○</span>'}`).join(" ")}</span>
       <div class="spacer"></div><button class="btn" onclick="history.back()">Back <kbd>Esc</kbd></button>
       ${editable ? `<button class="btn danger" id="del">Delete invoice</button>${inv.pages.length ? `<button class="btn" id="reread" title="Read this invoice again from the image (your edits are replaced)">↻ Read again</button>` : ""}<button class="btn" id="save">Save changes <kbd>Ctrl+S</kbd></button>` : `<button class="btn" id="back">Send back to review</button>`}
-      ${inv.steps.ready ? `<a class="btn" href="/api/invoices/${iid}/xml${TOKEN ? "?t=" + encodeURIComponent(TOKEN) : ""}">Tally XML</a>` : ""}
+      ${inv.steps.ready && ME.licence?.can_post ? `<a class="btn" href="/api/invoices/${iid}/xml?k=${encodeURIComponent(KEY)}">Tally XML</a>` : ""}
       ${editable ? `<a class="btn" href="#/b/${b.id}/review/${["party", "stock", "ledger", "tax"].find((s) => !inv.steps[s]) || "sync"}">Resolve in review</a>` : ""}
-      ${editable && inv.steps.ready ? `<button class="btn primary" id="push">Push to Tally</button>` : ""}</div>
+      ${editable && inv.steps.ready && ME.licence?.can_post ? `<button class="btn primary" id="push">Push to Tally</button>` : ""}</div>
     <div class="inv-layout"><div>${pageViewer(inv.pages)}</div><div>
       ${inv.sync_error ? `<div class="alert bad" style="margin-bottom:10px">${esc(inv.sync_error)}</div>` : ""}
       ${(h.warnings || []).map((w) => `<div class="alert warn" style="margin-bottom:6px">⚠ ${esc(w)}</div>`).join("")}
@@ -1150,14 +1190,8 @@ async function viewInvoice(iid) {
     await act(() => api(`/invoices/${iid}/reread`, { method: "POST" }), "Reading again…");
     location.hash = `#/b/${b.id}`;
   });
-  $("#push")?.addEventListener("click", async () => { await act(() => api(`/invoices/${iid}/push`, { method: "POST" }), "Sent to the bridge"); route(); });
+  $("#push")?.addEventListener("click", async () => { await act(() => api(`/invoices/${iid}/push`, { method: "POST" }), "Sent to Tally"); route(); });
 }
 
 // ---------------------------------------------------------------------------
-(async () => {
-  try {
-    const hz = await fetch("/api/health").then((r) => r.json());
-    if (hz.auth && !TOKEN && location.hash !== "#/login") location.hash = "#/login";
-  } catch {}
-  route();
-})();
+route();
