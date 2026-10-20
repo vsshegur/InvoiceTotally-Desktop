@@ -49,24 +49,25 @@ func dataDir() string {
 	return filepath.Join(b, "InvoiceTotally")
 }
 
-func browser() string {
-	var c []string
-	for _, env := range []string{"ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"} {
-		if v := os.Getenv(env); v != "" {
-			c = append(c, filepath.Join(v, "Microsoft", "Edge", "Application", "msedge.exe"))
-		}
-	}
+// Chrome first (opened with your normal Chrome profile, so Google sign-in already knows your account), else Edge.
+func browser() (path string, chrome bool) {
 	for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"} {
 		if v := os.Getenv(env); v != "" {
-			c = append(c, filepath.Join(v, "Google", "Chrome", "Application", "chrome.exe"))
+			p := filepath.Join(v, "Google", "Chrome", "Application", "chrome.exe")
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p, true
+			}
 		}
 	}
-	for _, p := range c {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			return p
+	for _, env := range []string{"ProgramFiles(x86)", "ProgramFiles", "LOCALAPPDATA"} {
+		if v := os.Getenv(env); v != "" {
+			p := filepath.Join(v, "Microsoft", "Edge", "Application", "msedge.exe")
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				return p, false
+			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 func main() {
@@ -114,7 +115,7 @@ func main() {
 
 	key, _ := os.ReadFile(filepath.Join(data, "window.key"))
 	url := "http://localhost:" + port + "/#k=" + strings.TrimSpace(string(key))
-	b := browser()
+	b, chrome := browser()
 	if b == "" {
 		// No Edge or Chrome: the ordinary browser works too (the app keeps running until Windows signs out).
 		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
@@ -122,8 +123,12 @@ func main() {
 	}
 	// The app stops by itself ten minutes after its last window is closed (it notices the window no longer
 	// checks in), so this launcher doesn't have to watch the browser — Edge may restart itself on first run.
-	win := exec.Command(b, "--app="+url, "--user-data-dir="+filepath.Join(data, "window"), "--no-first-run",
-		"--no-default-browser-check", "--disable-features=Translate", "--window-size=1366,880")
+	args := []string{"--app=" + url, "--window-size=1366,880"}
+	if !chrome {
+		// Edge gets a profile of its own, so the app window doesn't mix with the browser's tabs
+		args = append(args, "--user-data-dir="+filepath.Join(data, "window"), "--no-first-run", "--no-default-browser-check", "--disable-features=Translate")
+	}
+	win := exec.Command(b, args...)
 	if err := win.Start(); err != nil {
 		message("Could not open the InvoiceTotally window:\n\n" + err.Error())
 		return
