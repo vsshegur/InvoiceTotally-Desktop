@@ -113,7 +113,7 @@ func main() {
 	}
 
 	key, _ := os.ReadFile(filepath.Join(data, "window.key"))
-	url := "http://127.0.0.1:" + port + "/#k=" + strings.TrimSpace(string(key))
+	url := "http://localhost:" + port + "/#k=" + strings.TrimSpace(string(key))
 	b := browser()
 	if b == "" {
 		// No Edge or Chrome: the ordinary browser works too (the app keeps running until Windows signs out).

@@ -12,6 +12,18 @@ export const AI_LABELS = { gemini_lite: "Gemini Flash-Lite (free)", gemini: "Gem
 
 const slim = (c) => c && ({ id: c.id, name: c.name, gstin: c.gstin || "", state_code: c.state_code || "", ai: c.settings?.ai || null });
 
+// Owner mode: the admin's PC reads with the keys kept on it, straight from here (no service).
+async function local(env) {
+  if (!env.OWNER || !(await env.OWNER.session())) return null;
+  const AI = await import("./ai.js");
+  return { AI, aiEnv: await env.OWNER.aiEnv() };
+}
+const aiCompany = (c) => ({ ...slim(c), settings: { ai_mode: c?.settings?.ai || "gemini_lite" } });
+async function viaLocal(fn) {
+  try { return await fn(); }
+  catch (e) { if (e instanceof AIError) throw e; throw new AIError(e.message || String(e), !!e.retryable); }
+}
+
 async function service(env, path, body) {
   if (!env.LIC) throw new AIError("Reading is not available: the app is not signed in.");
   try {
@@ -28,18 +40,24 @@ export async function splitPages(env, thumbs, company = null) {
   const n = thumbs.length;
   if (n <= 1) return n ? [[0]] : [];
   if (env.EXTRACTOR === "mock") return thumbs.map((_, i) => [i]);
+  const L = await local(env);
+  if (L) return viaLocal(() => L.AI.splitPages(L.aiEnv, thumbs, aiCompany(company)));
   const r = await service(env, "/api/lic/read/split", { company: slim(company), pages: thumbs });
   return r.groups;
 }
 
 export async function readInvoice(env, images, company, vt) {
   if (env.EXTRACTOR === "mock") return mockInvoice();
+  const L = await local(env);
+  if (L) return viaLocal(() => L.AI.readInvoice(L.aiEnv, images, aiCompany(company), vt));
   const r = await service(env, "/api/lic/read/invoice", { company: slim(company), voucher_type: vt, pages: images });
   return r.data;
 }
 
 export async function readSheet(env, text, company, vt) {
   if (env.EXTRACTOR === "mock") return [mockInvoice()];
+  const L = await local(env);
+  if (L) return viaLocal(() => L.AI.readSheet(L.aiEnv, text, aiCompany(company), vt));
   const r = await service(env, "/api/lic/read/sheet", { company: slim(company), voucher_type: vt, text });
   return r.invoices;
 }

@@ -30,6 +30,17 @@ Uninstall from *Settings → Apps* or the Start menu; you choose whether to keep
 Your data lives in `%LOCALAPPDATA%\InvoiceTotally` (one SQLite file). A copy is saved **once a day** (last 14
 kept) — choose a Google Drive or OneDrive folder under **⚙ → This PC** so a copy is also online.
 
+## Owner mode (the admin's PC, without the service)
+
+If the service can't be reached (or Cloudflare's daily limit is used up), the admin can still work on their own PC:
+
+1. Once, in Google Cloud Console → APIs & Services → Credentials → the Web client (the same one TallyBridge uses), add
+   `http://localhost:47821` under **Authorized JavaScript origins**.
+2. On the sign-in screen open **Owner sign-in on this PC**, paste that Web client ID once, and sign in with
+   vipulshegur@gmail.com. The Google sign-in is checked on the PC; no other account can use this.
+3. Under **⚙ → AI keys on this PC**, save your Gemini / Groq / Claude keys. Invoices are then read straight from this
+   PC with those keys. No credits or limits apply; other users are not affected.
+
 ## What each person can do (set by the admin)
 
 The admin opens **★ Admin** in the app:

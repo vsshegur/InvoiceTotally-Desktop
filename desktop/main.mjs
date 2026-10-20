@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { makeD1 } from "./d1.mjs";
 import { licenceClient } from "./licence.mjs";
 import { makeRunner } from "./runner.mjs";
+import { ownerMode } from "./owner.mjs";
 import api from "../engine/api.js";
 import * as P from "../engine/pipeline.js";
 import { db } from "../engine/db.js";
@@ -37,8 +38,9 @@ const D = db({ DB });
 const cfg = (k) => DB.sql.prepare("SELECT value FROM app_config WHERE key=?").get(k)?.value ?? null;
 const serviceUrl = () => process.env.IT_SERVICE || cfg("service_url") || conf.service || "";
 const LIC = licenceClient({ D, serviceUrl });
+const OWNER = ownerMode({ D });
 const runner = makeRunner(D, { log, canPost: async (c) => {
-  const lic = await LIC.current();
+  const lic = (await OWNER.licence([])) || (await LIC.current());
   if (!lic) return "other";
   if (c.owner_email && c.owner_email !== lic.email) return "other";
   return lic.can_post === true;
@@ -64,15 +66,15 @@ const ASSETS = {
 };
 
 export const env = {
-  DB, LIC, TALLY: runner, ASSETS, WINDOW_KEY, DATA, VERSION: pkg.version,
+  DB, LIC, OWNER, TALLY: runner, ASSETS, WINDOW_KEY, DATA, VERSION: pkg.version,
   EXTRACTOR: process.env.EXTRACTOR || "", USD_INR: "88", log,
   setConfig: (k, v) => DB.sql.prepare("INSERT INTO app_config (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at").run(k, v, Date.now() / 1000),
   getConfig: cfg,
   backupNow: () => backup(true),
 };
 
-const HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`]);
-const server = http.createServer(async (req, res) => {
+const HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
+const handler = async (req, res) => {
   try {
     // A web page elsewhere cannot reach this API by pointing a name at 127.0.0.1 (DNS rebinding).
     if (!HOSTS.has(String(req.headers.host || ""))) { res.writeHead(421); res.end("Wrong host"); return; }
@@ -98,7 +100,11 @@ const server = http.createServer(async (req, res) => {
     if (!res.headersSent) res.writeHead(500, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: String(e.message || e) }));
   }
-});
+};
+const server = http.createServer(handler);
+// "localhost" can mean ::1 as well as 127.0.0.1: answer on both (the second only if the PC has IPv6)
+const server6 = http.createServer(handler);
+server6.on("error", () => {});
 
 // ------------------------------------------------------------------ background work
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -155,7 +161,7 @@ async function shutdown(why) {
   runner.stop();
   // a post that is with Tally right now is finished first (Tally answers within 2 minutes)
   for (let i = 0; i < 240 && runner.state.busy; i++) await sleep(500);
-  server.close();
+  server.close(); server6.close();
   try { DB.close(); } catch {}
   process.exit(0);
 }
@@ -182,6 +188,7 @@ export function start() {
       reject(e);
     });
     server.listen(PORT, "127.0.0.1", () => {
+      server6.listen(PORT, "::1");
       try { fs.writeFileSync(keyFile, WINDOW_KEY, { mode: 0o600 }); } catch {}
       log(`InvoiceTotally ${pkg.version} on http://localhost:${PORT} (data in ${DATA})`);
       readLoop();
