@@ -4,11 +4,10 @@
 //
 // It starts the app (the bundled Node runtime running app\desktop\main.mjs, hidden) unless it is already running,
 // then opens the app window: Microsoft Edge in app mode with its own profile, so it looks like a normal program
-// window. When that window closes, the app is asked to stop (it first finishes anything it is posting to Tally).
+// window. When no window has been open for a few minutes, the app stops by itself (after finishing any post to Tally).
 package main
 
 import (
-	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -114,33 +113,20 @@ func main() {
 	}
 
 	key, _ := os.ReadFile(filepath.Join(data, "window.key"))
-	url := "http://localhost:" + port + "/#k=" + strings.TrimSpace(string(key))
+	url := "http://127.0.0.1:" + port + "/#k=" + strings.TrimSpace(string(key))
 	b := browser()
 	if b == "" {
 		// No Edge or Chrome: the ordinary browser works too (the app keeps running until Windows signs out).
 		_ = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
 		return
 	}
+	// The app stops by itself ten minutes after its last window is closed (it notices the window no longer
+	// checks in), so this launcher doesn't have to watch the browser — Edge may restart itself on first run.
 	win := exec.Command(b, "--app="+url, "--user-data-dir="+filepath.Join(data, "window"), "--no-first-run",
-		"--no-default-browser-check", "--disable-background-mode", "--disable-features=Translate,msEdgeStartupBoost",
-		"--window-size=1366,880", "--class=InvoiceTotally")
+		"--no-default-browser-check", "--disable-features=Translate", "--window-size=1366,880")
 	if err := win.Start(); err != nil {
 		message("Could not open the InvoiceTotally window:\n\n" + err.Error())
 		return
 	}
-	_ = win.Wait()
-	if !started {
-		return // another InvoiceTotally.exe opened the app; it closes it
-	}
-	// The window is closed: the app finishes what it is posting to Tally, then stops.
-	req, _ := http.NewRequest("POST", base+"/api/quit", nil)
-	req.Header.Set("x-it-key", strings.TrimSpace(string(key)))
-	c := http.Client{Timeout: 5 * time.Second}
-	if r, err := c.Do(req); err == nil {
-		r.Body.Close()
-	}
-	for i := 0; i < 600 && running(); i++ { // up to 2.5 minutes
-		time.Sleep(250 * time.Millisecond)
-	}
-	fmt.Print()
+	_ = started
 }
