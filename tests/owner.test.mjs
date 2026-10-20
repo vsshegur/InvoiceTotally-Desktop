@@ -23,8 +23,11 @@ function token(email, aud = CLIENT) {
 // a stand-in for Groq that answers with an invoice
 const invoice = { number: "55", date: "2026-10-05", seller: { name: "Suhas Printers" }, buyer: { name: "Vipul Textiles" }, lines: [{ description: "Cards", amount: 100 }], total: 100 };
 let groqCalls = 0, lastAuth = "";
-const groq = http.createServer((req, res) => { req.resume(); req.on("end", () => { groqCalls++; lastAuth = req.headers.authorization;
-  res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(invoice) } }], usage: {} })); }); });
+const groq = http.createServer((req, res) => { let b = ""; req.on("data", (c) => (b += c)); req.on("end", () => {
+  const check = b.includes("connection check");
+  if (!check) { groqCalls++; lastAuth = req.headers.authorization; }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify(check ? { ok: true } : invoice) } }], usage: {} })); }); });
 await new Promise((r) => groq.listen(0, r));
 process.env.GROQ_API_URL = `http://127.0.0.1:${groq.address().port}`;
 test.after(() => groq.close());

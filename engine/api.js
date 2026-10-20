@@ -88,7 +88,7 @@ function licView(lic) {
   if (!lic) return null;
   return { email: lic.email, name: lic.name || "", admin: !!lic.admin, active: lic.active !== false, company_limit: lic.company_limit ?? 0,
     can_post: !!lic.can_post, invoice_credits: lic.invoice_credits ?? 0, statement_credits: lic.statement_credits ?? 0,
-    unlimited: !!lic.admin, ai_options: lic.admin ? AI_CHOICES : (lic.ai_options || []).filter((a) => AI_CHOICES.includes(a)),
+    unlimited: !!lic.admin, ai_options: lic.admin && !lic.owner ? AI_CHOICES : (lic.ai_options || []).filter((a) => AI_CHOICES.includes(a)),
     issued_at: lic.issued_at, stale: !!lic.stale, owner: !!lic.owner };
 }
 route("GET", "/api/me", async ({ env, D }) => {
