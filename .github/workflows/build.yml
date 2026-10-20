@@ -1,0 +1,79 @@
+name: Test and build the Windows installer
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: for f in public/*.js engine/*.js desktop/*.mjs service/*.js; do node --check "$f"; done
+      - run: npm test
+
+  windows:
+    runs-on: windows-latest
+    needs: test
+    permissions:
+      contents: write  # only to attach the installer to the release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.12'
+          cache: false
+      - name: Tests on Windows (the app, a stand-in service and a stand-in TallyPrime)
+        shell: bash
+        run: node --test tests/*.test.mjs
+      - name: Build the installer (with this Node as the bundled runtime)
+        shell: bash
+        run: |
+          node --version
+          ./windows/build.sh "$(node -p process.execPath)"
+      - name: Install it and start the installed app
+        shell: pwsh
+        run: |
+          $dir = Join-Path $env:RUNNER_TEMP 'it-install'
+          $env:IT_INSTALL_DIR = $dir
+          & ./build/setup-console.exe --quiet
+          if ($LASTEXITCODE) { throw 'setup failed' }
+          foreach ($f in 'InvoiceTotally.exe','Uninstall InvoiceTotally.exe','InvoiceTotally.ico','runtime/node.exe','app/desktop/main.mjs','app/public/index.html') {
+            if (!(Test-Path (Join-Path $dir $f))) { throw "missing $f" }
+          }
+          $env:IT_DATA_DIR = Join-Path $env:RUNNER_TEMP 'it-data'
+          $env:IT_PORT = '47899'
+          $p = Start-Process -PassThru -NoNewWindow -FilePath (Join-Path $dir 'runtime/node.exe') -ArgumentList '--disable-warning=ExperimentalWarning', (Join-Path $dir 'app/desktop/main.mjs')
+          $ok = $false
+          for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 500; try { $r = Invoke-RestMethod http://127.0.0.1:47899/api/health; if ($r.ok) { $ok = $true; break } } catch {} }
+          if (!$ok) { Get-Content (Join-Path $env:IT_DATA_DIR 'logs/app.log') -ErrorAction SilentlyContinue; throw 'installed app did not start' }
+          "Installed app answered: version $($r.version)"
+          $key = Get-Content (Join-Path $env:IT_DATA_DIR 'window.key')
+          $page = Invoke-WebRequest http://localhost:47899/
+          if ($page.Content -notmatch 'InvoiceTotally') { throw 'page not served' }
+          Invoke-RestMethod -Method Post -Uri http://127.0.0.1:47899/api/quit -Headers @{ 'x-it-key' = $key } | Out-Null
+          Start-Sleep -Seconds 2
+          if (!$p.HasExited) { throw 'the app did not stop when asked' }
+      # Release files do not count against Actions storage, and the app looks here for updates.
+      - name: Attach the installer to the release
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          SETUP="build/InvoiceTotally-$VERSION-Setup.exe"
+          (cd build && sha256sum "InvoiceTotally-$VERSION-Setup.exe" > "InvoiceTotally-$VERSION-Setup.sha256.txt")
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "InvoiceTotally $VERSION" --target "$GITHUB_SHA" \
+              --notes "Windows installer. Download InvoiceTotally-$VERSION-Setup.exe and run it — it installs for your Windows user, no administrator needed. Your data is kept when you update."
+          gh release upload "$TAG" "$SETUP" "build/InvoiceTotally-$VERSION-Setup.sha256.txt" --repo "$GITHUB_REPOSITORY" --clobber

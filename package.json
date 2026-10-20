@@ -1,0 +1,12 @@
+{
+  "name": "invoicetotally-desktop",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "description": "InvoiceTotally for Windows: reads invoices with AI and posts them straight to TallyPrime. One app, no connector.",
+  "scripts": {
+    "start": "node desktop/main.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": { "node": ">=22.13" }
+}

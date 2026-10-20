@@ -1,0 +1,9 @@
+node_modules/
+.dev-data/
+dist/
+build/
+*.sqlite
+*.sqlite-*
+__pycache__/
+*.pyc
+.DS_Store
