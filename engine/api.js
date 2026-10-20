@@ -378,11 +378,13 @@ route("GET", "/api/batches/:bid/review/:step", async ({ D, p }) => {
     const groups = {}, order = { suspense: 0, proposed: 1, resolved: 2 };
     for (const i of invs) for (const l of i.lines) {
       if (step === "stock" && l.kind !== "item") continue;
-      const k = step === "stock" ? M.stockKey(l.description) : `${l.kind}|${l.stock_item || M.norm(l.description)}`;
-      const g = groups[k] ||= { key: k, kind: l.kind, description: l.description, hsn: l.hsn, gst_rate: l.gst_rate, unit: l.unit,
+      const party = i.party_ledger || i.data.party_name || "";
+      const k = step === "stock" ? `${M.norm(party)}|${M.stockKey(l.description)}` : `${l.kind}|${l.stock_item || M.norm(l.description)}`;
+      const g = groups[k] ||= { key: k, kind: l.kind, description: l.description, hsn: l.hsn, gst_rate: l.gst_rate, unit: l.unit, parties: [],
         stock_item: l.stock_item, stock_state: l.stock_state, ledger: l.ledger, ledger_state: l.ledger_state, amount: 0, line_ids: [], invoice_ids: [], lines: [] };
       g.amount = Math.round((g.amount + (l.amount || 0)) * 100) / 100;
       g.line_ids.push(l.id);
+      if (party && !g.parties.includes(party)) g.parties.push(party);
       if (!g.invoice_ids.includes(i.id)) g.invoice_ids.push(i.id);
       g.lines.push({ id: l.id, invoice: i.data.number, invoice_id: i.id, qty: l.qty, unit: l.unit, rate: l.rate, amount: l.amount, discount_pct: l.discount_pct });
       for (const f of ["stock_state", "ledger_state"]) if ((order[l[f]] ?? 2) < (order[g[f]] ?? 2)) g[f] = l[f];
@@ -456,8 +458,11 @@ route("POST", "/api/batches/:bid/stock", async ({ D, body }) => {
         gst_rate: c.gst_rate ?? first.gst_rate, parent: c.parent });
     }
     if (!item) throw new HttpError(400, "Pick a stock item");
+    // remembered for each supplier these lines came from, so their next bill matches by itself
+    const parties = await D.all(`SELECT DISTINCT i.party_ledger p FROM lines l JOIN invoices i ON i.id=l.invoice_id WHERE l.id IN (${inList(ids)}) AND i.party_ledger IS NOT NULL`, ...ids);
     await D.batch([D.stmt(`UPDATE lines SET stock_item=?, stock_state='resolved' WHERE id IN (${inList(ids)})`, item, ...ids),
       M.aliasSetStmt(D, cid, "stock", M.stockKey(first.description), item),
+      ...parties.map((r) => M.aliasSetStmt(D, cid, "stock_party", M.stockPartyKey(r.p, first.description), item)),
       D.stmt("INSERT INTO activity (batch_id, invoice_id, message, at) VALUES (?,?,?,?)", first.batch_id, null, `'${first.description}' → stock item ${item}`, now())]);
   }
   await Promise.all(invIds.map((iid) => P.autoMatch(D, iid, true)));

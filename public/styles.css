@@ -312,3 +312,4 @@ table.map tr.sel td { background: var(--accent-soft); font-weight: 600; }
 .in.sm { padding: 4px 8px; font-size: 13px; }
 .tag.bad { color: var(--bad); border-color: var(--bad); }
 .banner.info { background: color-mix(in srgb, var(--info) 12%, var(--panel)); }
+.from-party { font-size: 12.5px; color: var(--info); margin: 1px 0 2px; }

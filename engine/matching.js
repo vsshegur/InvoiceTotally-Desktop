@@ -107,7 +107,13 @@ export async function partyCandidates(D, cid, vt, name, gstin, limit = 8) {
 // ---------------------------------------------------------------- stock
 export const stockKey = (d) => norm(d);
 
-export async function matchStock(D, cid, line) {
+/** The same supplier's item: "INDICA TOWELS 30X60" from KANAKRAJ → the stock item picked for it last time. */
+export const stockPartyKey = (party, d) => `${norm(party)}|${stockKey(d)}`;
+export async function matchStock(D, cid, line, party = null) {
+  if (party) {
+    const p = await aliasGet(D, cid, "stock_party", stockPartyKey(party, line.description));
+    if (p && (await exists(D, cid, "stock_item", p))) return { item: p, state: "resolved", method: "Remembered for this supplier" };
+  }
   const v = await aliasGet(D, cid, "stock", stockKey(line.description));
   if (v && (await exists(D, cid, "stock_item", v))) return { item: v, state: "resolved" };
   const c = (await stockCandidates(D, cid, line, 1))[0];
