@@ -257,8 +257,8 @@ async function viewSignin() {
     <div id="msg" style="margin-top:16px"></div>
     ${ME?.service ? `<p class="muted small" style="margin-top:28px">Service: ${esc(ME.service)} · <a href="#" id="chgSvc"><u>change</u></a></p>` : ""}
     <form id="svc" class="card" style="margin-top:16px;${ME?.service ? "display:none" : ""}"><b>InvoiceTotally service address</b>
-      <p class="muted small" style="margin:4px 0 8px">Ask the admin for it — it looks like https://invoicetotally.something.workers.dev</p>
-      <div style="display:flex;gap:8px"><input class="in" name="url" value="${esc(ME?.service || "")}" placeholder="https://…workers.dev" required><button class="btn">Save</button></div></form>
+      <p class="muted small" style="margin:4px 0 8px">Ask the admin for it — for example https://vipulshegur.packpilot.in</p>
+      <div style="display:flex;gap:8px"><input class="in" name="url" value="${esc(ME?.service || "")}" placeholder="https://…" required><button class="btn">Save</button></div></form>
   </div>`;
   wireTop();
   let polling = false;

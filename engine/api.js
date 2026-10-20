@@ -103,7 +103,7 @@ route("GET", "/api/me", async ({ env, D }) => {
 route("POST", "/api/service", async ({ env, body }) => {
   if (await licence(env)) throw new HttpError(403, "Sign out first.");
   const u = String(body.url || "").trim().replace(/\/+$/, "");
-  if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(u)) throw new HttpError(400, "Enter the address like https://invoicetotally.yourname.workers.dev");
+  if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(u)) throw new HttpError(400, "Enter the address like https://invoicetotally.example.com");
   env.setConfig?.("service_url", u);
   return json({ ok: true, service: u });
 }, { keyed: true });
