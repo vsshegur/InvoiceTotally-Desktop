@@ -199,7 +199,7 @@ export async function autoMatch(D, invId, onlyUnresolved = false) {
       return null;
     }
     if (l.kind === "item" && l.stock_state !== "resolved") {
-      const s = await M.matchStock(D, comp.id, l);
+      const s = await M.matchStock(D, comp.id, l, party);
       upd.stock_item = s.item; upd.stock_state = s.state; l.stock_item = s.item;
     }
     if (l.ledger_state !== "resolved") {

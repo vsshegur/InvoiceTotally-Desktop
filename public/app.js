@@ -945,6 +945,13 @@ function createLedgerModal(name, g, group) {
 }
 
 // ---- Stock & Ledger --------------------------------------------------------
+/** "from KANAKRAJ TEXTILES" (or "from A, B and 2 more") under an extracted line. */
+function fromParties(g) {
+  const p = g.parties || [];
+  if (!p.length) return "";
+  const names = p.length <= 2 ? p.join(" and ") : `${p.slice(0, 2).join(", ")} and ${p.length - 2} more`;
+  return `<div class="from-party">from ${esc(names)}</div>`;
+}
 function reviewLines(ctx, mode) {
   const { data, c, bid } = ctx;
   const items = data.items;
@@ -959,7 +966,7 @@ function reviewLines(ctx, mode) {
     sel = Math.min(sel, Math.max(0, v.length - 1));
     const cell = (val, st, need) => st === "resolved" ? `<span>${esc(val)}</span>` : st === "proposed" ? `<span class="state-proposed">${esc(val)}</span> <span class="muted">proposed</span>` : `<span class="state-suspense">Suspense</span> <span class="muted">${need}</span>`;
     const rows = v.length ? `<table class="grid"><thead><tr><th>Extracted line</th>${mode === "stock" ? "<th>Stock item</th>" : "<th>Item</th>"}<th>Ledger</th><th class="num">Amount</th></tr></thead><tbody>
-      ${v.map((g, i) => `<tr class="click ${i === sel ? "sel" : ""}" data-i="${i}"><td><b>${esc(g.description)}</b><div class="muted mono" style="font-size:11.5px">${g.hsn ? "HSN " + esc(g.hsn) : ""}${g.gst_rate != null ? " · " + g.gst_rate + "%" : ""}${g.line_ids.length > 1 ? ` · ${g.line_ids.length} lines` : ""}</div></td>
+      ${v.map((g, i) => `<tr class="click ${i === sel ? "sel" : ""}" data-i="${i}"><td><b>${esc(g.description)}</b>${fromParties(g)}<div class="muted mono" style="font-size:11.5px">${g.hsn ? "HSN " + esc(g.hsn) : ""}${g.gst_rate != null ? " · " + g.gst_rate + "%" : ""}${g.line_ids.length > 1 ? ` · ${g.line_ids.length} lines` : ""}</div></td>
         <td>${g.kind === "ledger" ? '<span class="muted">— charge / service —</span>' : mode === "stock" ? cell(g.stock_item, g.stock_state, "needs a stock item") : esc(g.stock_item || "")}</td>
         <td>${cell(g.ledger, g.ledger_state, "needs a ledger")}</td><td class="num">${money(g.amount)}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty">${!items.length ? "No invoices in this batch are waiting at this step." : filter === "resolved" ? "Nothing resolved yet." : "Nothing here. ✓"}</div>`;
@@ -970,7 +977,7 @@ function reviewLines(ctx, mode) {
       pickStock = g.stock_item; pickLedger = g.ledger;
       const invId = g.invoice_ids[0];
       const extracted = `<div class="box"><div class="bh"><div class="seg"><button class="on" data-tab="act">Action</button><button data-tab="view">View invoice</button></div><a class="btn sm" href="#/i/${invId}">Open invoice ↗</a></div>
-        <div class="bb" id="tabAct"><div class="eyebrow">Extracted</div><div class="big" style="margin-top:4px">${esc(g.description)}</div>
+        <div class="bb" id="tabAct"><div class="eyebrow">Extracted</div><div class="big" style="margin-top:4px">${esc(g.description)}</div>${fromParties(g)}
           <div class="kv"><div><span>Amount</span><span class="mono">${money(g.amount)}</span></div><div><span>HSN/SAC</span><span class="mono">${esc(g.hsn || "—")}</span></div>
           <div><span>GST</span><span class="mono">${g.gst_rate != null ? g.gst_rate + "%" : "—"}</span></div><div><span>Found on</span><span>${g.line_ids.length} line · ${g.invoice_ids.length} invoice</span></div></div>
           ${g.lines.length ? `<div class="muted mono" style="font-size:12px;margin-top:8px">${g.lines.slice(0, 4).map((l) => `#${esc(l.invoice)}: ${l.qty ?? "—"} ${esc(l.unit || "")} × ${l.rate ?? "—"}${l.discount_pct ? ` − ${l.discount_pct}%` : ""} = ${money(l.amount)}`).join("<br>")}</div>` : ""}
