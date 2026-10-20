@@ -82,6 +82,7 @@ const server = http.createServer(async (req, res) => {
       shutdown("window closed");
       return;
     }
+    if (req.headers["x-it-key"] === WINDOW_KEY) lastWindow = Date.now();
     const chunks = [];
     for await (const c of req) chunks.push(c);
     const body = chunks.length ? Buffer.concat(chunks) : undefined;
@@ -142,6 +143,10 @@ function backup(force = false) {
 }
 
 // ------------------------------------------------------------------ stopping, updates
+// An open window checks in every few seconds. When none has for a few minutes, the app stops by itself.
+let lastWindow = Date.now();
+const IDLE_MS = +(process.env.IT_IDLE_MINUTES || 10) * 60_000;
+setInterval(() => { if (IDLE_MS > 0 && Date.now() - lastWindow > IDLE_MS && !runner.state.busy) shutdown("no window open"); }, 30_000).unref();
 let stopping = false;
 async function shutdown(why) {
   if (stopping) return;
