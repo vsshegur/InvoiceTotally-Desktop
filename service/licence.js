@@ -5,8 +5,8 @@
 // invoices, so the AI keys never leave it. Each PC signs in once with Google and then holds a device key; the
 // service answers with a licence signed by its own Ed25519 key, which the app keeps for working offline.
 //
-// This file is shared: it runs inside the existing InvoiceTotally Cloudflare Worker (copied there as
-// worker/licence.js) and in this repository's tests. Everything it needs from the Worker is passed in.
+// This file is shared: it runs inside this Cloudflare Worker (worker/licence.js, a copy of
+// service/licence.js in the invoicetotally-desktop repository — keep the two the same). Everything it needs is passed in.
 
 export const ADMIN_EMAIL = "vipulshegur@gmail.com";
 export const AI_CHOICES = ["gemini_lite", "gemini", "groq", "claude"];

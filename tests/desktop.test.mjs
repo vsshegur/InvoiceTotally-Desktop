@@ -9,9 +9,10 @@ import os from "node:os";
 import path from "node:path";
 import net from "node:net";
 import http from "node:http";
+import { fileURLToPath } from "node:url";
 import { fakeService } from "./fake-service.mjs";
 
-const here = path.dirname(new URL(import.meta.url).pathname);
+const here = path.dirname(fileURLToPath(import.meta.url));
 const freePort = () => new Promise((r) => { const s = net.createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); }); });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, ms = 15000, what = "condition") {
@@ -20,6 +21,7 @@ async function until(fn, ms = 15000, what = "condition") {
 }
 
 const ADMIN = "vipulshegur@gmail.com", USER = "ramesh@example.com";
+const PY = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
 const KEY = "k".repeat(40);
 let tally, app, svc, base, svcUrl, dataDir, tallyPort;
 
@@ -52,7 +54,7 @@ const JPEG = "/9j/" + "A".repeat(400);
 test.before(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "itd-"));
   tallyPort = await freePort();
-  tally = spawn("python3", [path.join(here, "mock_tally.py"), String(tallyPort)], { stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, MOCK_COMPANIES: "VIPUL TEXTILES,Ramesh Traders" } });
+  tally = spawn(PY, [path.join(here, "mock_tally.py"), String(tallyPort)], { stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, MOCK_COMPANIES: "VIPUL TEXTILES,Ramesh Traders" } });
   svc = fakeService({ admin: ADMIN });
   svcUrl = await svc.listen();
   await startApp();
@@ -208,6 +210,6 @@ test("Tally closed: posts wait, and go through once Tally is back", async () => 
   assert.equal(jobs[0].status, "pending");
   assert.match(jobs[0].result, /Waiting for Tally/);
   assert.equal((await call("GET", "/me")).tally.status, "down");
-  tally = spawn("python3", [path.join(here, "mock_tally.py"), String(tallyPort)], { stdio: "ignore", env: { ...process.env, MOCK_COMPANIES: "VIPUL TEXTILES" } });
+  tally = spawn(PY, [path.join(here, "mock_tally.py"), String(tallyPort)], { stdio: "ignore", env: { ...process.env, MOCK_COMPANIES: "VIPUL TEXTILES" } });
   await until(async () => (await call("GET", `/bank/${s.id}`)).lines[0].status === "synced", 20000, "posting after Tally came back");
 });

@@ -76,6 +76,12 @@ const server = http.createServer(async (req, res) => {
   try {
     // A web page elsewhere cannot reach this API by pointing a name at 127.0.0.1 (DNS rebinding).
     if (!HOSTS.has(String(req.headers.host || ""))) { res.writeHead(421); res.end("Wrong host"); return; }
+    // the launcher asks the app to stop when its window closes
+    if (req.method === "POST" && req.url === "/api/quit" && req.headers["x-it-key"] === WINDOW_KEY) {
+      res.writeHead(200, { "content-type": "application/json" }); res.end('{"ok":true}');
+      shutdown("window closed");
+      return;
+    }
     const chunks = [];
     for await (const c of req) chunks.push(c);
     const body = chunks.length ? Buffer.concat(chunks) : undefined;
@@ -135,6 +141,35 @@ function backup(force = false) {
   }
 }
 
+// ------------------------------------------------------------------ stopping, updates
+let stopping = false;
+async function shutdown(why) {
+  if (stopping) return;
+  stopping = true;
+  log("stopping:", why);
+  runner.stop();
+  // a post that is with Tally right now is finished first (Tally answers within 2 minutes)
+  for (let i = 0; i < 240 && runner.state.busy; i++) await sleep(500);
+  server.close();
+  try { DB.close(); } catch {}
+  process.exit(0);
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+// a newer version on GitHub → the app shows a download link (installing keeps all data)
+const RELEASES = conf.releases || "https://api.github.com/repos/vsshegur/invoicetotally-desktop/releases/latest";
+const newer = (a, b) => { const x = String(a).replace(/^v/, "").split(".").map(Number), y = String(b).split(".").map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+async function checkUpdate() {
+  try {
+    const r = await fetch(RELEASES, { headers: { "user-agent": "InvoiceTotally/" + pkg.version, accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) return;
+    const j = await r.json();
+    const asset = (j.assets || []).find((a) => /Setup\.exe$/i.test(a.name));
+    env.update = newer(j.tag_name, pkg.version) && asset ? { version: String(j.tag_name).replace(/^v/, ""), url: asset.browser_download_url, notes: j.html_url } : null;
+  } catch {}
+}
+
 export function start() {
   return new Promise((resolve, reject) => {
     server.once("error", (e) => {
@@ -148,6 +183,8 @@ export function start() {
       runner.start();
       licenceLoop();
       setTimeout(() => backup(), 60_000);
+      setTimeout(checkUpdate, 20_000);
+      setInterval(checkUpdate, 12 * 3600e3);
       setInterval(() => backup(), 6 * 3600e3);
       resolve(server);
     });

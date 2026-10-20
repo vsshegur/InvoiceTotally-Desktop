@@ -153,7 +153,7 @@ function topBar(crumbs = [], company = null) {
     <nav class="crumbs">${cr ? '<span class="sep">›</span>' + cr : ""}</nav>
     <div class="spacer"></div>${right}
     <button class="btn sm ghost icon" id="themeBtn" title="Switch between light and dark" aria-label="Switch between light and dark"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="currentColor"/></svg></button>
-  </header>${ME?.licence?.stale ? `<div class="banner warn">Your licence hasn't been checked for a while — connect this PC to the internet so it can be confirmed.</div>` : ""}`;
+  </header>${ME?.update ? `<div class="banner info">InvoiceTotally ${esc(ME.update.version)} is available. <a href="${esc(ME.update.url)}" target="_blank" rel="noopener"><u>Download the installer</u></a> and run it — your data is kept.</div>` : ""}${ME?.licence?.stale ? `<div class="banner warn">Your licence hasn't been checked for a while — connect this PC to the internet so it can be confirmed.</div>` : ""}`;
 }
 function wireTop(company) {
   $("#themeBtn")?.addEventListener("click", () => {
@@ -255,11 +255,16 @@ async function viewSignin() {
     <p class="muted">Use the Google account the admin added for you. Sign in once on this PC — it stays signed in.</p>
     <button class="btn primary big" id="go">Sign in with Google</button>
     <div id="msg" style="margin-top:16px"></div>
-    ${ME?.service ? "" : `<div class="alert bad" style="margin-top:16px">This copy of the app doesn't know the InvoiceTotally service address. Ask the admin for the right installer.</div>`}
+    ${ME?.service ? `<p class="muted small" style="margin-top:28px">Service: ${esc(ME.service)} · <a href="#" id="chgSvc"><u>change</u></a></p>` : ""}
+    <form id="svc" class="card" style="margin-top:16px;${ME?.service ? "display:none" : ""}"><b>InvoiceTotally service address</b>
+      <p class="muted small" style="margin:4px 0 8px">Ask the admin for it — it looks like https://invoicetotally.something.workers.dev</p>
+      <div style="display:flex;gap:8px"><input class="in" name="url" value="${esc(ME?.service || "")}" placeholder="https://…workers.dev" required><button class="btn">Save</button></div></form>
   </div>`;
   wireTop();
   let polling = false;
   const say = (html) => { $("#msg").innerHTML = html; };
+  $("#chgSvc")?.addEventListener("click", (e) => { e.preventDefault(); $("#svc").style.display = ""; });
+  $("#svc").onsubmit = async (e) => { e.preventDefault(); await act(() => api("/service", { body: { url: e.target.url.value } }), "Saved"); ME = null; route(); };
   $("#go").onclick = async () => {
     const r = await act(() => api("/signin/start", { body: {} }));
     const w = window.open(r.url, "itsignin", "width=480,height=660");

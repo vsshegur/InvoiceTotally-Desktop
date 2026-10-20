@@ -97,7 +97,15 @@ route("GET", "/api/me", async ({ env, D }) => {
   return json({ version: env.VERSION || "dev", signed_in: !!lic, licence: licView(lic), companies: n,
     online: env.LIC ? env.LIC.online : true, service: env.LIC?.serviceUrl?.() || "", service_error: env.LIC?.lastError || "",
     tally: { status: st.status || "unknown", detail: st.detail || "", companies: st.companies || [], busy: st.busy || "" },
-    ai_labels: AI_LABELS });
+    ai_labels: AI_LABELS, update: env.update || null });
+}, { keyed: true });
+// The service address is built into the installer; this sets it on a copy that doesn't have one (before signing in).
+route("POST", "/api/service", async ({ env, body }) => {
+  if (await licence(env)) throw new HttpError(403, "Sign out first.");
+  const u = String(body.url || "").trim().replace(/\/+$/, "");
+  if (!/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(u)) throw new HttpError(400, "Enter the address like https://invoicetotally.yourname.workers.dev");
+  env.setConfig?.("service_url", u);
+  return json({ ok: true, service: u });
 }, { keyed: true });
 route("POST", "/api/signin/start", async ({ env }) => {
   if (!env.LIC?.serviceUrl()) throw new HttpError(503, "The InvoiceTotally service address is not set in this copy of the app.");
