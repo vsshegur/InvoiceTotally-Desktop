@@ -153,6 +153,32 @@ export function applyPendingRestore(dataDir,dbPath){
   try{
     fs.copyFileSync(source,temp);
     integrity(temp);
+    // Restored snapshots can contain posting jobs that were pending or in-flight at
+    // backup time. Freezing them BEFORE opening the restored DB prevents any
+    // automatic replay into Tally and protects against double booking.
+    const snapshot=new DatabaseSync(temp);
+    try {
+      snapshot.exec("BEGIN IMMEDIATE");
+      const reason="Restored backup: posting outcome unknown. Check in Tally before any manual retry.";
+      const stale=snapshot.prepare("SELECT kind,invoice_id FROM jobs WHERE status IN ('pending','sent') AND kind LIKE 'import_%'").all();
+      if(stale.length) {
+        snapshot.prepare("UPDATE jobs SET status='failed',result=? WHERE status IN ('pending','sent') AND kind LIKE 'import_%'").run(reason);
+        const tables=new Set(snapshot.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x=>x.name));
+        for(const item of stale) {
+          if(!item.invoice_id)continue;
+          const which={"import_voucher":"invoices","import_bank":"bank_lines","import_ecommerce":"ecommerce_vouchers"}[item.kind];
+          if(!which||!tables.has(which))continue;
+          const field=which==="invoices"?"sync_error":which==="bank_lines"?"sync_error":"error";
+          snapshot.prepare("UPDATE "+which+" SET status=?, "+field+"=? WHERE id=?").run(
+            which==="ecommerce_vouchers"?"uncertain":"failed",reason,item.invoice_id);
+        }
+      }
+      snapshot.exec("COMMIT");
+    } catch(error){
+      snapshot.exec("ROLLBACK");
+      throw error;
+    } finally {snapshot.close();}
+    integrity(temp);
     if(fs.existsSync(dbPath)){
       // A clean app restart closes SQLite; checkpoint anything left in its WAL first.
       const current=new DatabaseSync(dbPath);
