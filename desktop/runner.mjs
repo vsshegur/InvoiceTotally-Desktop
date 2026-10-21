@@ -142,5 +142,5 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
     }
   }
 
-  return { state, tally, step, recover, start: () => loop(), stop: () => { stopped = true; } };
+  return { state, tally, step, recover, readOnly: (xml) => TL.exportData(xml), start: () => loop(), stop: () => { stopped = true; } };
 }
