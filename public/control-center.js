@@ -72,7 +72,7 @@ async function companySmartMappings(c,el){
       a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);
     }catch(e){toast(e.message,true);}
   });
-  $("[data-remember]",el).forEach(btn=>btn.onclick=async()=>{
+  $$("[data-remember]",el).forEach(btn=>btn.onclick=async()=>{
     const i=+btn.dataset.remember,r=rows[i];
     const name=el.querySelector('[data-suggest="'+i+'"]')?.value;
     if(!name)return toast("Select one compatible Tally master",true);
@@ -168,7 +168,7 @@ async function companyGstControl(c,el){
         '<td>'+CC.amount(x.taxable_difference)+'</td><td>'+CC.amount(x.tax_difference)+'</td></tr>').join('')+
       '</tbody></table></div></details>':'')+
     '<p class="muted small">GST control is a reconciliation aid, not an official filing or legal ITC determination. Unclassified stock/sales ledgers and unusual journals must be reviewed by your accountant.</p>';
-  $("[data-json]",el).forEach(input=>input.onchange=async()=>{
+  $$("[data-json]",el).forEach(input=>input.onchange=async()=>{
     const file=input.files?.[0],kind=input.dataset.json;
     if(!file)return;
     try{
@@ -186,7 +186,7 @@ async function companyGstControl(c,el){
       toast(kind.toUpperCase()+" portal JSON read offline and saved");companyGstControl(c,el);
     }catch(e){toast(e.message,true);input.value="";}
   });
-  $('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
+  $$('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
     const kind=btn.dataset.save;
     const fields=$$('.ccGstNum[data-kind="'+kind+'"]',el);
     const summary=Object.fromEntries(fields.map(f=>[f.dataset.head,f.value===""?null:Number(f.value)]));
