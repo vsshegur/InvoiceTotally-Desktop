@@ -63,6 +63,31 @@ def export(kind):
     return f"<ENVELOPE><BODY><DATA><COLLECTION>{''.join(out)}</COLLECTION></DATA></BODY></ENVELOPE>"
 
 
+def dashboard_balances():
+    out = []
+    amounts = {"HDFC Bank 1234": -125000, "ABCABC": -54000,
+               "Accual Software Private Limited": 24000, "GST SALES": 175000,
+               "GST PURCHASE": -112000, "IGST": 2000, "CGST": 3500, "SGST": 3500}
+    for name, parent, *_ in LEDGERS:
+        amt = amounts.get(name, 0)
+        out.append(f'<LEDGER NAME="{esc(name)}"><PARENT>{esc(parent)}</PARENT>'
+                   f'<CLOSINGBALANCE>{amt:.2f}</CLOSINGBALANCE></LEDGER>')
+    return "<ENVELOPE><BODY><DATA><COLLECTION>" + "".join(out) + "</COLLECTION></DATA></BODY></ENVELOPE>"
+
+def sales_gst(frm, to):
+    if not frm <= "20260910" <= to:
+        return "<ENVELOPE><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>"
+    entries = [("ABCABC",-1050),("GST SALES",1000),("CGST",25),("SGST",25)]
+    all_entries = "".join(f'<ALLLEDGERENTRIES.LIST><LEDGERNAME>{esc(name)}</LEDGERNAME>'
+                          f'<AMOUNT>{amount:.2f}</AMOUNT></ALLLEDGERENTRIES.LIST>'
+                          for name,amount in entries)
+    voucher = ('<VOUCHER><MASTERID>3001</MASTERID><DATE>20260910</DATE>'
+               '<VOUCHERNUMBER>SALES-1</VOUCHERNUMBER><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>'
+               '<PARTYLEDGERNAME>ABCABC</PARTYLEDGERNAME><ITKIND>sale</ITKIND>'
+               + all_entries + '</VOUCHER>')
+    return "<ENVELOPE><BODY><DATA><COLLECTION>" + voucher + "</COLLECTION></DATA></BODY></ENVELOPE>"
+
+
 def bills(side):
     rows = BILLS_P if side == "payable" else BILLS_R
     out = []
@@ -206,6 +231,12 @@ class H(BaseHTTPRequestHandler):
             out = do_import(xml)
         elif "<ID>Bills Receivable</ID>" in xml or "<ID>Bills Payable</ID>" in xml:
             out = bills("payable" if "Bills Payable" in xml else "receivable")
+        elif "ITDashboardBalances" in xml:
+            out = dashboard_balances()
+        elif "ITSalesGSTControl" in xml:
+            frm = re.search(r'<SVFROMDATE TYPE="Date">(\d+)', xml).group(1)
+            to = re.search(r'<SVTODATE TYPE="Date">(\d+)', xml).group(1)
+            out = sales_gst(frm, to)
         elif "ITPurchaseGST" in xml:
             frm = re.search(r'<SVFROMDATE TYPE="Date">(\d+)', xml).group(1)
             to = re.search(r'<SVTODATE TYPE="Date">(\d+)', xml).group(1)
