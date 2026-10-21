@@ -181,3 +181,13 @@ test("AES-256 encrypted backup requires passphrase and can be restored after res
     assert.throws(()=>scheduleRestore(backups,data,created.name,passphrase),/validation/);
   }finally{fs.rmSync(temp,{recursive:true,force:true});}
 });
+
+
+test("all new and existing desktop screens parse as valid offline browser JavaScript",async()=>{
+  const {Script}=await import("node:vm");
+  for(const name of ["public/app.js","public/control-center.js","public/ecommerce.js","public/gst.js",
+    "public/bank.js","public/ingest.js"]){
+    const code=fs.readFileSync(new URL("../"+name,import.meta.url),"utf8");
+    assert.doesNotThrow(()=>new Script(code,{filename:name}),"Invalid browser JS: "+name);
+  }
+});
