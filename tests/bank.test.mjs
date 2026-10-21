@@ -164,3 +164,64 @@ test("co-operative bank headings: Tran Dt, Particulars, Instr, Dr Amt, Cr Amt, B
   assert.deepEqual(r.rows.map((x) => [x.date, x.ref, x.debit, x.credit, x.balance, x.ok]),
     [["2026-10-11", "4411", 2500, 0, 7500, true], ["2026-10-12", "", 0, 1000, 8500, true]]);
 });
+
+// A made-up statement laid out like a co-operative bank's PDF: the date is printed only on a day's first transaction
+// and the balance only on its last; the cheque column also carries a value date; each page repeats the bank's heading,
+// starts with "Balance B/F" and ends with "Balance C/F" and a page number; the last page has the bank's totals and
+// its count of debits and credits.
+test("co-operative bank PDF: date only on a day's first row, balance only on its last, B/F and C/F per page", () => {
+  const W = (s) => s.length * 4.6;
+  const it = (y, x, s, w = W(s)) => ({ s, x, y, w });
+  const right = (y, edge, s) => it(y, edge - W(s), s); // amounts are right-aligned
+  const head = (y) => [it(y, 38.5, "Date", 16.9), it(y, 83.5, "Particulars", 40.3), it(y, 226.2, "Chq No.", 29.9), it(y, 256, "Value Date", 39.9),
+    it(y, 322.6, "Tran ID", 26.9), it(y, 398, "Debit", 19.5), it(y, 469.9, "Credit", 22.5), it(y, 537.7, "Balance", 29.9)];
+  const top = (pg) => [it(40, 30, "Sample Sahakari Bank Limited Main Branch"), it(60, 30, "Customer ID:"), it(60, 90, "12345"),
+    it(80, 30, "Current"), it(80, 70, "Balance 1200.50 Cr"), it(100, 30, `Statement Of Accounts Page No: ${pg}`), ...head(130)];
+  const txn = (y, { d, narr, chq, vdate, id, dr, cr, bal, more = [] }) => [
+    ...(d ? [it(y, 38.6, d, 40.5)] : []), it(y, 85.3, narr), ...(chq ? [it(y, 226.5, chq)] : []), ...(vdate ? [it(y, 256, vdate, 40.5)] : []),
+    it(y, 328.5, id), right(y, 420, dr), right(y, 492, cr), ...(bal ? [right(y, 551, bal), it(y, 552, "Cr", 9)] : []),
+    ...more.map((m, k) => it(y + 12 * (k + 1), 85.3, m))];
+  const page1 = [...top(1),
+    it(150, 85.3, "Opening Balance"), right(150, 551, "1000.00"), it(152, 552, "Cr", 9),
+    ...txn(170, { d: "01/04/2026", narr: "By-Clearing ALPHA TRADERS,", chq: "100201", id: "501", dr: "0.00", cr: "5000.00", bal: "6000.00", more: ["Chq : 100201, Seq :", "BANK OF SAMPLE"] }),
+    ...txn(210, { d: "03/04/2026", narr: "By-Clearing beta stores", chq: "77001", id: "502", dr: "0.00", cr: "2500.00", more: ["Chq : 77001"] }),
+    ...txn(240, { narr: "By-Clearing beta stores", chq: "77002", id: "503", dr: "0.00", cr: "1500.00", more: ["Chq : 77002"] }),
+    ...txn(270, { narr: "To-S TFR", id: "504", dr: "8000.00", cr: "0.00", bal: "2000.00", more: ["UPI/123456789012/DEBIT/SAMP", "LE CO/PUNB0000000/samplet", "x@axl/Payment"] }),
+    it(330, 38.6, "03-04-2026", 40.5), it(330, 85.3, "Balance C/F"), right(330, 420, "8000.00"), right(330, 492, "9000.00"), right(330, 551, "2000.00"), it(330, 552, "Cr", 9),
+    it(350, 200, "Page No :-"), it(350, 250, "1"), it(350, 262, "Of"), it(350, 280, "2")];
+  const page2 = [...top(2),
+    it(150, 38.6, "03-04-2026", 40.5), it(150, 85.3, "Balance B/F"), right(150, 551, "2000.00"), it(150, 552, "Cr", 9),
+    ...txn(170, { d: "05/04/2026", narr: "To-Charges Outward Clearing", vdate: "05/04/2026", id: "601", dr: "200.00", cr: "0.00" }),
+    ...txn(190, { narr: "By-Outward Return GAMMA", id: "602", dr: "0.00", cr: "800.00", bal: "2600.00" }),
+    it(220, 85.3, "Closing Balance"), right(220, 420, "8200.00"), right(220, 492, "0.00"), right(220, 551, "2600.00"), it(220, 552, "Cr", 9),
+    it(235, 85.3, "Total :"), right(235, 420, "8200.00"), right(235, 492, "9800.00"),
+    it(250, 85.3, "No Of Tranaction(s) :"), right(250, 420, "2"), right(250, 492, "4"),
+    it(270, 30, "This is a computerised statement & does not require a signature."), it(285, 30, "***End Of Statement***")];
+  const r = B.fromPdfPages([{ items: page1 }, { items: page2 }]);
+  assert.equal(r.rows.length, 6, JSON.stringify(r.rows.map((x) => [x.date, x.debit, x.credit])));
+  assert.deepEqual(r.rows.map((x) => [x.date, x.debit, x.credit]), [
+    ["2026-04-01", 0, 5000], ["2026-04-03", 0, 2500], ["2026-04-03", 0, 1500], ["2026-04-03", 8000, 0], ["2026-04-05", 200, 0], ["2026-04-05", 0, 800]]);
+  assert.deepEqual([r.opening, r.closing], [1000, 2600], "the first opening balance, not a later page's B/F");
+  assert.deepEqual(r.counts, { debit: 2, credit: 4 });
+  assert.equal(r.totals_match, true);
+  assert.deepEqual(r.warnings, []);
+  assert.equal(r.ok, true, "every row is checked through the next printed balance");
+  assert.ok(r.rows.every((x) => x.ok === true));
+  assert.equal(r.rows[1].ref, "77001");
+  assert.equal(r.rows[4].ref, "", "a value date in the cheque column is not a cheque number");
+  assert.equal(r.rows[3].narration, "To-S TFR UPI/123456789012/DEBIT/SAMP LE CO/PUNB0000000/sampletx@axl/Payment", "UPI handle joined across lines");
+  assert.doesNotMatch(r.rows.map((x) => x.narration).join(" "), /Page No|Customer ID|Current|computerised/);
+  assert.equal(B.narrationKey(r.rows[3].narration), "UPI:SAMPLETX@AXL");
+});
+
+test("rows without a balance: a wrong amount is still caught, and a missing row is reported", () => {
+  const rows = [["Date", "Particulars", "Debit", "Credit", "Balance"], ["", "Opening Balance", "", "", "1000.00"],
+    ["01/04/2026", "A", "", "500.00", ""], ["", "B", "200.00", "", "1300.00"],
+    ["02/04/2026", "C", "", "100.00", ""], ["", "D", "50.00", "", "1360.00"], // 1300+100-50 = 1350, not 1360
+    ["", "No of transactions :", "2", "3", ""]];
+  const r = B.fromSheetText(tsv(rows));
+  assert.equal(r.rows.length, 4);
+  assert.deepEqual(r.rows.map((x) => x.ok), [true, true, false, false]);
+  assert.equal(r.ok, false);
+  assert.match(r.warnings[0], /says 2 withdrawals and 3 deposits; 2 and 2 were read/);
+});

@@ -256,7 +256,6 @@ async function viewSignin() {
     <button class="btn primary big" id="go">Sign in with Google</button>
     <div id="msg" style="margin-top:16px"></div>
     ${ME?.service ? `<p class="muted small" style="margin-top:28px">Service: ${esc(ME.service)} · <a href="#" id="chgSvc"><u>change</u></a></p>` : ""}
-    <details class="card owner-box" id="ownerBox" style="margin-top:22px"><summary><b>Owner sign-in on this PC</b> <span class="muted small">— works without the service</span></summary><div id="ownerBody" class="small" style="margin-top:10px">Loading…</div></details>
     <form id="svc" class="card" style="margin-top:16px;${ME?.service ? "display:none" : ""}"><b>InvoiceTotally service address</b>
       <p class="muted small" style="margin:4px 0 8px">Ask the admin for it — for example https://vipulshegur.packpilot.in</p>
       <div style="display:flex;gap:8px"><input class="in" name="url" value="${esc(ME?.service || "")}" placeholder="https://…" required><button class="btn">Save</button></div></form>
@@ -266,7 +265,6 @@ async function viewSignin() {
   const say = (html) => { $("#msg").innerHTML = html; };
   $("#chgSvc")?.addEventListener("click", (e) => { e.preventDefault(); $("#svc").style.display = ""; });
   $("#svc").onsubmit = async (e) => { e.preventDefault(); await act(() => api("/service", { body: { url: e.target.url.value } }), "Saved"); ME = null; route(); };
-  $("#ownerBox").addEventListener("toggle", () => { if ($("#ownerBox").open) ownerSignin(); }, { once: true });
   $("#go").onclick = async () => {
     const r = await act(() => api("/signin/start", { body: {} }));
     const w = window.open(r.url, "itsignin", "width=480,height=660");
@@ -288,49 +286,11 @@ async function viewSignin() {
   onCleanup(() => { polling = false; });
 }
 
-// Owner mode: the admin signs in with Google right here (no service) — the token is checked on this PC.
-let gisLoading = null;
-const loadGis = () => gisLoading ||= new Promise((ok, fail) => {
-  if (window.google?.accounts?.id) return ok();
-  const sc = document.createElement("script");
-  sc.src = "https://accounts.google.com/gsi/client"; sc.async = true;
-  sc.onload = () => ok(); sc.onerror = () => { gisLoading = null; fail(new Error("Could not load Google sign-in — check the internet connection.")); };
-  document.head.appendChild(sc);
-});
-async function ownerSignin() {
-  const box = $("#ownerBody");
-  const o = await api("/owner").catch((e) => ({ error: e.message }));
-  if (o.error) { box.innerHTML = `<div class="alert bad">${esc(o.error)}</div>`; return; }
-  const help = `<p class="muted" style="margin:8px 0 0">For <b>${esc(o.email)}</b> only. Once, in Google Cloud Console → APIs &amp; Services → Credentials → your Web client,
-    add <code>http://localhost:47821</code> under <b>Authorized JavaScript origins</b> (it can take a few minutes to work). Invoices are then read with the AI keys
-    you save on this PC under ⚙ Account.</p>`;
-  if (!o.client_id) {
-    box.innerHTML = `<form id="cid"><label class="muted">Google Web client ID (the same one TallyBridge uses)</label>
-      <div style="display:flex;gap:8px;margin-top:4px"><input class="in mono" name="client_id" placeholder="1234…apps.googleusercontent.com" required><button class="btn">Save</button></div></form>${help}`;
-    $("#cid").onsubmit = async (e) => { e.preventDefault(); await act(() => api("/owner/client", { body: { client_id: e.target.client_id.value } }), "Saved"); ownerSignin(); };
-    return;
-  }
-  box.innerHTML = `<div id="gbtn"><span class="spin"></span> Loading Google sign-in…</div><div id="omsg"></div>${help}
-    <p class="muted" style="margin:6px 0 0">Client ID ${esc(o.client_id.slice(0, 14))}… · <a href="#" id="chgCid"><u>change</u></a></p>`;
-  $("#chgCid").onclick = (e) => {
-    e.preventDefault();
-    box.innerHTML = `<form id="cid"><div style="display:flex;gap:8px"><input class="in mono" name="client_id" value="${esc(o.client_id)}" required><button class="btn">Save</button></div></form>`;
-    $("#cid").onsubmit = async (ev) => { ev.preventDefault(); await act(() => api("/owner/client", { body: { client_id: ev.target.client_id.value } }), "Saved"); ownerSignin(); };
-  };
-  try { await loadGis(); } catch (e) { $("#gbtn").innerHTML = `<div class="alert bad">${esc(e.message)}</div>`; return; }
-  google.accounts.id.initialize({ client_id: o.client_id, auto_select: false, callback: async (r) => {
-    try { await api("/owner/signin", { body: { credential: r.credential } }); ME = null; toast("Signed in on this PC (owner mode)"); location.hash = "#/"; route(); }
-    catch (e) { $("#omsg").innerHTML = `<div class="alert bad" style="margin-top:8px">${esc(e.message)}</div>`; }
-  } });
-  $("#gbtn").innerHTML = "";
-  google.accounts.id.renderButton($("#gbtn"), { type: "standard", size: "large", shape: "pill", text: "signin_with", theme: document.documentElement.dataset.theme === "dark" ? "filled_black" : "outline" });
-}
-
 // ---------------------------------------------------------------------------
 // account (this PC) · admin (users, limits, credits)
 // ---------------------------------------------------------------------------
 async function viewAccount() {
-  const [me, s, owner] = await Promise.all([api("/licence/refresh", { body: {} }).catch(() => ({ licence: ME?.licence })), api("/settings"), api("/owner").catch(() => ({}))]);
+  const [me, s] = await Promise.all([api("/licence/refresh", { body: {} }).catch(() => ({ licence: ME?.licence })), api("/settings")]);
   ME.licence = me.licence || ME.licence;
   const l = ME.licence || {};
   const tick = (b) => b ? `<span class="good">Yes</span>` : `<span class="bad">No</span>`;
@@ -338,7 +298,7 @@ async function viewAccount() {
     <h1>Your account</h1>
     <div class="card"><div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
       <div class="avatar">${esc((l.name || l.email || "?")[0].toUpperCase())}</div>
-      <div style="flex:1"><b>${esc(l.name || l.email)}</b><div class="muted">${esc(l.email)}${l.admin ? " · admin" : ""}${l.owner ? ' · <span class="warn">owner mode — signed in on this PC, without the service</span>' : ""}</div></div>
+      <div style="flex:1"><b>${esc(l.name || l.email)}</b><div class="muted">${esc(l.email)}${l.admin ? " · admin" : ""}</div></div>
       <button class="btn" id="signout">Sign out on this PC</button></div>
       <div class="kv" style="margin-top:14px">
         ${l.unlimited ? `<div><span>Credits</span><b>Unlimited (admin)</b></div>` : `
@@ -346,18 +306,12 @@ async function viewAccount() {
         <div><span>Statement credits left</span><b class="${l.statement_credits < 3 ? "warn" : ""}">${(l.statement_credits ?? 0).toLocaleString("en-IN")}</b></div>`}
         <div><span>Companies</span><b>${ME.companies} of ${l.unlimited ? "unlimited" : l.company_limit}</b></div>
         <div><span>Can post to Tally</span><b>${tick(l.can_post)}</b></div>
-        <div><span>AI for reading</span><b>${(l.ai_options || []).map((a) => esc(ME.ai_labels[a] || a)).join(", ") || "—"}</b></div>
+        <div><span>AIs you may use</span><b>${(l.ai_options || []).map((a) => esc(ME.ai_labels[a] || a)).join(", ") || "—"}</b></div>
         <div><span>Licence checked</span><b>${me.online === false ? `<span class="warn">offline — last ${ago(l.issued_at)}</span>` : ago(l.issued_at)}</b></div>
       </div>
       ${l.unlimited ? "" : `<p class="muted small" style="margin:12px 0 0">One invoice credit is used for each invoice read; one statement credit for each bank statement saved. To buy more, contact the admin.</p>`}</div>
     ${l.admin ? `<div class="card" style="margin-top:12px"><b>Admin</b><p class="muted" style="margin:4px 0 10px">Add the people who may use InvoiceTotally, set their limits and give them credits.</p>
       <a class="btn primary" href="#/admin">Open the admin panel</a></div>` : ""}
-    ${l.admin ? `<h2 style="margin-top:26px">AI keys on this PC <span class="muted small">(owner mode)</span></h2>
-    <form class="card" id="okeys"><p class="muted small" style="margin:0 0 10px">Used only when you sign in with <b>Owner sign-in</b>: invoices are then read straight from this PC with these keys.
-      Other users never use them. Leave a box empty to keep what's saved; type a single space to remove a key.</p>
-      ${[["GEMINI_API_KEY", "Gemini — free key (Flash-Lite)"], ["GEMINI_PAID_API_KEY", "Gemini — key with billing on (Flash)"], ["GROQ_API_KEY", "Groq (free)"], ["ANTHROPIC_API_KEY", "Claude"]].map(([k, lbl]) =>
-        `<div class="field"><label>${lbl}</label><input class="in mono" type="password" name="${k}" autocomplete="off" placeholder="${esc(owner.keys?.[k] ? "saved " + owner.keys[k] : "not set")}"></div>`).join("")}
-      <button class="btn primary">Save keys</button></form>` : ""}
     <h2 style="margin-top:26px">This PC</h2>
     <form class="card" id="bk">
       <div class="field"><label>Daily backup folder</label>
@@ -370,13 +324,6 @@ async function viewAccount() {
   </div>`;
   wireTop();
   $("#signout").onclick = async () => { if (!confirm("Sign out on this PC? Work that is waiting stays here for when you sign in again.")) return; await api("/signout", { body: {} }); ME = null; location.hash = "#/signin"; };
-  $("#okeys")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const body = {};
-    for (const el of $$("#okeys input")) if (el.value !== "") body[el.name] = el.value.trim();
-    if (!Object.keys(body).length) return toast("Type a key first", true);
-    await act(() => api("/owner/keys", { body }), "Keys saved on this PC"); route();
-  });
   $("#bk").onsubmit = async (e) => { e.preventDefault(); await act(() => api("/settings", { body: { backup_dir: e.target.backup_dir.value } }), "Saved"); route(); };
   $("#bknow").onclick = async () => { const r = await act(() => api("/backup", { body: {} })); if (r.error) toast(r.error, true); else toast("Backup saved"); route(); };
 }
@@ -615,13 +562,28 @@ async function companyJobs(c, el) {
   every(3000, () => { if (rows.some((j) => j.status === "pending" || j.status === "sent")) refresh(); });
 }
 
-function aiChoiceHtml(cur, opts) {
-  return `<div class="field"><label>AI that reads this company's invoices</label><div class="choices" style="margin-top:4px">
-    ${opts.map((v) => `<label class="choice ${cur === v ? "on" : ""}">
-        <input type="radio" name="ai" value="${v}" ${cur === v ? "checked" : ""} style="margin-right:10px">
-        <div style="flex:1"><div><b>${esc(ME.ai_labels[v] || v)}</b></div><div class="sub">${esc(AI_HELP[v] || "")}</div></div></label>`).join("")}</div>
-    ${opts.length < 4 ? `<div class="muted small" style="margin-top:6px">The admin decides which AI you can use.</div>` : ""}
-    <div style="margin-top:8px"><button type="button" class="btn" id="aiTest">Test the AI</button> <span class="muted small">One tiny request (no invoice, no credit used).</span><div id="aiTestOut" style="margin-top:8px"></div></div></div>`;
+// The company's AIs in priority order: the first ticked one reads; a handwritten bill, or one that doesn't add up, is
+// read again by the next ticked one; one that is out of its daily quota is skipped.
+function aiOrderHtml(order, opts) {
+  const ticked = order.filter((a) => opts.includes(a));
+  const rows = [...ticked, ...opts.filter((a) => !ticked.includes(a))];
+  return rows.map((v) => {
+    const on = ticked.includes(v), n = ticked.indexOf(v);
+    return `<div class="choice airow ${on ? "on" : ""}" data-ai="${v}">
+      <input type="checkbox" ${on ? "checked" : ""} style="margin-right:10px" aria-label="Use ${esc(ME.ai_labels[v] || v)}">
+      <span class="ainum">${on ? n + 1 : "–"}</span>
+      <div style="flex:1"><div><b>${esc(ME.ai_labels[v] || v)}</b>${on && n === 0 ? ' <span class="muted small">— reads first</span>' : on ? ' <span class="muted small">— checks hard bills, or reads when the ones above can\'t</span>' : ""}</div>
+        <div class="sub">${esc(AI_HELP[v] || "")}</div><div class="aitest small"></div></div>
+      ${on ? `<span class="aimove"><button type="button" class="btn sm" data-up title="Move up" ${n === 0 ? "disabled" : ""}>▲</button><button type="button" class="btn sm" data-down title="Move down" ${n === ticked.length - 1 ? "disabled" : ""}>▼</button></span>` : ""}
+    </div>`;
+  }).join("");
+}
+function aiOrderField(opts) {
+  return `<div class="field"><label>AIs that read this company's invoices — in order</label>
+    <div class="muted small" style="margin:2px 0 6px">Tick the AIs to use and put them in order. The first reads every invoice. When a bill is handwritten or its totals don't add up, the next one reads it again and the better reading is kept. When one is out of its daily limit, the next one reads instead.</div>
+    <div class="choices" id="aiOrder"></div>
+    ${opts.length < 4 ? `<div class="muted small" style="margin-top:6px">The admin decides which AIs you can use.</div>` : ""}
+    <div style="margin-top:8px"><button type="button" class="btn" id="aiTest">Test the ticked AIs</button> <span class="muted small">One tiny request each (no invoice, no credit used).</span></div></div>`;
 }
 
 async function companySettings(c, el) {
@@ -629,10 +591,11 @@ async function companySettings(c, el) {
   const ledR = await api(`/companies/${c.id}/masters?kind=ledger&groups=${encodeURIComponent("Purchase Accounts|Sales Accounts")}`);
   const led = ledR.items;
   const aiOpts = ME.licence?.ai_options || [];
-  const curAI = aiOpts.includes(s.ai) ? s.ai : aiOpts[0];
+  let order = (Array.isArray(s.ai_order) && s.ai_order.length ? s.ai_order : [s.ai]).filter((a) => aiOpts.includes(a));
+  if (!order.length && aiOpts.length) order = [aiOpts[0]];
   const opts = (grp, cur) => `<option value="">— suggest automatically —</option>` + led.filter((l) => l.primary_group === grp).map((l) => `<option ${l.name === cur ? "selected" : ""}>${esc(l.name)}</option>`).join("");
   el.innerHTML = `<form id="f" style="max-width:640px">
-    ${aiChoiceHtml(curAI, aiOpts)}
+    ${aiOrderField(aiOpts)}
     <div class="field"><label>Company name</label><input class="in" name="name" value="${esc(c.name)}"></div>
     <div class="field"><label>Company name in Tally (must match exactly)</label><input class="in" name="tally_company" value="${esc(c.tally_company || "")}"></div>
     <div class="field"><label>Your GSTIN</label><input class="in mono" name="gstin" value="${esc(c.gstin || "")}" maxlength="15"></div>
@@ -641,19 +604,36 @@ async function companySettings(c, el) {
     <label style="display:flex;gap:8px;margin:8px 0"><input type="checkbox" name="send_descriptions" ${s.send_descriptions !== false ? "checked" : ""}> Send the invoice's item description under each stock item</label>
     <label style="display:flex;gap:8px;margin:8px 0 16px"><input type="checkbox" name="round_off" ${s.round_off !== false ? "checked" : ""}> Round the bill to the nearest rupee</label>
     <button class="btn primary">Save</button> <button type="button" class="btn danger" id="del" style="margin-left:8px">Delete company</button></form>`;
-  $$("input[name=ai]").forEach((r) => r.onchange = () => $$("input[name=ai]").forEach((x) => x.closest(".choice").classList.toggle("on", x.checked)));
+  const drawOrder = () => {
+    $("#aiOrder").innerHTML = aiOrderHtml(order, aiOpts);
+    $$("#aiOrder .airow").forEach((row) => {
+      const v = row.dataset.ai, i = order.indexOf(v);
+      row.querySelector("input").onchange = (e) => {
+        if (e.target.checked) order.push(v);
+        else if (order.length === 1) { e.target.checked = true; return toast("Keep at least one AI ticked", true); }
+        else order.splice(i, 1);
+        drawOrder();
+      };
+      row.querySelector("[data-up]")?.addEventListener("click", () => { [order[i - 1], order[i]] = [order[i], order[i - 1]]; drawOrder(); });
+      row.querySelector("[data-down]")?.addEventListener("click", () => { [order[i + 1], order[i]] = [order[i], order[i + 1]]; drawOrder(); });
+    });
+  };
+  drawOrder();
   $("#aiTest").onclick = async () => {
-    const ai = ($("input[name=ai]:checked") || {}).value || curAI;
-    $("#aiTestOut").innerHTML = '<span class="spin" style="display:inline-block;vertical-align:-2px"></span> Testing…';
-    const r = await api("/ai/test", { body: { ai } }).catch((e) => ({ ok: false, error: e.message }));
-    $("#aiTestOut").innerHTML = r.ok ? `<div class="alert ok">${esc(ME.ai_labels[ai] || ai)} is working — answered in ${((r.ms || 0) / 1000).toFixed(1)} s.</div>`
-      : `<div class="alert bad"><b>${esc(ME.ai_labels[ai] || ai)}:</b> ${esc(r.error)}</div>`;
+    $("#aiTest").disabled = true;
+    for (const ai of [...order]) {
+      const out = () => $(`#aiOrder .airow[data-ai="${ai}"] .aitest`);
+      if (out()) out().innerHTML = '<span class="spin" style="display:inline-block;vertical-align:-2px"></span> Testing…';
+      const r = await api("/ai/test", { body: { ai } }).catch((e) => ({ ok: false, error: e.message }));
+      if (out()) out().innerHTML = r.ok ? `<span class="good">✓ Working — answered in ${((r.ms || 0) / 1000).toFixed(1)} s</span>` : `<span class="bad">✗ ${esc(r.error)}</span>`;
+    }
+    $("#aiTest").disabled = false;
   };
   $("#f").onsubmit = async (e) => {
     e.preventDefault(); const f = e.target;
     await act(() => api(`/companies/${c.id}`, { method: "PATCH", body: { name: f.name.value, tally_company: f.tally_company.value, gstin: f.gstin.value,
       settings: { default_purchase_ledger: f.default_purchase_ledger.value, default_sales_ledger: f.default_sales_ledger.value, send_descriptions: f.send_descriptions.checked, round_off: f.round_off.checked,
-        ai: (f.querySelector("input[name=ai]:checked") || {}).value || curAI } } }), "Saved");
+        ai_order: order } } }), "Saved");
     route();
   };
   $("#del").onclick = async () => { if (confirm(`Delete ${c.name} and all its data in this app? (Nothing in Tally is touched. It still counts towards your company limit.)`)) { await api(`/companies/${c.id}`, { method: "DELETE" }); location.hash = "#/"; } };
@@ -1201,7 +1181,7 @@ async function viewInvoice(iid) {
       ${(h.warnings || []).map((w) => `<div class="alert warn" style="margin-bottom:6px">⚠ ${esc(w)}</div>`).join("")}
       ${h.handwritten ? `<div class="alert warn" style="margin-bottom:6px">Handwritten invoice — please double-check every figure.</div>` : ""}
       ${h.rechecked ? `<div class="alert ok" style="margin-bottom:6px">The first reading didn't add up, so it was read a second time${h.ai?.rechecked_by ? ` by ${esc(h.ai.rechecked_by)}` : ""}${(h.warnings || []).length ? " — the notes above are what still needs your eye" : " — everything adds up now"}.</div>` : ""}
-      ${h.ai ? `<div class="muted" style="font-size:12.5px;margin-bottom:8px">Read by <b>${esc(h.ai.read_by)}</b>${h.ai.rechecked_by ? ` · checked by <b>${esc(h.ai.rechecked_by)}</b>` : ""}${h.ai.cost_usd ? ` · AI cost ≈ ₹${(h.ai.cost_usd * 88).toFixed(2)}` : ""}</div>` : ""}
+      ${h.ai ? `<div class="muted" style="font-size:12.5px;margin-bottom:8px">Read by <b>${esc(h.ai.read_by)}</b>${h.ai.rechecked_by ? ` · checked by <b>${esc(h.ai.rechecked_by)}</b>` : ""}${h.ai.cost_usd ? ` · AI cost ≈ ₹${(h.ai.cost_usd * 88).toFixed(2)}` : ""}${h.ai.skipped ? `<div class="small" title="${esc(h.ai.skipped)}">Skipped first: ${esc(h.ai.skipped.slice(0, 160))}</div>` : ""}</div>` : ""}
       ${editable && !inv.steps.ready && inv.steps.blockers?.length ? `<div class="alert bad" style="margin-bottom:6px"><b>Not ready for Tally yet:</b> ${esc(inv.steps.blockers.join("; "))}.${!inv.steps.total_ok ? " Compare each line amount and the tax figures below with the image, correct them, and save." : ""}</div>` : ""}
       <div class="row">${f("number", "Invoice no.", "mono")}${f("date", "Date (YYYY-MM-DD)", "mono")}</div>
       <div class="row">${f("party_name", b.voucher_type === "Purchase" ? "Supplier name" : "Customer name")}

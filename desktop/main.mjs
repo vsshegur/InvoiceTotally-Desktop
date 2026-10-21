@@ -13,7 +13,6 @@ import { fileURLToPath } from "node:url";
 import { makeD1 } from "./d1.mjs";
 import { licenceClient } from "./licence.mjs";
 import { makeRunner } from "./runner.mjs";
-import { ownerMode } from "./owner.mjs";
 import api from "../engine/api.js";
 import * as P from "../engine/pipeline.js";
 import { db } from "../engine/db.js";
@@ -38,9 +37,8 @@ const D = db({ DB });
 const cfg = (k) => DB.sql.prepare("SELECT value FROM app_config WHERE key=?").get(k)?.value ?? null;
 const serviceUrl = () => process.env.IT_SERVICE || cfg("service_url") || conf.service || "";
 const LIC = licenceClient({ D, serviceUrl });
-const OWNER = ownerMode({ D });
 const runner = makeRunner(D, { log, canPost: async (c) => {
-  const lic = (await OWNER.licence([])) || (await LIC.current());
+  const lic = await LIC.current();
   if (!lic) return "other";
   if (c.owner_email && c.owner_email !== lic.email) return "other";
   return lic.can_post === true;
@@ -66,7 +64,7 @@ const ASSETS = {
 };
 
 export const env = {
-  DB, LIC, OWNER, TALLY: runner, ASSETS, WINDOW_KEY, DATA, VERSION: pkg.version,
+  DB, LIC, TALLY: runner, ASSETS, WINDOW_KEY, DATA, VERSION: pkg.version,
   EXTRACTOR: process.env.EXTRACTOR || "", USD_INR: "88", log,
   setConfig: (k, v) => DB.sql.prepare("INSERT INTO app_config (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at").run(k, v, Date.now() / 1000),
   getConfig: cfg,

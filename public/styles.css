@@ -227,6 +227,14 @@ pre.code { background: var(--bg); border: 1px solid var(--line); padding: 10px; 
 .boot { display: flex; gap: 10px; align-items: center; justify-content: center; height: 60vh; color: var(--muted); }
 
 label.choice { cursor: pointer; justify-content: flex-start; }
+.choice.airow { justify-content: flex-start; cursor: default; }
+.choice.airow input { cursor: pointer; }
+.choice.airow .ainum { width: 22px; height: 22px; border-radius: 50%; display: inline-grid; place-items: center; flex: none;
+  font-size: 12px; font-weight: 700; background: var(--panel-2); color: var(--muted); }
+.choice.airow.on .ainum { background: var(--accent); color: #fff; }
+.choice.airow .aimove { display: flex; flex-direction: column; gap: 2px; flex: none; }
+.choice.airow .aimove .btn { padding: 0 8px; line-height: 18px; min-height: 0; }
+.choice.airow .aitest:not(:empty) { margin-top: 4px; }
 label.choice input[disabled] + div { cursor: not-allowed; }
 
 /* bank statements */
