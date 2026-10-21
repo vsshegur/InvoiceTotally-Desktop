@@ -1,4 +1,4 @@
-/* Accounting control centre. Classic script loaded by InvoiceTotally after app.js.
+/* Accounting control centre. Loaded before app.js so its dashboard route is registered safely.
  * Read-only overviews, user-approved mappings, local-only GST summary review. */
 const CC={
   amount(x){return x===null||x===undefined?"—":Number(x).toLocaleString("en-IN",{style:"currency",currency:"INR",minimumFractionDigits:2,maximumFractionDigits:2});},
