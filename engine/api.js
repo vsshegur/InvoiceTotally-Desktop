@@ -6,6 +6,7 @@ import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
 import { parseAmount } from "./num.js";
 import { AI_CHOICES, AI_LABELS } from "./reader.js";
 import * as BK from "./bank.js";
+import * as EC from "./ecommerce.js";
 import * as GS from "./gstr2b.js";
 
 class HttpError extends Error { constructor(status, msg, code) { super(msg); this.status = status; this.code = code; } }
@@ -216,7 +217,7 @@ route("DELETE", "/api/companies/:cid", async ({ D, p }) => {
   // everything that belongs to the company: bank statements and GSTR-2B too (nothing in Tally is touched)
   await D.batch([
     D.stmt("DELETE FROM bank_pages WHERE statement_id IN (SELECT id FROM bank_statements WHERE company_id=?)", p.cid),
-    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "tally_bills", "tally_bank_entries", "gst_docs", "gst_returns", "tally_gst_vouchers"]
+    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "tally_bills", "tally_bank_entries", "gst_docs", "gst_returns", "tally_gst_vouchers", "ecommerce_vouchers", "ecommerce_batches"]
       .map((t) => D.stmt(`DELETE FROM ${t} WHERE company_id=?`, p.cid)),
     D.stmt("DELETE FROM companies WHERE id=?", p.cid)]);
   return json({ ok: true });
@@ -638,6 +639,7 @@ async function useStatementCredit(env, D, st, lines) {
   }
 }
 BK.bankRoutes(route, { useCredit: useStatementCredit, requirePosting });
+EC.ecommerceRoutes(route, { requirePosting, requireLicence });
 // GSTR-2B reconciliation
 GS.gstRoutes(route);
 

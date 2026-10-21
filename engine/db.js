@@ -60,6 +60,17 @@ export const SCHEMA = [
     expected REAL, status TEXT DEFAULT 'new', vtype TEXT, ledger TEXT, method TEXT, confidence INTEGER DEFAULT 0,
     bills TEXT DEFAULT '[]', create_ledger TEXT, key TEXT, note TEXT, sync_error TEXT, synced_at REAL)`,
   `CREATE INDEX IF NOT EXISTS ix_bank_lines ON bank_lines(statement_id, seq)`,
+  `CREATE TABLE IF NOT EXISTS ecommerce_batches (
+    id TEXT PRIMARY KEY, company_id TEXT NOT NULL, platform TEXT NOT NULL, period TEXT NOT NULL,
+    summary TEXT NOT NULL, mapping TEXT NOT NULL DEFAULT '{}', created_at REAL,
+    UNIQUE(company_id, platform, period))`,
+  `CREATE INDEX IF NOT EXISTS ix_ec_batches ON ecommerce_batches(company_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS ecommerce_vouchers (
+    id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, company_id TEXT NOT NULL, seq INTEGER, platform TEXT, period TEXT, date TEXT,
+    number TEXT NOT NULL, vtype TEXT, state TEXT, rate REAL, taxable REAL, igst REAL, cgst REAL, sgst REAL,
+    round_off REAL, invoice REAL, items TEXT, status TEXT, error TEXT, synced_at REAL,
+    UNIQUE(company_id, number))`,
+  `CREATE INDEX IF NOT EXISTS ix_ec_vouchers ON ecommerce_vouchers(batch_id, seq)`,
   `CREATE TABLE IF NOT EXISTS tally_bills (
     company_id TEXT NOT NULL, side TEXT, party TEXT, name TEXT, date TEXT, amount REAL, due TEXT, fetched_at REAL)`,
   `CREATE INDEX IF NOT EXISTS ix_tally_bills ON tally_bills(company_id, side)`,

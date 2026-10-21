@@ -2,6 +2,7 @@
 // vouchers and new masters — straight against TallyPrime on this PC, one at a time.
 import * as P from "../engine/pipeline.js";
 import * as GS from "../engine/gstr2b.js";
+import * as EC from "../engine/ecommerce.js";
 import { now } from "../engine/db.js";
 import * as TL from "./tally.mjs";
 
@@ -84,19 +85,36 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
   }
 
   async function runPost(job, tc, c) {
-    if (!["import_voucher", "import_master", "import_bank"].includes(job.kind)) { await P.jobResult(D, job, false, "", "Unknown job type"); return; }
+    if (!["import_voucher", "import_master", "import_bank", "import_ecommerce"].includes(job.kind)) { await P.jobResult(D, job, false, "", "Unknown job type"); return; }
     const who = await canPost(c);
     if (who === "other") { await requeue(job, `Waiting for ${c.owner_email || "the company's owner"} to sign in on this PC`); return; }
     if (!who) { await P.jobResult(D, job, false, "", "Posting to Tally is not allowed for your account. Ask the admin."); return; }
+    if (job.kind === "import_ecommerce") {
+      let check;
+      try { check = await EC.beforePosting(D, job, tc, (xml) => TL.exportData(xml)); }
+      catch (e) {
+        if (e.down || e.timeout) { state.at = 0; await requeue(job, "Waiting for Tally to answer the duplicate check"); return; }
+        await EC.jobResult(D, job, false, "", "Existing-voucher check failed: " + e.message);
+        return; // fail closed: never import without checking Tally
+      }
+      if (check.duplicate) { await EC.jobResult(D, job, false, "", check.message, true); return; }
+    }
     let res;
     try { res = await TL.post(job.payload, tc); }
     catch (e) {
+      if (job.kind === "import_ecommerce") {
+        // The request might have reached Tally before a timeout or connection reset.
+        // Stop; never automatically retry a write with an unknown outcome.
+        await EC.jobResult(D, job, false, "", "Check in Tally before retrying — " + e.message);
+        return;
+      }
       if (e.down) { state.at = 0; await requeue(job, "Waiting for Tally — it will be posted when TallyPrime is open"); return; } // nothing reached Tally
       const msg = e.timeout ? "Tally took too long to answer. Check in Tally whether it was saved before pushing again." : `Not sent: ${e.message}`;
       await P.jobResult(D, job, false, "", msg);
       return;
     }
-    await P.jobResult(D, job, true, res.reply);
+    if (job.kind === "import_ecommerce") await EC.jobResult(D, job, true, res.reply);
+    else await P.jobResult(D, job, true, res.reply);
     state.posted++;
     log(`Posted ${res.what}`);
   }
@@ -104,8 +122,11 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
   async function recover() {
     // The app stopped while these were with Tally: reads are simply asked again; a post may or may not have been saved.
     await D.run("UPDATE jobs SET status='pending' WHERE status='sent' AND kind LIKE 'export_%'");
-    for (const j of await D.all("SELECT * FROM jobs WHERE status='sent'"))
-      await P.jobResult(D, j, false, "", "The app closed while posting this. Check in Tally whether it was saved before pushing again.");
+    for (const j of await D.all("SELECT * FROM jobs WHERE status='sent'")) {
+      const msg = "The app closed while posting this. Check in Tally whether it was saved before pushing again.";
+      if (j.kind === "import_ecommerce") await EC.jobResult(D, j, false, "", msg);
+      else await P.jobResult(D, j, false, "", msg);
+    }
   }
 
   async function loop() {
@@ -121,5 +142,5 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
     }
   }
 
-  return { state, tally, step, recover, start: () => loop(), stop: () => { stopped = true; } };
+  return { state, tally, step, recover, readOnly: (xml) => TL.exportData(xml), start: () => loop(), stop: () => { stopped = true; } };
 }

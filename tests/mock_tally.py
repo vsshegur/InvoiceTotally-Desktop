@@ -90,6 +90,25 @@ def bank_entries(ledger):
     return f"<ENVELOPE><BODY><DATA><COLLECTION>{''.join(out)}</COLLECTION></DATA></BODY></ENVELOPE>"
 
 
+def ecommerce_entries(date):
+    """Tally's read-only per-day Sales/Credit Note collection for duplicate prevention."""
+    out = []
+    for content in VOUCHERS:
+        try:
+            v = ET.fromstring(re.sub(r"&#4;", "", content)).find(".//VOUCHER")
+        except ET.ParseError:
+            continue
+        if v is None or v.findtext("DATE") != date:
+            continue
+        out.append("<VOUCHER><DATE>" + esc(v.findtext("DATE") or "") + "</DATE>" +
+                   "<VOUCHERNUMBER>" + esc(v.findtext("VOUCHERNUMBER") or "") + "</VOUCHERNUMBER>" +
+                   "<VOUCHERTYPENAME>" + esc(v.findtext("VOUCHERTYPENAME") or "") + "</VOUCHERTYPENAME>" +
+                   "<REFERENCE>" + esc(v.findtext("REFERENCE") or "") + "</REFERENCE>" +
+                   "<NARRATION>" + esc(v.findtext("NARRATION") or "") + "</NARRATION>" +
+                   "<PARTYLEDGERNAME>" + esc(v.findtext("PARTYLEDGERNAME") or "") + "</PARTYLEDGERNAME></VOUCHER>")
+    return "<ENVELOPE><BODY><DATA><COLLECTION>" + "".join(out) + "</COLLECTION></DATA></BODY></ENVELOPE>"
+
+
 # Inward vouchers with GST for the GSTR-2B check: (mid, date, vno, type, kind, ref, refdate, party, gstin, inventory, [(ledger, amount)])
 PURCHASES_GST = [
     ("201", "20260906", "P-31", "Purchase", "inv", "501", "20260905", "SHRINIWAS SHANKAR ADAM", "27ABCPA1234C1ZL", -10000,
@@ -191,6 +210,9 @@ class H(BaseHTTPRequestHandler):
             frm = re.search(r'<SVFROMDATE TYPE="Date">(\d+)', xml).group(1)
             to = re.search(r'<SVTODATE TYPE="Date">(\d+)', xml).group(1)
             out = purchases_gst(frm, to)
+        elif "ITECommerceExisting" in xml:
+            m = re.search(r'<SVFROMDATE TYPE="Date">(\d+)', xml)
+            out = ecommerce_entries(m.group(1) if m else "")
         elif "ITBankEntries" in xml:
             m = re.search(r"<CHILDOF>(.*?)</CHILDOF>", xml)
             out = bank_entries((m.group(1) if m else "").replace("&amp;", "&"))

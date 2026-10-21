@@ -88,6 +88,40 @@ Every transaction is posted to the **suspense ledger** you choose — money in a
 Suspense to the right ledger in Tally. A transaction already posted from an earlier statement is marked
 *Posted earlier* and not posted again. Scanned or photographed statements can't be read (that would need AI).
 
+## Offline Meesho / Flipkart → Tally (v3.4)
+
+Open a company's **E-Commerce → Tally** tab. Choose the month and upload **.xlsx** reports:
+- **Meesho:** TCS Sales and TCS Sales Return workbooks; optional invoice-summary workbook.
+- **Flipkart:** the marketplace's GSTR-1 GST workbook with sections 7(A)(2), 7(B)(2) and/or 5B.
+
+The existing local Excel decoder and the PackPilot GSTR-1 grouping calculations handle the files
+**on the same PC**, without a conversion/AI service, Firebase, Cloudflare or invoice credits. The
+selected company's GSTIN must match the reports. The app uses one monthly voucher for each
+**marketplace + customer state + GST rate**, with returns netted against sales. A negative net group
+uses a Credit Note. Financial-year, state and GST-rate based voucher numbers remain stable
+regardless of the Excel row order.
+
+The review page shows taxable value, tax, GST total, HSN summary and the exact voucher
+numbers. First import Tally masters and **map the real Tally party, sales, output GST and round-off
+ledgers**. Accounting mode creates no stock movements; an optional Meesho inventory mode
+requires explicitly mapped existing **HSN-correct, piece-count stock items**, and may affect Tally
+stock balances. Flipkart's summarized GST workbook has no item quantities so it uses
+accounting vouchers. If the ledgers/stock masters are missing, create or configure them in
+Tally first, import masters again and then review.
+
+The posting button requires review confirmation. **Each voucher is checked against Tally's
+existing voucher numbers immediately before the write**. A matching number is skipped;
+failed/uncertain postings are not automatically retried. If Tally stops answering after a write
+might have reached it, check in Tally before trying anything again. Previous PackPilot XML
+imports use **different voucher numbers**, so manually verify that the month has not already
+been booked through PackPilot or another workflow.
+
+This is **monthly sales/GST accounting**, not order-by-order booking, settlement reconciliation,
+commission booking or GSTR-1 filing. Original files are read locally; the local database keeps
+the consolidated vouchers and posting history, not the uploaded workbook bytes. Conversion
+does not require internet; the existing desktop sign-in and **30-day cached licence** rules still
+apply. The connection to TallyPrime is local on port 9000.
+
 ## Safety
 
 - The app window is the only thing that can use the app: it is served on `localhost` only, and every request

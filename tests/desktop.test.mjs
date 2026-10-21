@@ -166,6 +166,42 @@ test("admin: a bank statement goes to the suspense ledger as receipts and paymen
   assert.equal((await call("POST", `/bank/${s2.id}/push`, {})).queued, 1);
 });
 
+test("admin: offline Meesho and Flipkart Excel summaries go directly into Tally with safe duplicate blocking", async () => {
+  const h = ["GSTIN","HSN Code","Quantity","GST Rate","Total Taxable Sale Value","End Customer State",
+    "Eco TCS GSTIN","Financial Year","Month Number"];
+  const g = "27ACKPS3168H1Z6";
+  const f = (name,rows,sheet="Sheet1") => ({ name,sheets:[{name:sheet,rows}] });
+  const files = { sales:f("sales.xlsx",[h,[g,"630260",10,5,1000,"Maharashtra","",2026,9]]),
+    returns:f("returns.xlsx",[h,[g,"630260",2,5,200,"Maharashtra","",2026,9]]) };
+  const created = await call("POST", "/companies/" + cid + "/ecommerce/prepare", {platform:"ME",year:2026,month:9,files});
+  assert.equal(created.vouchers,1);
+  let batch = await call("GET","/ecommerce/"+created.id);
+  assert.deepEqual([batch.summary.taxable,batch.summary.invoice],[800,840]);
+  assert.equal(batch.vouchers[0].vtype,"Sales");
+  await call("POST","/ecommerce/"+created.id+"/mapping",{party:"ABCABC",sales:"GST SALES",
+    cgst:"CGST",sgst:"SGST",igst:"IGST",round:"ROUND OFF SALES ACCOUNT",mode:"accounting"});
+  assert.equal((await call("POST","/ecommerce/"+created.id+"/post",{})).queued,1);
+  batch=await until(async()=>{
+    const v=await call("GET","/ecommerce/"+created.id);
+    return v.vouchers[0].status !== "queued" && v;
+  },15000,"Meesho offline Tally post");
+  assert.equal(batch.vouchers[0].status,"synced",batch.vouchers[0].error||"");
+  assert.equal((await call("POST","/ecommerce/"+created.id+"/post",{})).status,400,
+    "already posted month cannot be queued again");
+  assert.equal((await call("POST","/companies/"+cid+"/ecommerce/prepare",{platform:"ME",year:2026,month:9,files})).status,400);
+  const flips = {flipkart:f("flipkart.xlsx",[["GSTIN","Aggregate Taxable Value","CGST"],[g,700,2.5]],
+    "Section 7(A)(2) in GSTR-1")};
+  const flip=await call("POST","/companies/"+cid+"/ecommerce/prepare",{platform:"FL",year:2026,month:9,files:flips});
+  await call("POST","/ecommerce/"+flip.id+"/mapping",{party:"ABCABC",sales:"GST SALES",
+    cgst:"CGST",sgst:"SGST",igst:"IGST",round:"ROUND OFF SALES ACCOUNT",mode:"accounting"});
+  assert.equal((await call("POST","/ecommerce/"+flip.id+"/post",{})).queued,1);
+  const posted=await until(async()=>{
+    const v=await call("GET","/ecommerce/"+flip.id);
+    return v.vouchers[0].status !== "queued" && v;
+  },15000,"Flipkart offline Tally post");
+  assert.equal(posted.vouchers[0].status,"synced",posted.vouchers[0].error||"");
+});
+
 test("user: own companies, company limit, credits counted, posting blocked", async () => {
   await call("POST", "/signout", {});
   assert.equal((await call("GET", "/me")).signed_in, false);

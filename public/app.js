@@ -196,8 +196,10 @@ const routes = [
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "batches")],
-  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b)$/, viewCompany],
+  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
+  [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
+  [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
   [/^#\/s\/(\w+)$/, (sid) => viewStatement(sid)],
   [/^#\/c\/(\w+)\/gstr2b\/upload$/, (cid) => viewGstUpload(cid)],
   [/^#\/g\/(\w+)$/, (rid) => viewGst(rid)],
@@ -486,8 +488,8 @@ function companyModal() {
 async function viewCompany(cid, tab) {
   const c = await api(`/companies/${cid}`);
   CURRENT.company = c;
-  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["gstr2b", "GSTR-2B"], ["masters", "Masters"], ["jobs", "Tally log"], ["settings", "Settings"]];
-  const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"] }[tab] || ["upload", "⇪ Upload invoices"];
+  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["gstr2b", "GSTR-2B"], ["ecommerce", "E-Commerce → Tally"], ["masters", "Masters"], ["jobs", "Tally log"], ["settings", "Settings"]];
+  const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || ["upload", "⇪ Upload invoices"];
   app().innerHTML = topBar([[c.name, `#/c/${cid}`]], c) + `<div class="bar">
       <div class="status">${c.masters.ledger} ledgers · ${c.masters.stock_item} stock items · masters ${c.masters_imported_at ? "imported " + ago(c.masters_imported_at) : c.pending_jobs ? "being read from Tally…" : "not imported yet"}</div>
       <div class="spacer"></div><a class="btn primary" href="#/c/${cid}/${upload[0]}">${upload[1]} <kbd>U</kbd></a></div>
@@ -502,6 +504,7 @@ async function viewCompany(cid, tab) {
   if (tab === "settings") return companySettings(c, el);
   if (tab === "bank") return companyBank(c, el);
   if (tab === "gstr2b") return companyGst(c, el);
+  if (tab === "ecommerce") return companyEcommerce(c, el);
 }
 
 function tallyHelp(c) {
@@ -550,7 +553,7 @@ async function companyMasters(c, el) {
 async function companyJobs(c, el) {
   const rows = await api(`/companies/${c.id}/jobs`);
   const lbl = { import_voucher: "Post voucher", import_master: "Create master", import_bank: "Post bank entry", export_ledgers: "Read ledgers", export_stock: "Read stock items",
-    export_groups: "Read groups", export_units: "Read units", export_purchase_gst: "Read purchases for GSTR-2B" };
+    import_ecommerce: "Post e-commerce sales", export_groups: "Read groups", export_units: "Read units", export_purchase_gst: "Read purchases for GSTR-2B" };
   // where each job's "open" goes: the invoice, the bank statement or the GSTR-2B it belongs to
   const link = (j) => j.kind === "import_voucher" ? `#/i/${j.invoice_id}` : j.kind === "import_bank" && j.statement_id ? `#/s/${j.statement_id}`
     : j.kind === "export_purchase_gst" ? `#/g/${j.invoice_id}` : "";
