@@ -9,7 +9,7 @@ import * as AD from "../engine/audit.js";
 import * as DASH from "../engine/dashboard.js";
 import * as GST from "../engine/gst-control.js";
 import * as SC from "../engine/master-assist.js";
-import { createBackup, integrity, listBackups, scheduleRestore, applyPendingRestore } from "../desktop/safe-backup.mjs";
+import { createBackup, createEncryptedBackup, decryptEncryptedBackup, integrity, listBackups, scheduleRestore, applyPendingRestore } from "../desktop/safe-backup.mjs";
 
 const DB=makeD1(),D=db({DB});
 test("setup independent accounting control company and masters",async()=>{
@@ -147,5 +147,37 @@ test("backups are verified and admin can plan a restart-only restore with rollba
     const open=makeD1(dbfile);
     assert.equal(open.sql.prepare("SELECT value FROM app_config WHERE key='demo'").get().value,"original");
     open.close();
+  }finally{fs.rmSync(temp,{recursive:true,force:true});}
+});
+
+
+test("AES-256 encrypted backup requires passphrase and can be restored after restart without an API",()=>{
+  const temp=fs.mkdtempSync(path.join(os.tmpdir(),"it-encrypt-"));
+  try{
+    const data=path.join(temp,"data"),backups=path.join(temp,"backup");
+    fs.mkdirSync(data);
+    const dbfile=path.join(data,"invoicetotally.sqlite");
+    const original=makeD1(dbfile);
+    original.sql.prepare("INSERT INTO app_config(key,value) VALUES(?,?)").run("secretdemo","Original locally only");
+    const passphrase="long and memorable unique local backup password";
+    const created=createEncryptedBackup(original.sql,backups,passphrase);
+    assert.equal(created.encrypted,true);
+    assert.match(created.name,/^invoicetotally-encrypted-\d{8}-\d{6}-[a-f0-9]{6}\.itbak$/);
+    assert.equal(listBackups(backups).find(x=>x.name===created.name).valid,true);
+    assert.equal(fs.readFileSync(created.file,"utf8").includes("Original locally only"),false);
+    const bad=path.join(temp,"wrong.sqlite");
+    assert.throws(()=>decryptEncryptedBackup(created.file,"a wrong password 12345",bad),/passphrase|corrupted/);
+    assert.equal(fs.existsSync(bad),false);
+    original.sql.prepare("UPDATE app_config SET value='Changed after backup' WHERE key='secretdemo'").run();
+    original.close();
+    const planned=scheduleRestore(backups,data,created.name,passphrase);
+    assert.equal(planned.encrypted,true);
+    assert.equal(applyPendingRestore(data,dbfile).restored,true);
+    const opened=makeD1(dbfile);
+    assert.equal(opened.sql.prepare("SELECT value FROM app_config WHERE key='secretdemo'").get().value,"Original locally only");
+    opened.close();
+    fs.appendFileSync(created.file,"tamper");
+    assert.equal(listBackups(backups).find(x=>x.name===created.name).valid,false);
+    assert.throws(()=>scheduleRestore(backups,data,created.name,passphrase),/validation/);
   }finally{fs.rmSync(temp,{recursive:true,force:true});}
 });
