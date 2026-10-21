@@ -63,7 +63,13 @@ export function parseImportResponse(xml) {
   const res = { created: num("CREATED"), altered: num("ALTERED"), errors: num("ERRORS"), exceptions: num("EXCEPTIONS"), messages };
   if (!/<(RESPONSE|ENVELOPE)/i.test(xml)) { res.errors = 1; res.messages = [`Unexpected reply from Tally: ${xml.slice(0, 200)}`]; }
   res.ok = res.created + res.altered > 0 && res.errors === 0 && res.exceptions === 0;
-  if (!res.ok && !res.messages.length && res.exceptions) res.messages = ["Tally raised an exception with no detail — common causes: the bank ledger needs bank-allocation details (now sent automatically), the voucher date falls outside Tally's current period, or Tally is showing a confirmation popup that's blocking the import. Try creating one such voucher by hand in Tally with the same ledgers, date and amount to see what it asks for."];
+  if (!res.ok && !res.messages.length && res.exceptions) {
+    // Tally gave a bare EXCEPTIONS count with no LINEERROR text — surface its raw reply (not a guess)
+    // so there's something concrete to go on, since we can't inspect the user's real Tally ourselves.
+    const raw = xml.replace(/\s+/g, " ").trim().slice(0, 500);
+    res.messages = [`Tally raised an exception with no further detail. Its full reply was: ${raw || "(empty)"} — ` +
+      "try creating one such voucher by hand in Tally with the same ledgers, date and amount; whatever it asks for there is the missing piece."];
+  }
   return res;
 }
 
