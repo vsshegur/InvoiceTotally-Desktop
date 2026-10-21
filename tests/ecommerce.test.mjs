@@ -145,7 +145,7 @@ test("an uncertain posting is rechecked read-only before a manual retry is allow
   await D.run("UPDATE ecommerce_vouchers SET status='uncertain' WHERE id=?",original.id);
   const found={TALLY:{readOnly:async()=>
     "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><DATE>20260630</DATE><VOUCHERNUMBER>"+
-    original.number+"</VOUCHERNUMBER><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"}};
+    "AUTO-123</VOUCHERNUMBER><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME><REFERENCE>"+original.number+"</REFERENCE></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"}};
   const collision=await X.recheck(D,b.id,found);
   assert.deepEqual([collision.checked,collision.ready,collision.present],[1,0,1]);
   assert.equal((await D.first("SELECT status FROM ecommerce_vouchers WHERE id=?",original.id)).status,"duplicate");
