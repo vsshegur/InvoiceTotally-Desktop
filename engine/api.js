@@ -397,6 +397,35 @@ route("GET", "/api/batches/:bid/review/:step", async ({ D, p }) => {
   throw new HttpError(400, "unknown step");
 });
 
+// Corrects the extracted party's name/GSTIN/state/address on every invoice's own data — e.g. when the AI misread
+// the GSTIN. Resets the ledger match so it's picked again with the corrected details, and clears any stale checksum
+// warning. Used on its own (fix first, then pick a ledger) and from /party when a ledger is created or chosen
+// alongside corrected details.
+function applyPartyDetails(h, details) {
+  if ("name" in details) h.party_name = String(details.name || "").trim();
+  if ("gstin" in details) h.party_gstin = cleanGstin(details.gstin);
+  if ("state" in details) h.party_state = String(details.state || "").trim();
+  if ("address" in details) h.party_address = String(details.address || "").trim();
+  h.warnings = (h.warnings || []).filter((w) => !/^GSTIN .* fails the checksum/.test(w));
+  if (h.party_gstin && !gstinValid(h.party_gstin)) h.warnings.push(`GSTIN ${h.party_gstin} fails the checksum — check for a misread character.`);
+  h.edited = true;
+}
+route("POST", "/api/batches/:bid/party-fix", async ({ D, p, body }) => {
+  must(await D.first("SELECT id FROM batches WHERE id=?", p.bid));
+  const ids = body.invoice_ids || [];
+  if (!ids.length) throw new HttpError(400, "No invoices to update");
+  const invs = await Promise.all(ids.map((iid) => P.loadInvoice(D, iid)));
+  const stmts = [];
+  for (const inv of invs.filter(Boolean)) {
+    const h = inv.data;
+    applyPartyDetails(h, body);
+    stmts.push(D.updateStmt("invoices", inv.id, { data: JSON.stringify(h), tax_lines: null,
+      ...(inv.party_ledger ? { party_ledger: null, party_method: null } : {}) }));
+  }
+  stmts.push(D.stmt("INSERT INTO activity (batch_id, invoice_id, message, at) VALUES (?,?,?,?)", p.bid, null, "Party details corrected", now()));
+  await D.batch(stmts);
+  return json({ ok: true });
+});
 route("POST", "/api/batches/:bid/party", async ({ D, p, body }) => {
   const b = must(await D.first("SELECT * FROM batches WHERE id=?", p.bid));
   let ledger = body.ledger;
@@ -413,7 +442,11 @@ route("POST", "/api/batches/:bid/party", async ({ D, p, body }) => {
   const stmts = [];
   for (const inv of invs.filter(Boolean)) {
     const h = inv.data;
-    stmts.push(D.updateStmt("invoices", inv.id, { party_ledger: ledger, party_method: "Picked by you", party_proposed: null }));
+    // a ledger created (or picked) here with corrected details also corrects the invoice's own record, so the
+    // alias remembers the right GSTIN and the invoice, GSTR-2B and Tally all agree afterwards
+    if (body.details) applyPartyDetails(h, body.details);
+    stmts.push(D.updateStmt("invoices", inv.id, { party_ledger: ledger, party_method: "Picked by you", party_proposed: null,
+      ...(body.details ? { data: JSON.stringify(h), tax_lines: null } : {}) }));
     if (h.party_gstin) stmts.push(M.aliasSetStmt(D, b.company_id, "party", `gstin:${h.party_gstin}`, ledger));
     if (h.party_name) stmts.push(M.aliasSetStmt(D, b.company_id, "party", `name:${M.normParty(h.party_name)}`, ledger));
   }

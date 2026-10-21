@@ -63,7 +63,7 @@ export function parseImportResponse(xml) {
   const res = { created: num("CREATED"), altered: num("ALTERED"), errors: num("ERRORS"), exceptions: num("EXCEPTIONS"), messages };
   if (!/<(RESPONSE|ENVELOPE)/i.test(xml)) { res.errors = 1; res.messages = [`Unexpected reply from Tally: ${xml.slice(0, 200)}`]; }
   res.ok = res.created + res.altered > 0 && res.errors === 0 && res.exceptions === 0;
-  if (!res.ok && !res.messages.length && res.exceptions) res.messages = ["Tally raised an exception — check that every ledger and stock item exists and the company is open."];
+  if (!res.ok && !res.messages.length && res.exceptions) res.messages = ["Tally raised an exception with no detail — common causes: the bank ledger needs bank-allocation details (now sent automatically), the voucher date falls outside Tally's current period, or Tally is showing a confirmation popup that's blocking the import. Try creating one such voucher by hand in Tally with the same ledgers, date and amount to see what it asks for."];
   return res;
 }
 
@@ -256,8 +256,15 @@ export function bankVoucher(company, { vtype, date, bankLedger, ledger, amount, 
   }
   const other = `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(ledger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(otherAmt)}</ISDEEMEDPOSITIVE>` +
     `${vtype === "Contra" ? "" : "<ISPARTYLEDGER>Yes</ISPARTYLEDGER>"}<AMOUNT>${amt(otherAmt)}</AMOUNT>${alloc}</LEDGERENTRIES.LIST>`;
+  // TallyPrime's Banking feature requires a BANKALLOCATIONS.LIST on the bank-side ledger entry of
+  // Receipt/Payment/Contra vouchers whenever the ledger sits under the Bank Accounts/Bank OD/OCC group
+  // and banking features are enabled for it. Without it, Tally silently rejects the voucher as an
+  // "exception" with no further detail via the XML API — so we always send a minimal, safe default
+  // (Transaction Type "Others", no instrument number) rather than omit it.
+  const bankAlloc = `<BANKALLOCATIONS.LIST><DATE>${d}</DATE><INSTRUMENTDATE>${d}</INSTRUMENTDATE>` +
+    `<TRANSACTIONTYPE>Others</TRANSACTIONTYPE><AMOUNT>${amt(bankAmt)}</AMOUNT></BANKALLOCATIONS.LIST>`;
   const bank = `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(bankLedger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(bankAmt)}</ISDEEMEDPOSITIVE>` +
-    `<AMOUNT>${amt(bankAmt)}</AMOUNT></LEDGERENTRIES.LIST>`;
+    `<AMOUNT>${amt(bankAmt)}</AMOUNT>${bankAlloc}</LEDGERENTRIES.LIST>`;
   const x = `<VOUCHER VCHTYPE="${vtype}" ACTION="Create"><DATE>${d}</DATE><VCHSTATUSDATE>${d}</VCHSTATUSDATE>` +
     `<VOUCHERTYPENAME>${vtype}</VOUCHERTYPENAME><PARTYLEDGERNAME>${esc(ledger)}</PARTYLEDGERNAME>` +
     `<NARRATION>${esc(String(narration || "").slice(0, 1000))}</NARRATION>` +

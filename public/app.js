@@ -883,16 +883,17 @@ function reviewParty(ctx) {
         title: `Select ledger · ${data.group}`, placeholder: "Search ledger, group, GSTIN…", selected: pick,
         suggest: async (q) => q ? [] : api(`/companies/${c.id}/suggest/party?vtype=${data.voucher_type}&name=${encodeURIComponent(g.name || "")}&gstin=${encodeURIComponent(g.gstin || "")}`),
         search: async (q) => (await api(`/companies/${c.id}/masters?kind=ledger&q=${encodeURIComponent(q)}${q ? "" : "&groups=" + encodeURIComponent(data.group)}`)).items,
-        render: (it) => `<div><div class="nm">${esc(it.name)}</div><div class="sub">${esc(it.parent || "")} ${it.gstin ? "· " + esc(it.gstin) : ""}</div></div><div class="tag">${(it.tags || []).join(" · ")}${it.score != null && it._s ? ` ${it.score}%` : ""}</div>`,
+        render: (it) => `<div><div class="nm">${esc(it.name)}</div><div class="sub">${esc(it.parent || "")} ${it.gstin ? "· " + esc(it.gstin) : ""}${g.gstin && it.gstin && it.gstin !== g.gstin ? ` <span class="bad">· GSTIN differs from the invoice (${esc(g.gstin)}) — check which is right</span>` : ""}</div></div><div class="tag">${(it.tags || []).join(" · ")}${it.score != null && it._s ? ` ${it.score}%` : ""}</div>`,
         onPick: (it) => { pick = it.name; $("#willtxt").innerHTML = `Party → <b>${esc(pick)}</b>`; $("#apply").disabled = false; },
         createLabel: (q) => `Create ledger “${esc(q || g.name || "")}”`,
         onCreate: (q) => createLedgerModal(q || g.name, g, data.group),
       });
-      panel = `<div class="box"><div class="bh"><span class="eyebrow">Extracted party</span><a class="btn sm" href="#/i/${g.invoice_ids[0]}">View invoice ↗</a></div><div class="bb">
+      panel = `<div class="box"><div class="bh"><span class="eyebrow">Extracted party</span><span><a class="btn sm" id="fixParty" title="Correct a misread name or GSTIN">✎ Fix</a> <a class="btn sm" href="#/i/${g.invoice_ids[0]}">View invoice ↗</a></span></div><div class="bb">
         <div class="big">${esc(g.name || "(no name)")}</div>
         <div class="kv"><div><span>GSTIN</span><span class="mono">${esc(g.gstin || "—")} ${g.gstin_valid === true ? '<span class="good">✓</span>' : g.gstin_valid === false ? '<span class="bad">checksum fails</span>' : ""}</span></div>
           <div><span>State</span><span>${esc(g.state || "—")}</span></div><div><span>Found on</span><span>${g.invoice_ids.length} invoice(s)</span></div></div>
-        ${g.address ? `<div class="muted" style="margin-top:8px;font-size:13px">${esc(g.address)}</div>` : ""}</div></div>
+        ${g.address ? `<div class="muted" style="margin-top:8px;font-size:13px">${esc(g.address)}</div>` : ""}
+        <p class="muted small" style="margin-top:8px">If the AI misread the name or GSTIN, fix it here first — the correction is saved on every invoice from this party and used for the ledger below.</p></div></div>
         ${pk.html}${willSet(`<span id="willtxt">${pick ? `Party → <b>${esc(pick)}</b>` : "Pick a ledger"}</span>`, `<button class="btn primary" id="apply" ${pick ? "" : "disabled"}>${g.ledger ? "Change party" : "Set party"} <kbd>↵</kbd></button>`)}`;
     }
     twoPane(ctx, {
@@ -908,8 +909,22 @@ function reviewParty(ctx) {
       const apply = async () => { if (!pick) return; await act(() => api(`/batches/${bid}/party`, { body: { invoice_ids: g.invoice_ids, ledger: pick } }), `Party set to ${pick}`); route(); };
       $("#apply").onclick = apply; keymap.enter = apply;
     }
+    $("#fixParty")?.addEventListener("click", (e) => { e.preventDefault(); fixPartyModal(bid, g); });
   };
   draw();
+}
+
+/** Correct the extracted party's name/GSTIN/state/address — e.g. when the AI misread the GSTIN. Saved on every
+ * invoice from this party, so the ledger (existing or new) and GSTR-2B matching all use the corrected value. */
+function fixPartyModal(bid, g) {
+  modal(`<h2>Fix the extracted party</h2>
+    <p class="muted small" style="margin-top:-4px">Saved on ${g.invoice_ids.length} invoice${g.invoice_ids.length === 1 ? "" : "s"} from this party. Nothing already in Tally is changed — if a ledger there already has the wrong GSTIN, fix it in Tally too.</p>
+    <div class="field"><label>Name</label><input class="in" name="name" value="${esc(g.name || "")}"></div>
+    <div class="field"><label>GSTIN</label><input class="in mono" name="gstin" value="${esc(g.gstin || "")}" maxlength="15"></div>
+    <div class="field"><label>State</label><input class="in" name="state" value="${esc(g.state || "")}"></div>
+    <div class="field"><label>Address</label><textarea class="in" name="address" rows="2">${esc(g.address || "")}</textarea></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Save</button></div>`,
+    async (d) => { await api(`/batches/${bid}/party-fix`, { body: { invoice_ids: g.invoice_ids, ...d } }); toast("Party details corrected"); route(); });
 }
 
 function createLedgerModal(name, g, group) {
@@ -919,9 +934,9 @@ function createLedgerModal(name, g, group) {
     <div class="field"><label>GSTIN</label><input class="in mono" name="gstin" value="${esc(g?.gstin || "")}" maxlength="15"></div>
     <div class="field"><label>State</label><input class="in" name="state" value="${esc(g?.state || "")}"></div>
     <div class="field"><label>Address</label><textarea class="in" name="address" rows="2">${esc(g?.address || "")}</textarea></div>
-    <p class="muted" style="font-size:12.5px">It's created in Tally first, then the voucher is posted.</p>
+    <p class="muted" style="font-size:12.5px">It's created in Tally first, then the voucher is posted. A GSTIN you correct here is also saved on the invoice.</p>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Create &amp; use</button></div>`,
-    async (d) => { await api(`/batches/${location.hash.split("/")[2]}/party`, { body: { invoice_ids: g.invoice_ids, create: d } }); toast(`Ledger ${d.name} will be created`); route(); });
+    async (d) => { await api(`/batches/${location.hash.split("/")[2]}/party`, { body: { invoice_ids: g.invoice_ids, create: d, details: d } }); toast(`Ledger ${d.name} will be created`); route(); });
 }
 
 // ---- Stock & Ledger --------------------------------------------------------
