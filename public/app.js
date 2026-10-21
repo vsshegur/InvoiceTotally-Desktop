@@ -193,7 +193,7 @@ const routes = [
   [/^#\/signin$/, viewSignin],
   [/^#\/?$/, viewCompanies],
   [/^#\/account$/, viewAccount],
-  [/^#\/dashboard$/, viewDashboard],
+  [/^#\/dashboard$/, () => viewDashboard()],
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "batches")],
