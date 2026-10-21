@@ -122,6 +122,55 @@ the consolidated vouchers and posting history, not the uploaded workbook bytes. 
 does not require internet; the existing desktop sign-in and **30-day cached licence** rules still
 apply. The connection to TallyPrime is local on port 9000.
 
+## Accounting controls (v3.5.0)
+
+The five new optional accounting controls use local SQLite and read-only Tally XML requests.
+No external AI/API is required for these features; the existing app licence and invoice AI
+service are unchanged. Financial totals **must** be checked against actual Tally company
+configuration and official GST returns before relying on them.
+
+- **GST reconciliation:** Per-company **GST Reconciliation** tab compares GSTR-1 figures,
+  Tally outward Sales/Credit Note records, GSTR-3B taxable/output GST and GSTR-2B input
+  credit from the existing GST tool. Import supported official-style GSTR-1/3B JSON entirely
+  offline, or enter portal summary amounts manually. Supported JSON sections include B2B,
+  B2CL, B2CS, notes and exports; invoice-level matching checks registered-buyer GSTIN,
+  invoice number, taxable and GST amounts. Unexpected JSON layouts must be entered
+  manually, not guessed. This is a review tool, **not return filing**. Tally ledger-based
+  totals can leave nonstandard ledgers and journals unclassified; accountant review required.
+- **Smart Matching:** A company-specific tab ranks existing ledgers and stock-item masters,
+  highlights HSN/GSTIN/GST-rate/units differences and lets the user explicitly remember
+  safe mappings. Downloads per-company mapping CSV for offline review. It never creates
+  masters or posts Tally vouchers automatically.
+- **Multi-company dashboard:** The Companies page links to the multi-company accounting
+  dashboard. Click **Read Tally balances** per company for the latest read-only ledger
+  closing balance snapshot. Displays company name, connection summary, bank/cash,
+  receivable/payable, Sales/Purchase and Duties/Taxes *net ledger balances* and local
+  workflow counts, with snapshot time. These are not an official balance sheet/P&L,
+  calculated payable tax, real-time bank balances or cash flow.
+- **Posting audit & safe recovery:** The per-company **Posting Audit** tab displays
+  local tamper-evident SHA-256 hash-chain records for Tally posting attempts, successes,
+  rejections, duplicate prevention and uncertain outcomes; exports a CSV. Raw XML
+  and invoice images are not copied into audit records. A broken chain displays a warning.
+  Auditing starts in this version; older history cannot be recreated. Retry unknown
+  results only after manually checking the source vouchers in Tally.
+- **Verified backups / restore:** **Account → This PC** displays dated backups with
+  SQLite integrity and SHA-256 verification. Existing daily backups retain 14 versions.
+  Admins can optionally make *portable password-encrypted AES-256-GCM backups* with a
+  locally derived passphrase, no cloud service and no stored password. No one can recover
+  the backup without the passphrase. Restoring requires two confirmations and takes
+  effect only after a full restart; a pre-restore SQLite rollback copy is kept. **All
+  pending/in-flight Tally posting jobs from the restored snapshot are frozen** so an
+  old backup cannot silently replay already-posted entries. Reconfirm them in Tally.
+  If using a removable/network synced backup folder, keep its files accessible
+  until the next application start after requesting restore.
+
+### Scope / validation
+
+Windows/Linux automated tests exercise GST comparison, mapping safety, audit integrity,
+AES backup encryption/decryption, restoring a database and mock Tally. This does **not**
+replace verifying nonstandard GST portal exports or real TallyPrime ledgers and GST
+configuration on a dedicated test company before using results in production.
+
 ## Safety
 
 - The app window is the only thing that can use the app: it is served on `localhost` only, and every request
