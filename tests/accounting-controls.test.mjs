@@ -9,6 +9,7 @@ import * as AD from "../engine/audit.js";
 import * as DASH from "../engine/dashboard.js";
 import * as GST from "../engine/gst-control.js";
 import * as SC from "../engine/master-assist.js";
+import { parsePortalJson } from "../public/gst-control-parse.js";
 import { createBackup, createEncryptedBackup, decryptEncryptedBackup, integrity, listBackups, scheduleRestore, applyPendingRestore } from "../desktop/safe-backup.mjs";
 
 const DB=makeD1(),D=db({DB});
@@ -190,4 +191,45 @@ test("all new and existing desktop screens parse as valid offline browser JavaSc
     const code=fs.readFileSync(new URL("../"+name,import.meta.url),"utf8");
     assert.doesNotThrow(()=>new Script(code,{filename:name}),"Invalid browser JS: "+name);
   }
+});
+
+
+test("official-style GST portal JSON is parsed offline with period and GSTIN verification",()=>{
+  const gstin="27ACKPS3168H1Z6",expected={period:"2026-09",gstin};
+  const one=parsePortalJson({gstin,fp:"092026",
+    b2b:[{ctin:"27ABCPA1234C1ZL",inv:[{inum:"INV-24",idt:"02-09-2026",
+      itms:[{itm_det:{txval:1000,camt:25,samt:25,iamt:0}}]}]}],
+    b2cs:[{txval:200,iamt:10,camt:0,samt:0}],
+    cdnr:[{ctin:"27ABCPA1234C1ZL",nt:[{nt_num:"CN-1",nt_dt:"04-09-2026",ntty:"C",
+      itms:[{itm_det:{txval:100,camt:2.5,samt:2.5}}]}]}]
+  },"gstr1",expected);
+  assert.equal(one.summary.taxable,1100);
+  assert.equal(one.summary.cgst,22.5);
+  assert.equal(one.summary.sgst,22.5);
+  assert.equal(one.summary.igst,10);
+  assert.equal(one.docs.length,2);
+  assert.equal(one.docs.find(x=>x.num==="CN-1").taxable,-100);
+  assert.throws(()=>parsePortalJson({gstin,fp:"082026",b2cs:[{txval:200,iamt:0}]},"gstr1",expected),/period/);
+  assert.throws(()=>parsePortalJson({gstin:"29ABCPA1234C1ZL",fp:"092026",b2cs:[{txval:200,iamt:0}]},"gstr1",expected),/GSTIN/);
+  assert.throws(()=>parsePortalJson({gstin,fp:"092026",unknown:[1]},"gstr1",expected),/supported/);
+  const three=parsePortalJson({gstin,ret_period:"092026",sup_details:{osup_det:{txval:1100,iamt:10,camt:22.5,samt:22.5}},
+    itc_elg:{itc_avl:[{ty:"OTH",iamt:50,camt:80,samt:80}],itc_rev:[{ty:"RUL",iamt:5,camt:10,samt:10}]}
+  },"gstr3b",expected);
+  assert.deepEqual([three.summary.taxable,three.summary.itcIgst,three.summary.itcCgst,three.summary.itcSgst],[1100,45,70,70]);
+  assert.equal(three.summary.itcCess,0);
+});
+
+test("B2B comparisons distinguish same invoice, GSTIN conflict, amount conflict, and missing sides",()=>{
+  const books=[
+    {number:"INV-24",gstin:"27ABCPA1234C1ZL",taxable:1000,igst:0,cgst:25,sgst:25,cess:0},
+    {number:"INV-25",gstin:"27ABCPA1234C1ZL",taxable:500,igst:0,cgst:12.5,sgst:12.5,cess:0},
+    {number:"INV-26",gstin:"27ABCPA1234C1ZL",taxable:300,igst:0,cgst:7.5,sgst:7.5,cess:0}
+  ],portal=[
+    {num:"INV/24",ctin:"27ABCPA1234C1ZL",taxable:1000,igst:0,cgst:25,sgst:25,cess:0},
+    {num:"INV-25",ctin:"27BBBBB0000B1Z6",taxable:500,igst:0,cgst:12.5,sgst:12.5,cess:0},
+    {num:"INV-26",ctin:"27ABCPA1234C1ZL",taxable:100,igst:0,cgst:2.5,sgst:2.5,cess:0},
+    {num:"MISSING",ctin:"27ABCPA1234C1ZL",taxable:250,igst:0,cgst:0,sgst:0,cess:0}
+  ];
+  const x=GST.compareGstr1Invoices(portal,books);
+  assert.deepEqual(x.map(z=>z.status),["matched","gstin_mismatch","tax_mismatch","missing_in_tally"]);
 });
