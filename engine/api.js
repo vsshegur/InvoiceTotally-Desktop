@@ -8,6 +8,10 @@ import { AI_CHOICES, AI_LABELS } from "./reader.js";
 import * as BK from "./bank.js";
 import * as EC from "./ecommerce.js";
 import * as GS from "./gstr2b.js";
+import * as SC from "./master-assist.js";
+import * as GC from "./gst-control.js";
+import * as DASH from "./dashboard.js";
+import * as AD from "./audit.js";
 
 class HttpError extends Error { constructor(status, msg, code) { super(msg); this.status = status; this.code = code; } }
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...headers } });
@@ -39,6 +43,14 @@ async function requirePosting(env) {
   const lic = await requireLicence(env);
   if (!lic.can_post) throw new HttpError(403, "Posting to Tally is not allowed for your account. Ask the admin to allow it.", "noposting");
   return lic;
+}
+async function authorizeCompany(D,env,cid) {
+  const lic=await requireLicence(env);
+  const c=await D.first("SELECT id,name,owner_email FROM companies WHERE id=?",cid);
+  if(!c)throw new HttpError(404,"Company not found");
+  if(c.owner_email && c.owner_email.toLowerCase() !== String(lic.email||"").toLowerCase())
+    throw new HttpError(403,"This company belongs to another account");
+  return c;
 }
 const canChooseAI = (lic, ai) => AI_CHOICES.includes(ai) && (lic.admin || (lic.ai_options || []).includes(ai));
 const allowedAI = (lic) => lic.admin ? AI_CHOICES : (lic.ai_options || []).filter((a) => AI_CHOICES.includes(a));
@@ -157,6 +169,22 @@ route("POST", "/api/settings", async ({ env, body }) => {
   return json({ ok: true });
 });
 route("POST", "/api/backup", async ({ env }) => json(env.backupNow ? env.backupNow() : { error: "not available" }));
+route("GET", "/api/backups", async ({ env }) => json({ backups: env.listBackups?.() || [] }));
+route("POST","/api/backups/encrypted",async({env,body})=>{
+  const lic=await requireLicence(env);
+  if(!lic.admin)throw new HttpError(403,"Only the admin can create a portable encrypted database backup");
+  if(!env.encryptedBackup)throw new HttpError(503,"This backup is available only on the desktop");
+  return json(env.encryptedBackup(String(body.passphrase||"")));
+});
+route("POST", "/api/backups/restore", async ({ env, body }) => {
+  const lic=await requireLicence(env);
+  if(!lic.admin)throw new HttpError(403,"Only the admin may restore a PC-wide backup");
+  const name=String(body.name||"");
+  if(!/^invoicetotally-\d{4}-\d{2}-\d{2}\.sqlite$/.test(name) && !/^invoicetotally-encrypted-\d{8}-\d{6}-[a-f0-9]{6}\.itbak$/.test(name))
+    throw new HttpError(400,"Choose a verified backup");
+  if(!env.scheduleRestore)throw new HttpError(503,"Restore is available only in the desktop app");
+  return json(env.scheduleRestore(name,String(body.passphrase||"")));
+});
 
 // companies
 // each Google account signed in on this PC has its own companies
@@ -217,7 +245,7 @@ route("DELETE", "/api/companies/:cid", async ({ D, p }) => {
   // everything that belongs to the company: bank statements and GSTR-2B too (nothing in Tally is touched)
   await D.batch([
     D.stmt("DELETE FROM bank_pages WHERE statement_id IN (SELECT id FROM bank_statements WHERE company_id=?)", p.cid),
-    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "tally_bills", "tally_bank_entries", "gst_docs", "gst_returns", "tally_gst_vouchers", "ecommerce_vouchers", "ecommerce_batches"]
+    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "tally_bills", "tally_bank_entries", "gst_docs", "gst_returns", "tally_gst_vouchers", "ecommerce_vouchers", "ecommerce_batches", "dashboard_balances", "gst_control"]
       .map((t) => D.stmt(`DELETE FROM ${t} WHERE company_id=?`, p.cid)),
     D.stmt("DELETE FROM companies WHERE id=?", p.cid)]);
   return json({ ok: true });
@@ -642,6 +670,14 @@ BK.bankRoutes(route, { useCredit: useStatementCredit, requirePosting });
 EC.ecommerceRoutes(route, { requirePosting, requireLicence });
 // GSTR-2B reconciliation
 GS.gstRoutes(route);
+SC.smartRoutes(route,authorizeCompany);
+DASH.dashboardRoutes(route,requireLicence,authorizeCompany);
+GC.gstControlRoutes(route,authorizeCompany);
+route("GET","/api/companies/:cid/posting-audit",async ({D,env,p,url})=>{
+  await authorizeCompany(D,env,p.cid);
+  const [rows,integrity]=await Promise.all([AD.auditRows(D,p.cid,Number(url.searchParams.get("limit")||200)),AD.verifyAudit(D)]);
+  return json({rows,integrity});
+});
 
 // ------------------------------------------------------------------ entry
 async function handleApi(req, env, url) {

@@ -11,6 +11,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { makeD1 } from "./d1.mjs";
+import { applyPendingRestore, createBackup, createEncryptedBackup, listBackups, scheduleRestore } from "./safe-backup.mjs";
 import { licenceClient } from "./licence.mjs";
 import { makeRunner } from "./runner.mjs";
 import api from "../engine/api.js";
@@ -32,7 +33,9 @@ function log(...a) {
   if (process.env.IT_VERBOSE) process.stdout.write(line);
 }
 
-const DB = makeD1(process.env.IT_DB_FILE || path.join(DATA, "invoicetotally.sqlite"));
+const DB_FILE = process.env.IT_DB_FILE || path.join(DATA, "invoicetotally.sqlite");
+if (!process.env.IT_DB_FILE) applyPendingRestore(DATA, DB_FILE);
+const DB = makeD1(DB_FILE);
 const D = db({ DB });
 const cfg = (k) => DB.sql.prepare("SELECT value FROM app_config WHERE key=?").get(k)?.value ?? null;
 const serviceUrl = () => process.env.IT_SERVICE || cfg("service_url") || conf.service || "";
@@ -69,6 +72,13 @@ export const env = {
   setConfig: (k, v) => DB.sql.prepare("INSERT INTO app_config (key, value, updated_at) VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at").run(k, v, Date.now() / 1000),
   getConfig: cfg,
   backupNow: () => backup(true),
+  listBackups: () => listBackups(cfg("backup_dir") || path.join(DATA, "backups")),
+  encryptedBackup: (passphrase) => createEncryptedBackup(DB.sql,cfg("backup_dir")||path.join(DATA,"backups"),passphrase),
+  scheduleRestore: (filename,passphrase) => {
+    if (runner.state.busy || DB.sql.prepare("SELECT count(*) n FROM jobs WHERE status='sent' AND kind LIKE 'import_%'").get().n)
+      throw new Error("Wait until the current Tally posting finishes before scheduling restore");
+    return scheduleRestore(cfg("backup_dir") || path.join(DATA,"backups"), DATA, filename,passphrase);
+  },
 };
 
 const HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, `[::1]:${PORT}`]);
@@ -127,22 +137,18 @@ async function licenceLoop() {
 
 // A copy of the database once a day (kept 14 days) — into the folder chosen in Settings, e.g. a Google Drive folder.
 function backup(force = false) {
-  const dir = cfg("backup_dir") || path.join(DATA, "backups");
-  const day = new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
-  const file = path.join(dir, `invoicetotally-${day}.sqlite`);
+  const dir = cfg("backup_dir") || path.join(DATA,"backups");
   try {
-    fs.mkdirSync(dir, { recursive: true });
-    if (fs.existsSync(file)) { if (!force) return { file, skipped: true }; fs.rmSync(file); }
-    DB.sql.exec(`VACUUM INTO '${file.replace(/'/g, "''")}'`);
-    const old = fs.readdirSync(dir).filter((f) => /^invoicetotally-\d{4}-\d{2}-\d{2}\.sqlite$/.test(f)).sort().slice(0, -14);
-    for (const f of old) fs.rmSync(path.join(dir, f), { force: true });
-    env.setConfig("backup_last", JSON.stringify({ at: Date.now() / 1000, file }));
-    log("backup saved:", file);
-    return { file };
+    const result = createBackup(DB.sql, dir, {force,keep:14});
+    if (!result.skipped) {
+      env.setConfig("backup_last", JSON.stringify({at:Date.now()/1000,file:result.file,hash:result.hash,checked:true}));
+      log("backup saved and verified:",result.file);
+    }
+    return result;
   } catch (e) {
-    env.setConfig("backup_last", JSON.stringify({ at: Date.now() / 1000, error: String(e.message || e) }));
-    log("backup failed:", e.message);
-    return { error: String(e.message || e) };
+    env.setConfig("backup_last",JSON.stringify({at:Date.now()/1000,error:String(e.message||e)}));
+    log("backup failed:",e.message);
+    return {error:String(e.message||e)};
   }
 }
 

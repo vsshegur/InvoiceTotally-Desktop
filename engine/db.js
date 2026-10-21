@@ -93,6 +93,20 @@ export const SCHEMA = [
     company_id TEXT NOT NULL, mid TEXT, date TEXT, number TEXT, vtype TEXT, kind TEXT, ref TEXT, refdate TEXT, party TEXT, gstin TEXT,
     inv REAL, e TEXT, fetched_at REAL)`,
   `CREATE INDEX IF NOT EXISTS ix_tally_gst ON tally_gst_vouchers(company_id, date)`,
+  `CREATE TABLE IF NOT EXISTS posting_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, company_id TEXT NOT NULL, job_id TEXT, invoice_id TEXT,
+    kind TEXT NOT NULL, phase TEXT NOT NULL, target_company TEXT,
+    payload_sha256 TEXT, detail TEXT, previous_hash TEXT, entry_hash TEXT NOT NULL,
+    at REAL NOT NULL)`,
+  `CREATE INDEX IF NOT EXISTS ix_post_audit_company ON posting_audit(company_id, id)`,
+  `CREATE TABLE IF NOT EXISTS dashboard_balances (
+    company_id TEXT NOT NULL, ledger TEXT NOT NULL, parent TEXT, amount REAL NOT NULL, fetched_at REAL,
+    PRIMARY KEY(company_id, ledger))`,
+  `CREATE TABLE IF NOT EXISTS gst_control (
+    id TEXT PRIMARY KEY, company_id TEXT NOT NULL, period TEXT NOT NULL, gstin TEXT, portal_gstr1 TEXT,
+    portal_gstr3b TEXT, tally_sales TEXT, tally_purchases TEXT, result TEXT, reviewed_at REAL, updated_at REAL,
+    UNIQUE(company_id, period))`,
+  `CREATE INDEX IF NOT EXISTS ix_gst_control_company ON gst_control(company_id, period)`,
   `CREATE TABLE IF NOT EXISTS activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id TEXT, invoice_id TEXT, message TEXT, at REAL)`,
   `CREATE INDEX IF NOT EXISTS ix_activity ON activity(batch_id, invoice_id)`,

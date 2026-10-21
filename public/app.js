@@ -193,10 +193,11 @@ const routes = [
   [/^#\/signin$/, viewSignin],
   [/^#\/?$/, viewCompanies],
   [/^#\/account$/, viewAccount],
+  [/^#\/dashboard$/, viewDashboard],
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "batches")],
-  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce)$/, viewCompany],
+  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|audit)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
   [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
   [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
@@ -292,7 +293,7 @@ async function viewSignin() {
 // account (this PC) · admin (users, limits, credits)
 // ---------------------------------------------------------------------------
 async function viewAccount() {
-  const [me, s] = await Promise.all([api("/licence/refresh", { body: {} }).catch(() => ({ licence: ME?.licence })), api("/settings")]);
+  const [me, s, backups] = await Promise.all([api("/licence/refresh", { body: {} }).catch(() => ({ licence: ME?.licence })), api("/settings"), api("/backups").catch(() => ({backups:[]}))]);
   ME.licence = me.licence || ME.licence;
   const l = ME.licence || {};
   const tick = (b) => b ? `<span class="good">Yes</span>` : `<span class="bad">No</span>`;
@@ -321,13 +322,49 @@ async function viewAccount() {
         <div class="muted small" style="margin-top:4px">A copy of everything is saved here once a day (the last 14 days are kept). A Google Drive or OneDrive folder on this PC is ideal — then a copy is also kept online.</div></div>
       <div class="muted small">${s.backup_last ? (s.backup_last.error ? `<span class="bad">Last backup failed: ${esc(s.backup_last.error)}</span>` : `Last backup ${ago(s.backup_last.at)} — ${esc(s.backup_last.file)}`) : "No backup yet (the first one is made a minute after the app starts)."}</div>
       <div style="margin-top:12px;display:flex;gap:8px"><button class="btn primary">Save</button><button type="button" class="btn" id="bknow">Back up now</button></div></form>
+    <div class="card" style="margin-top:14px;padding:15px"><b>Verified backup history &amp; recovery</b>
+      <p class="muted small">Backups use SQLite integrity checks and SHA-256 verification. The last 14 automatic daily backups are retained. You can also create an AES-256 encrypted portable backup protected by a passphrase only you know. Restore is admin-only and happens after restart, with a pre-restore rollback copy.</p>
+      ${l.admin?'<button class="btn" id="encryptedNow" type="button" style="margin-bottom:10px">Create password-encrypted backup</button>':''}
+      ${(backups.backups||[]).length? `<div style="overflow:auto"><table class="grid"><thead><tr><th>Backup</th><th>Size</th><th>Validation</th><th></th></tr></thead><tbody>
+        ${backups.backups.map(b => `<tr><td class="mono">${esc(b.name)}</td><td>${b.bytes? (b.bytes/1024/1024).toFixed(2)+" MB":"—"}</td>
+          <td class="${b.valid?"good":"bad"}">${b.valid?"Passed":"Failed"} ${b.checked?"· SHA-256":""} ${b.encrypted?"· Encrypted":""}</td>
+          <td>${l.admin?`<button type="button" class="btn sm" data-restore="${esc(b.name)}" ${b.valid?"":"disabled"}>Restore</button>`:"Admin only"}</td></tr>`).join("")}
+      </tbody></table></div>`:'<div class="muted small" style="margin-top:10px">No backups yet. Select “Back up now” to create the first verified version.</div>'}</div>
     <div class="kv muted small" style="margin-top:14px"><div><span>App version</span><b>${esc(ME.version)}</b></div><div><span>Data folder</span><b class="mono">${esc(s.data_dir)}</b></div>
       <div><span>Tally</span><b>${esc(ME.tally.detail || ME.tally.status)}${ME.tally.companies?.length ? ` — open: ${ME.tally.companies.map(esc).join(", ")}` : ""}</b></div></div>
   </div>`;
   wireTop();
   $("#signout").onclick = async () => { if (!confirm("Sign out on this PC? Work that is waiting stays here for when you sign in again.")) return; await api("/signout", { body: {} }); ME = null; location.hash = "#/signin"; };
   $("#bk").onsubmit = async (e) => { e.preventDefault(); await act(() => api("/settings", { body: { backup_dir: e.target.backup_dir.value } }), "Saved"); route(); };
-  $("#bknow").onclick = async () => { const r = await act(() => api("/backup", { body: {} })); if (r.error) toast(r.error, true); else toast("Backup saved"); route(); };
+  $("#bknow").onclick = async () => { const r = await act(() => api("/backup", { body: {} })); if (r.error) toast(r.error, true); else toast("Verified backup saved"); route(); };
+  $("#encryptedNow")?.addEventListener("click",()=>{
+    modal('<h2>Encrypted portable backup</h2><p class="muted small">The database is encrypted locally with AES-256-GCM. The password is not stored or sent online. Keep it safely; losing the password makes this backup unrecoverable.</p>'+
+      '<div class="field"><label>Passphrase (12+ characters)</label><input class="in" type="password" name="passphrase" minlength="12" required autocomplete="new-password"></div>'+
+      '<div class="field"><label>Confirm passphrase</label><input class="in" type="password" name="confirm" minlength="12" required autocomplete="new-password"></div>'+
+      '<div style="display:flex;gap:8px"><button class="btn primary">Create encrypted backup</button><button class="btn" type="button" data-close>Cancel</button></div>',
+      async d=>{
+        if(d.passphrase!==d.confirm)throw new Error("Passphrases do not match");
+        const result=await api("/backups/encrypted",{body:{passphrase:d.passphrase}});
+        toast("Encrypted backup saved: "+result.name);route();
+      });
+  });
+  $$("[data-restore]").forEach(b=>b.onclick=async()=>{
+    const name=b.dataset.restore, encrypted=name.endsWith(".itbak");
+    if(!confirm("Replace THIS PC's SQLite database from "+name+" on the next app launch? All companies, drafts and posting history will return to that backup date. A rollback copy of the current database will be kept."))return;
+    if(prompt("Type RESTORE to confirm the next-launch database restore")!=="RESTORE")return;
+    const run=async passphrase=>{
+      b.disabled=true;
+      try{await api("/backups/restore",{body:{name,passphrase}});
+        toast("Restore prepared. CLOSE InvoiceTotally completely, then reopen it. The current database remains unchanged until restart.");}
+      catch(e){toast(e.message,true);b.disabled=false;throw e;}
+    };
+    if(encrypted){
+      modal('<h2>Unlock encrypted backup</h2><p class="muted small">Enter the original backup passphrase. It will not be saved.</p>'+
+        '<div class="field"><label>Passphrase</label><input class="in" type="password" name="passphrase" required autocomplete="off"></div>'+
+        '<button class="btn primary">Verify and stage restore</button> <button class="btn" type="button" data-close>Cancel</button>',
+        async d=>run(d.passphrase));
+    }else await run("");
+  });
 }
 
 const AI_HELP = {
@@ -436,7 +473,7 @@ async function viewCompanies() {
   app().innerHTML = topBar([["Companies", "#/"]]) + `<div class="page">
     <div class="bar" style="padding:0 0 14px;border:0"><h1>Companies</h1><div class="spacer"></div>
     ${l.unlimited ? "" : `<span class="muted small" style="margin-right:10px">${list.length} of ${l.company_limit} used</span>`}
-    <button class="btn primary" id="add" ${full ? `disabled title="Your account allows ${l.company_limit} — ask the admin for more"` : ""}>+ Add company</button></div>
+    <a class="btn" href="#/dashboard">◫ Accounting dashboard</a> <button class="btn primary" id="add" ${full ? `disabled title="Your account allows ${l.company_limit} — ask the admin for more"` : ""}>+ Add company</button></div>
     ${ME.tally.status === "down" ? `<div class="alert warn" style="margin-bottom:12px"><b>TallyPrime isn't answering.</b> Open TallyPrime on this PC. If it is open, turn on its connectivity: <b>F1 Help → Settings → Connectivity</b> → <i>TallyPrime acts as</i> <b>Both</b>, port <b>9000</b>.</div>` : ""}
     ${list.length ? `<div class="cards">${list.map((c) => { const st = tallyState(c); return `<a class="card" href="#/c/${c.id}">
       <div class="big">${esc(c.name)}</div>
@@ -488,7 +525,7 @@ function companyModal() {
 async function viewCompany(cid, tab) {
   const c = await api(`/companies/${cid}`);
   CURRENT.company = c;
-  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["gstr2b", "GSTR-2B"], ["ecommerce", "E-Commerce → Tally"], ["masters", "Masters"], ["jobs", "Tally log"], ["settings", "Settings"]];
+  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["gstr2b", "GSTR-2B"], ["gstcontrol", "GST Reconciliation"], ["ecommerce", "E-Commerce → Tally"], ["smartmaps", "Smart Matching"], ["masters", "Masters"], ["jobs", "Tally log"], ["audit", "Posting Audit"], ["settings", "Settings"]];
   const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || ["upload", "⇪ Upload invoices"];
   app().innerHTML = topBar([[c.name, `#/c/${cid}`]], c) + `<div class="bar">
       <div class="status">${c.masters.ledger} ledgers · ${c.masters.stock_item} stock items · masters ${c.masters_imported_at ? "imported " + ago(c.masters_imported_at) : c.pending_jobs ? "being read from Tally…" : "not imported yet"}</div>
@@ -505,6 +542,9 @@ async function viewCompany(cid, tab) {
   if (tab === "bank") return companyBank(c, el);
   if (tab === "gstr2b") return companyGst(c, el);
   if (tab === "ecommerce") return companyEcommerce(c, el);
+  if (tab === "gstcontrol") return companyGstControl(c, el);
+  if (tab === "smartmaps") return companySmartMappings(c, el);
+  if (tab === "audit") return companyAudit(c, el);
 }
 
 function tallyHelp(c) {
