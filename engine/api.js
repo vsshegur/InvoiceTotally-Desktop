@@ -170,14 +170,20 @@ route("POST", "/api/settings", async ({ env, body }) => {
 });
 route("POST", "/api/backup", async ({ env }) => json(env.backupNow ? env.backupNow() : { error: "not available" }));
 route("GET", "/api/backups", async ({ env }) => json({ backups: env.listBackups?.() || [] }));
+route("POST","/api/backups/encrypted",async({env,body})=>{
+  const lic=await requireLicence(env);
+  if(!lic.admin)throw new HttpError(403,"Only the admin can create a portable encrypted database backup");
+  if(!env.encryptedBackup)throw new HttpError(503,"This backup is available only on the desktop");
+  return json(env.encryptedBackup(String(body.passphrase||"")));
+});
 route("POST", "/api/backups/restore", async ({ env, body }) => {
   const lic=await requireLicence(env);
   if(!lic.admin)throw new HttpError(403,"Only the admin may restore a PC-wide backup");
   const name=String(body.name||"");
-  if(!/^invoicetotally-\d{4}-\d{2}-\d{2}\.sqlite$/.test(name))
+  if(!/^invoicetotally-\d{4}-\d{2}-\d{2}\.sqlite$/.test(name) && !/^invoicetotally-encrypted-\d{8}-\d{6}-[a-f0-9]{6}\.itbak$/.test(name))
     throw new HttpError(400,"Choose a verified backup");
   if(!env.scheduleRestore)throw new HttpError(503,"Restore is available only in the desktop app");
-  return json(env.scheduleRestore(name));
+  return json(env.scheduleRestore(name,String(body.passphrase||"")));
 });
 
 // companies
