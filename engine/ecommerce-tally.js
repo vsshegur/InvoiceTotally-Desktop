@@ -47,7 +47,7 @@ export function ecommerceVoucher(company, row, mapping) {
       const qty = q.toFixed(3).replace(/\.?0+$/, "");
       return "<ALLINVENTORYENTRIES.LIST><STOCKITEMNAME>" + esc(mapping.stock[i.name]) + "</STOCKITEMNAME>" +
         "<ISDEEMEDPOSITIVE>" + yes(a) + "</ISDEEMEDPOSITIVE>" +
-        "<RATE>" + money(a / q) + "/" + esc(unit) + "</RATE>" +
+        "<RATE>" + (a / q).toFixed(6) + "/" + esc(unit) + "</RATE>" +
         "<ACTUALQTY>" + qty + " " + esc(unit) + "</ACTUALQTY>" +
         "<BILLEDQTY>" + qty + " " + esc(unit) + "</BILLEDQTY>" +
         "<AMOUNT>" + money(a) + "</AMOUNT><ACCOUNTINGALLOCATIONS.LIST>" +
