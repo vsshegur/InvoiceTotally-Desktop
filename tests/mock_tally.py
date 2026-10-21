@@ -103,6 +103,8 @@ def ecommerce_entries(date):
         out.append("<VOUCHER><DATE>" + esc(v.findtext("DATE") or "") + "</DATE>" +
                    "<VOUCHERNUMBER>" + esc(v.findtext("VOUCHERNUMBER") or "") + "</VOUCHERNUMBER>" +
                    "<VOUCHERTYPENAME>" + esc(v.findtext("VOUCHERTYPENAME") or "") + "</VOUCHERTYPENAME>" +
+                   "<REFERENCE>" + esc(v.findtext("REFERENCE") or "") + "</REFERENCE>" +
+                   "<NARRATION>" + esc(v.findtext("NARRATION") or "") + "</NARRATION>" +
                    "<PARTYLEDGERNAME>" + esc(v.findtext("PARTYLEDGERNAME") or "") + "</PARTYLEDGERNAME></VOUCHER>")
     return "<ENVELOPE><BODY><DATA><COLLECTION>" + "".join(out) + "</COLLECTION></DATA></BODY></ENVELOPE>"
 
