@@ -7,6 +7,12 @@ import crypto from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
 const backupName=/^invoicetotally-\d{4}-\d{2}-\d{2}\.sqlite$/;
+const encryptedName=/^invoicetotally-encrypted-\d{8}-\d{6}(?:-[a-f0-9]{6})?\.itbak$/;
+const ENCRYPTED_HEADER=Buffer.from("ITBK1","ascii");
+const passKey=(pass,salt)=>{
+  if(typeof pass!=="string"||pass.length<12||pass.length>1024)throw new Error("Encryption passphrase must be 12–1024 characters");
+  return crypto.scryptSync(pass,salt,32,{N:1<<15,r:8,p:1,maxmem:64<<20});
+};
 const fileHash=p=>crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex");
 const ensure=directory=>fs.mkdirSync(directory,{recursive:true});
 const quote=p=>String(p).replace(/'/g,"''");
@@ -47,37 +53,87 @@ export function createBackup(db,dir,{force=false,keep=14,at=new Date()}={}){
     return {file:dst,hash:sha,checked:true};
   }finally{fs.rmSync(temp,{force:true});}
 }
+export function createEncryptedBackup(db,dir,passphrase){
+  ensure(dir);
+  const stamp=new Intl.DateTimeFormat("sv-SE",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit",
+    hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(new Date()).replace(/[-: ]/g,"");
+  const name="invoicetotally-encrypted-"+stamp+"-"+crypto.randomBytes(3).toString("hex")+".itbak";
+  const file=path.join(dir,name),temp=path.join(dir,".encrypted-source-"+crypto.randomUUID()+".sqlite");
+  try{
+    db.exec("VACUUM INTO '"+quote(temp)+"'");
+    integrity(temp);
+    const source=fs.readFileSync(temp),salt=crypto.randomBytes(16),nonce=crypto.randomBytes(12);
+    const cipher=crypto.createCipheriv("aes-256-gcm",passKey(passphrase,salt),nonce);
+    const ciphertext=Buffer.concat([cipher.update(source),cipher.final()]);
+    const output=Buffer.concat([ENCRYPTED_HEADER,salt,nonce,cipher.getAuthTag(),ciphertext]);
+    fs.writeFileSync(file,output,{mode:0o600});
+    const hash=fileHash(file);
+    fs.writeFileSync(file+".sha256.txt",hashLine(hash,name),{mode:0o600});
+    return {file,name,encrypted:true,hash,bytes:output.length};
+  }finally{fs.rmSync(temp,{force:true});}
+}
+export function decryptEncryptedBackup(file,passphrase,destination){
+  const buf=fs.readFileSync(file);
+  if(buf.length<50||!buf.subarray(0,5).equals(ENCRYPTED_HEADER))throw new Error("Not a valid encrypted InvoiceTotally backup");
+  const salt=buf.subarray(5,21),nonce=buf.subarray(21,33),tag=buf.subarray(33,49),text=buf.subarray(49);
+  try{
+    const decipher=crypto.createDecipheriv("aes-256-gcm",passKey(passphrase,salt),nonce);
+    decipher.setAuthTag(tag);
+    const restored=Buffer.concat([decipher.update(text),decipher.final()]);
+    fs.writeFileSync(destination,restored,{mode:0o600});
+    integrity(destination);
+    return {hash:fileHash(destination)};
+  }catch(e){
+    fs.rmSync(destination,{force:true});
+    throw new Error("Encrypted backup passphrase is incorrect or the backup is corrupted");
+  }
+}
 export function listBackups(dir){
   if(!fs.existsSync(dir))return [];
-  const names=fs.readdirSync(dir).filter(name=>backupName.test(name)).sort().reverse().slice(0,90);
+  const names=fs.readdirSync(dir).filter(name=>backupName.test(name)||encryptedName.test(name)).sort().reverse().slice(0,90);
   return names.map(name=>{
     const file=path.join(dir,name);
     try{
-      validFile(file,name);
+      if(!fs.statSync(file).isFile())throw new Error("Not a regular file");
+      const encrypted=encryptedName.test(name);
       const hash=fileHash(file);
       const expected=fs.existsSync(file+".sha256.txt")?
         fs.readFileSync(file+".sha256.txt","utf8").split(/\s+/)[0]:"";
-      integrity(file);
+      if(encrypted){
+        const header=Buffer.alloc(5),fd=fs.openSync(file,"r");
+        try{fs.readSync(fd,header,0,5,0);}finally{fs.closeSync(fd);}
+        if(!header.equals(ENCRYPTED_HEADER))throw new Error("Invalid encrypted backup format");
+      }else integrity(file);
       return {name,bytes:fs.statSync(file).size,valid:!expected||hash===expected,
-        checked:!!expected,hash,modified_at:fs.statSync(file).mtimeMs/1000};
+        encrypted,checked:!!expected,hash,modified_at:fs.statSync(file).mtimeMs/1000};
     }catch(e){return {name,valid:false,error:e.message};}
   });
 }
-export function scheduleRestore(dir,dataDir,filename){
-  validFile(path.join(dir,filename),filename);
+export function scheduleRestore(dir,dataDir,filename,passphrase=""){
+  const encrypted=encryptedName.test(filename);
+  if(!encrypted)validFile(path.join(dir,filename),filename);
+  if(!backupName.test(filename)&&!encrypted)throw new Error("Choose an InvoiceTotally backup");
   const entry=listBackups(dir).find(x=>x.name===filename);
   if(!entry?.valid)throw new Error("The selected backup did not pass validation");
-  const source=path.join(dir,filename);
+  let source=path.join(dir,filename);
+  let cleanupSource=false;
+  if(encrypted){
+    const staging=path.join(dataDir,"restore-staging");
+    ensure(staging);
+    source=path.join(staging,"invoicetotally-"+new Date().toISOString().slice(0,10)+".sqlite");
+    decryptEncryptedBackup(path.join(dir,filename),passphrase,source);
+    cleanupSource=true;
+  }
   // Do not allow restoring the same live database path.
   const current=path.resolve(path.join(dataDir,"invoicetotally.sqlite"));
   if(path.resolve(source)===current)throw new Error("Cannot restore the live database as a backup");
   ensure(dataDir);
   const marker=path.join(dataDir,"restore-next-launch.json");
   const temp=marker+".new";
-  const plan={source,hash:entry.hash,requested_at:new Date().toISOString()};
+  const plan={source,hash:cleanupSource?fileHash(source):entry.hash,cleanupSource,requested_at:new Date().toISOString()};
   fs.writeFileSync(temp,JSON.stringify(plan),{encoding:"utf8",mode:0o600});
   fs.renameSync(temp,marker);
-  return {scheduled:true,source:filename,when:"next app launch"};
+  return {scheduled:true,source:filename,encrypted,when:"next app launch"};
 }
 export function applyPendingRestore(dataDir,dbPath){
   const marker=path.join(dataDir,"restore-next-launch.json");
@@ -113,6 +169,9 @@ export function applyPendingRestore(dataDir,dbPath){
       throw e;
     }
     if(moved)fs.rmSync(dbPath+".restore-old",{force:true});
+    // Never let stale sidecars from the previous WAL-backed database shadow a new snapshot.
+    for(const suffix of ["-wal","-shm"])fs.rmSync(dbPath+suffix,{force:true});
+    if(plan.cleanupSource)fs.rmSync(source,{force:true});
     fs.rmSync(marker,{force:true});
     return {restored:true,from:source,rollback};
   }finally{fs.rmSync(temp,{force:true});}
