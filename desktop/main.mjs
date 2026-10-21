@@ -11,7 +11,7 @@ import os from "node:os";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { makeD1 } from "./d1.mjs";
-import { applyPendingRestore, createBackup, listBackups, scheduleRestore } from "./safe-backup.mjs";
+import { applyPendingRestore, createBackup, createEncryptedBackup, listBackups, scheduleRestore } from "./safe-backup.mjs";
 import { licenceClient } from "./licence.mjs";
 import { makeRunner } from "./runner.mjs";
 import api from "../engine/api.js";
@@ -73,10 +73,11 @@ export const env = {
   getConfig: cfg,
   backupNow: () => backup(true),
   listBackups: () => listBackups(cfg("backup_dir") || path.join(DATA, "backups")),
-  scheduleRestore: (filename) => {
+  encryptedBackup: (passphrase) => createEncryptedBackup(DB.sql,cfg("backup_dir")||path.join(DATA,"backups"),passphrase),
+  scheduleRestore: (filename,passphrase) => {
     if (runner.state.busy || DB.sql.prepare("SELECT count(*) n FROM jobs WHERE status='sent' AND kind LIKE 'import_%'").get().n)
       throw new Error("Wait until the current Tally posting finishes before scheduling restore");
-    return scheduleRestore(cfg("backup_dir") || path.join(DATA,"backups"), DATA, filename);
+    return scheduleRestore(cfg("backup_dir") || path.join(DATA,"backups"), DATA, filename,passphrase);
   },
 };
 
