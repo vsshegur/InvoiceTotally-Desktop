@@ -44,7 +44,8 @@ async function companySmartMappings(c,el){
   const rows=data.pending||[];
   el.innerHTML='<div class="card" style="margin-bottom:16px;padding:16px"><h2 style="margin:0 0 6px">Smart ledger &amp; stock matching</h2>'+
     '<p class="muted">Suggested by name, GSTIN, HSN, GST rate and units. Hard conflicts cannot be approved. Every decision is reviewed and remembered only for this company; no master is created or altered in Tally.</p>'+
-    '<div class="muted small">'+data.unresolved+' unresolved entries · '+data.learned+' learned mappings</div></div>'+
+    '<div class="muted small">'+data.unresolved+' unresolved entries · '+data.learned+' learned mappings</div>'+
+    '<button class="btn sm" id="ccExportMappings" style="margin-top:9px">Download remembered mappings CSV</button></div>'+
     (rows.length?'<div style="overflow:auto"><table class="grid"><thead><tr><th>Type</th><th>Invoice line / party</th><th>Tally master suggestions</th><th></th></tr></thead><tbody>'+
       rows.map((r,i)=>{
         const choices=r.candidates||[];
@@ -60,7 +61,18 @@ async function companySmartMappings(c,el){
           '<td><button class="btn sm" data-remember="'+i+'">Remember</button></td></tr>';
       }).join('')+'</tbody></table></div>':
       '<div class="card empty">All reviewed invoice parties, stock items and charge ledgers are resolved.</div>');
-  $$("[data-remember]",el).forEach(btn=>btn.onclick=async()=>{
+  $('#ccExportMappings')?.addEventListener('click',async()=>{
+    try{
+      const result=await api('/companies/'+c.id+'/smart-maps/export');
+      const csv=[['Type','Source','Tally Master'],...(result.mappings||[]).map(m=>[m.kind,m.key,m.value])]
+        .map(row=>row.map(x=>'"'+String(x||'').replace(/"/g,'""')+'"').join(',')).join('\r\n');
+      const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+      const a=document.createElement('a');a.href=url;
+      a.download='InvoiceTotally_Mappings_'+c.name.replace(/[^a-z0-9-]/gi,'_')+'.csv';
+      a.click();setTimeout(()=>URL.revokeObjectURL(url),1500);
+    }catch(e){toast(e.message,true);}
+  });
+  $("[data-remember]",el).forEach(btn=>btn.onclick=async()=>{
     const i=+btn.dataset.remember,r=rows[i];
     const name=el.querySelector('[data-suggest="'+i+'"]')?.value;
     if(!name)return toast("Select one compatible Tally master",true);
