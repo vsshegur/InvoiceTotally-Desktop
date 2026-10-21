@@ -77,7 +77,7 @@ test("someone the admin has not added cannot sign in", async () => {
   assert.match(g.error, /not been added/);
 });
 
-let cid;
+let cid, postedPurchaseInvoiceId;
 test("admin: signs in, adds a user with limits and credits, sets up a company from Tally", async () => {
   const me = await signIn(ADMIN);
   assert.equal(me.licence.admin, true);
@@ -124,6 +124,22 @@ test("admin: an invoice is read through the service and posted straight to Tally
   assert.equal(pushed.pushed, 1);
   const done = await until(async () => { const x = await call("GET", `/invoices/${inv.id}`); return x.status !== "queued" && x; }, 15000, "posting");
   assert.equal(done.status, "synced", done.sync_error);
+  postedPurchaseInvoiceId=inv.id;
+});
+
+test("admin: forced local repost of the same Purchase is blocked by live Tally duplicate check", async()=>{
+  const id=postedPurchaseInvoiceId;
+  assert.ok(id);
+  const response=await call("POST","/invoices/"+id+"/push?force=1",{});
+  assert.equal(response.ok,true,response.error||"");
+  const after=await until(async()=>{
+    const inv=await call("GET","/invoices/"+id);
+    return inv.status!=="queued"&&inv;
+  },15000,"duplicate prevention");
+  assert.equal(after.status,"failed","the external duplicate must NOT create a new Tally invoice");
+  assert.match(after.sync_error,/already exists in Tally|duplicate/i);
+  const audit=await call("GET","/companies/"+cid+"/posting-audit");
+  assert.ok(audit.rows.some(x=>x.kind==="import_voucher"&&x.phase==="duplicate_blocked"));
 });
 
 test("admin: the AIs are put in a new order; the service gets that order", async () => {
