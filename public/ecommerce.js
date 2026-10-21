@@ -128,6 +128,8 @@ async function viewEcommerceBatch(id) {
     (done?'<div class="alert warn" style="margin-bottom:14px">Some vouchers have already been queued, posted or found in Tally. Ledger mappings are locked for this batch. Duplicate and uncertain entries are NEVER automatically retried.</div>':'')+
     '<div class="box" style="margin-bottom:16px"><div class="bh"><b>Tally master mapping</b><span class="muted small">'+(done?'Locked':'Required before posting')+'</span></div>' +
       '<div class="bb" id="ecMapping"></div></div>'+
+    '<div class="card" style="margin-bottom:12px;padding:12px"><label><input type="checkbox" id="ecVerified"> '+
+      'I checked these GST amounts and confirmed this month/platform was not already imported into Tally, including via PackPilot XML.</label></div>'+
     '<div class="filters" style="display:flex;gap:12px;margin:12px 0;align-items:center">' +
     '<label><input type="checkbox" id="ecAll" checked> Select ready / failed</label>'+
     '<span class="muted small">Posting checks Tally for matching voucher numbers immediately before each write.</span></div>'+
@@ -138,8 +140,11 @@ async function viewEcommerceBatch(id) {
       '<td class="num">'+EC.money(r.taxable)+'</td><td class="num">'+EC.money(+r.igst + +r.cgst + +r.sgst)+'</td>'+
       '<td class="num">'+EC.money(r.invoice)+'</td><td>'+statusHtml(r.status)+(r.error?'<div class="small bad">'+esc(r.error)+'</div>':'')+'</td></tr>').join('')+
     '</tbody></table></div>'+
-    '<div class="muted small" style="margin:14px 0">HSN summary ('+(data.summary.hsnSummary||[]).length+
-      ' groups) is retained for review; accounting-only mode records HSN names in narration, not Tally stock registers.</div>'+
+    '<details style="margin:16px 0"><summary><b>HSN summary — '+(data.summary.hsnSummary||[]).length+
+       ' groups</b> <span class="muted small">(review before posting)</span></summary>'+
+       '<div style="overflow:auto;margin-top:10px"><table class="grid"><thead><tr><th>HSN</th><th>GST rate</th><th class="num">Qty</th><th class="num">Taxable</th></tr></thead><tbody>'+
+       (data.summary.hsnSummary||[]).map(x=>'<tr><td>'+esc(x.hsn||'—')+'</td><td>'+esc(x.rate??'—')+'%</td><td class="num">'+esc(x.qty||0)+'</td><td class="num">'+EC.money(x.taxable)+'</td></tr>').join('')+
+       '</tbody></table></div><p class="muted small">Accounting mode records HSN in narration only; it does not make HSN inventory/stock movements in Tally.</p></details>'+
     '</div>';
   wireTop(c);
   const select=(key,label,value,options,disabled)=>{
@@ -161,11 +166,10 @@ async function viewEcommerceBatch(id) {
       '</select></div>'+
       '<div style="display:flex;gap:12px;flex-wrap:wrap">'+
       mappingFields.map(([key,label])=>select(key,label,guess(key),ledgers,done)).join('')+'</div>'+
-      (mode==='inventory'?'<p class="muted small">Stock items must already exist in Tally. Map every HSN item below; no new master is created without approval.</p>'+
+      (mode==='inventory'?'<div class="alert warn" style="margin:12px 0">Meesho HSN totals combine multiple SKUs. Use only a dedicated HSN summary stock item, not an individual physical product/SKU. Quantities affect Tally stock balances. Stock masters must already exist.</div>'+
         '<div style="display:flex;gap:12px;flex-wrap:wrap">'+requiredStock.map(name=>{
           const hsn=(name.match(/HSN_([0-9A-Z]+)/)||[])[1]||'';
-          const chosen=map.stock[name]||stockMasters.find(x=>x.name.toLowerCase()===name.toLowerCase())?.name||
-            stockMasters.find(x=>x.hsn===hsn)?.name||'';
+          const chosen=map.stock[name]||stockMasters.find(x=>x.name.toLowerCase()===name.toLowerCase())?.name||'';
           return select('stock-'+name,name,chosen,stockMasters,done).replace('data-map="stock-'+name+'"','data-stock="'+esc(name)+'"');
         }).join('')+'</div>':'')+
       '<div style="display:flex;gap:10px;margin-top:12px">'+
@@ -185,6 +189,7 @@ async function viewEcommerceBatch(id) {
   $('#ecPost').onclick=async()=>{
     const selected=$$('.ec-check:checked:not(:disabled)').map(x=>x.value);
     if(!selected.length)return toast('Select at least one ready voucher',true);
+    if(!$('#ecVerified')?.checked)return toast('Confirm you checked prior PackPilot/Tally imports and the GST totals',true);
     if(!data.mapping?.party || !data.mapping?.sales)return toast('Save your Tally ledger mapping first',true);
     if(!confirm('Post '+selected.length+' monthly consolidated vouchers into '+(c.tally_company||c.name)+'?\nEach is checked against existing Tally voucher numbers. Please verify your GST totals and mappings first.'))return;
     const btn=$('#ecPost');btn.disabled=true;
