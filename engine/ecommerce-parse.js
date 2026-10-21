@@ -128,28 +128,42 @@ export async function parseMeesho({ salesFile, returnFile, taxInvoiceFile, clien
 
   const groups = new Map(), hsnTotals = new Map(), stateOrder = [];
   let detectedGstin = '', operatorGstin = '', reportedYear = 0, reportedMonth = 0;
+  const problems = [];
   const process = (table, sign) => {
     const indexes = {
       gstin: columnIndex(table.map, ['gstin']), hsn: columnIndex(table.map, ['hsn code']), qty: columnIndex(table.map, ['quantity']),
       rate: columnIndex(table.map, ['gst rate']), taxable: columnIndex(table.map, ['total taxable sale value']), state: columnIndex(table.map, ['end customer state']),
       eco: columnIndex(table.map, ['eco tcs gstin']), year: columnIndex(table.map, ['financial year']), month: columnIndex(table.map, ['month number'])
     };
-    table.rows.slice(table.rowIndex + 1).forEach(row => {
+    table.rows.slice(table.rowIndex + 1).forEach((row, i) => {
       const taxable = round2(row[indexes.taxable]), hsn = String(row[indexes.hsn] ?? '').trim(), state = canonicalState(row[indexes.state]), rate = num(row[indexes.rate]);
-      if (!state || !hsn || !rate || !taxable) return;
+      if (!taxable) return;
+      // A real taxable GSTIN row must never silently vanish from the monthly books.
+      // Ignore footer total rows (which have no GSTIN / HSN / state).
+      if (!state || !hsn || row[indexes.rate] === '' || row[indexes.rate] == null) {
+        if (String(row[indexes.gstin] || '').trim() || hsn || state)
+          problems.push('Row ' + (table.rowIndex + i + 2) + ': missing state, HSN or GST rate');
+        return;
+      }
       detectedGstin ||= asGstin(row[indexes.gstin]); operatorGstin ||= asGstin(row[indexes.eco]);
-      reportedYear ||= Number(row[indexes.year] || 0); reportedMonth ||= Number(row[indexes.month] || 0);
+      const rawYear = String(row[indexes.year] || '');
+      const fy = Number(rawYear.match(/20\d{2}/)?.[0] || 0);
+      const mo = Number(row[indexes.month] || 0);
+      if (fy && reportedYear && fy !== reportedYear) problems.push('More than one financial year in the statement');
+      if (mo && reportedMonth && mo !== reportedMonth) problems.push('More than one month in the statement');
+      reportedYear ||= fy; reportedMonth ||= mo;
       if (!stateOrder.includes(state)) stateOrder.push(state);
       const key = `${state}|${hsn}|${rate}`, group = groups.get(key) || { state, hsn, rate, taxable: 0, qty: 0 };
-      group.taxable = round2(group.taxable + sign * taxable); group.qty += sign * num(row[indexes.qty]); groups.set(key, group);
+      group.taxable = round2(group.taxable + (sign < 0 ? -Math.abs(taxable) : taxable)); group.qty += sign < 0 ? -Math.abs(num(row[indexes.qty])) : num(row[indexes.qty]); groups.set(key, group);
       const hkey = `${hsn}|${rate}`, item = hsnTotals.get(hkey) || { hsn, rate, taxable: 0, qty: 0 };
-      item.taxable = round2(item.taxable + sign * taxable); item.qty += sign * num(row[indexes.qty]); hsnTotals.set(hkey, item);
+      item.taxable = round2(item.taxable + (sign < 0 ? -Math.abs(taxable) : taxable)); item.qty += sign < 0 ? -Math.abs(num(row[indexes.qty])) : num(row[indexes.qty]); hsnTotals.set(hkey, item);
     });
   };
   process(salesTable, 1); process(returnTable, -1);
+  if (problems.length) throw new Error('Meesho workbook needs correction: ' + problems.slice(0, 5).join('; '));
   if (detectedGstin && detectedGstin !== client.gstin) throw new Error(`Meesho report GSTIN ${detectedGstin} does not match client ${client.gstin}.`);
   if (reportedMonth && reportedMonth !== info.month) throw new Error(`Meesho report is for month ${reportedMonth}, not selected month ${info.month}.`);
-  if (reportedYear && reportedYear !== info.year) throw new Error(`Meesho report is for ${reportedYear}, not selected year ${info.year}.`);
+  if (reportedYear && reportedYear !== info.fyStart) throw new Error(`Meesho financial year starts in ${reportedYear}, not ${info.fyStart}.`);
   if (!operatorGstin) operatorGstin = deriveTcsGstin(client.gstin, 'AARCM9332R');
 
   const sellerState = stateFromGstin(client.gstin), vouchers = [];
@@ -176,7 +190,7 @@ export async function parseFlipkart({ file, client, info }) {
   let detectedGstin = '', documentCount = 0, sourceTaxable = 0;
   const add = (state, rate, taxable, large = false, invoiceAmount = 0) => {
     const cleanState = canonicalState(state), cleanRate = num(rate), cleanTaxable = round2(taxable);
-    if (!cleanState || !cleanRate || Math.abs(cleanTaxable) < 0.005) return;
+    if (!cleanState || Math.abs(cleanTaxable) < 0.005) return; // 0% taxable sales must not disappear
     sourceTaxable = round2(sourceTaxable + cleanTaxable);
     if (!stateOrder.includes(cleanState)) stateOrder.push(cleanState);
     const key = `${cleanState}|${cleanRate}`, group = groups.get(key) || { state: cleanState, rate: cleanRate, taxable: 0 };
