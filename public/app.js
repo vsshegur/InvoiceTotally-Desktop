@@ -193,10 +193,11 @@ const routes = [
   [/^#\/signin$/, viewSignin],
   [/^#\/?$/, viewCompanies],
   [/^#\/account$/, viewAccount],
+  [/^#\/dashboard$/, viewDashboard],
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "batches")],
-  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce)$/, viewCompany],
+  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|audit)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
   [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
   [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
@@ -436,7 +437,7 @@ async function viewCompanies() {
   app().innerHTML = topBar([["Companies", "#/"]]) + `<div class="page">
     <div class="bar" style="padding:0 0 14px;border:0"><h1>Companies</h1><div class="spacer"></div>
     ${l.unlimited ? "" : `<span class="muted small" style="margin-right:10px">${list.length} of ${l.company_limit} used</span>`}
-    <button class="btn primary" id="add" ${full ? `disabled title="Your account allows ${l.company_limit} — ask the admin for more"` : ""}>+ Add company</button></div>
+    <a class="btn" href="#/dashboard">◫ Accounting dashboard</a> <button class="btn primary" id="add" ${full ? `disabled title="Your account allows ${l.company_limit} — ask the admin for more"` : ""}>+ Add company</button></div>
     ${ME.tally.status === "down" ? `<div class="alert warn" style="margin-bottom:12px"><b>TallyPrime isn't answering.</b> Open TallyPrime on this PC. If it is open, turn on its connectivity: <b>F1 Help → Settings → Connectivity</b> → <i>TallyPrime acts as</i> <b>Both</b>, port <b>9000</b>.</div>` : ""}
     ${list.length ? `<div class="cards">${list.map((c) => { const st = tallyState(c); return `<a class="card" href="#/c/${c.id}">
       <div class="big">${esc(c.name)}</div>
@@ -488,7 +489,7 @@ function companyModal() {
 async function viewCompany(cid, tab) {
   const c = await api(`/companies/${cid}`);
   CURRENT.company = c;
-  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["gstr2b", "GSTR-2B"], ["ecommerce", "E-Commerce → Tally"], ["masters", "Masters"], ["jobs", "Tally log"], ["settings", "Settings"]];
+  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["gstr2b", "GSTR-2B"], ["gstcontrol", "GST Reconciliation"], ["ecommerce", "E-Commerce → Tally"], ["smartmaps", "Smart Matching"], ["masters", "Masters"], ["jobs", "Tally log"], ["audit", "Posting Audit"], ["settings", "Settings"]];
   const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || ["upload", "⇪ Upload invoices"];
   app().innerHTML = topBar([[c.name, `#/c/${cid}`]], c) + `<div class="bar">
       <div class="status">${c.masters.ledger} ledgers · ${c.masters.stock_item} stock items · masters ${c.masters_imported_at ? "imported " + ago(c.masters_imported_at) : c.pending_jobs ? "being read from Tally…" : "not imported yet"}</div>
@@ -505,6 +506,9 @@ async function viewCompany(cid, tab) {
   if (tab === "bank") return companyBank(c, el);
   if (tab === "gstr2b") return companyGst(c, el);
   if (tab === "ecommerce") return companyEcommerce(c, el);
+  if (tab === "gstcontrol") return companyGstControl(c, el);
+  if (tab === "smartmaps") return companySmartMappings(c, el);
+  if (tab === "audit") return companyAudit(c, el);
 }
 
 function tallyHelp(c) {
