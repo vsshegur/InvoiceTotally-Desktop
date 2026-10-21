@@ -180,6 +180,26 @@ export async function beforePosting(D,job,tc,readFromTally) {
   const found = entries.find(e=>eq(e.number,r.number));
   return found ? {duplicate:true,message:"Voucher number "+r.number+" is already in Tally ("+found.type+"). Review manually; no duplicate posted."} : {duplicate:false};
 }
+// An ambiguous timeout or duplicate remains blocked until a fresh READ from Tally proves
+// whether the same voucher number is there. This only resets to Ready; it NEVER reposts.
+export async function recheck(D,id,env) {
+  const b=await batch(D,id),c=await company(D,b.company_id);
+  if (!env.TALLY?.readOnly) throw new EcommerceError("Read-only Tally connection is unavailable");
+  const rows=await D.all("SELECT * FROM ecommerce_vouchers WHERE batch_id=? AND status IN ('uncertain','duplicate') ORDER BY seq LIMIT 25",id);
+  if (!rows.length) throw new EcommerceError("No uncertain or duplicate vouchers need rechecking");
+  const result={present:0,ready:0};
+  for(const row of rows) {
+    const reply=await env.TALLY.readOnly(ecommerceExistingRequest(c.tally_company || c.name,row.date));
+    const matching=parseExistingVouchers(reply).some(e=>eq(e.number,row.number));
+    if(matching) result.present++;else result.ready++;
+    await D.update("ecommerce_vouchers",row.id,
+      {status:matching?"duplicate":"ready",
+        error:matching?"Voucher number exists in Tally — do not repost":
+          "Not found in Tally when last checked. Review and explicitly queue before retrying."});
+  }
+  return {...result,checked:rows.length};
+}
+
 export async function jobResult(D,job,accepted,raw,error,duplicate=false) {
   const res = accepted ? parseImportResponse(raw) : {ok:false,created:0,altered:0,messages:[error || "Tally error"]};
   const good = res.ok && res.created===1 && res.altered===0;
@@ -213,5 +233,8 @@ export function ecommerceRoutes(route,{requirePosting,requireLicence}) {
   });
   route("POST","/api/ecommerce/:id/post",async ({D,env,p,body})=>{
     await allowId(D,env,p.id);await requirePosting(env);return json(await post(D,p.id,body));
+  });
+  route("POST","/api/ecommerce/:id/recheck",async ({D,env,p})=>{
+    await allowId(D,env,p.id);await requirePosting(env);return json(await recheck(D,p.id,env));
   });
 }
