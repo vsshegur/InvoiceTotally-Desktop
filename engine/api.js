@@ -6,6 +6,7 @@ import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
 import { parseAmount } from "./num.js";
 import { AI_CHOICES, AI_LABELS } from "./reader.js";
 import * as BK from "./bank.js";
+import * as EC from "./ecommerce.js";
 import * as GS from "./gstr2b.js";
 
 class HttpError extends Error { constructor(status, msg, code) { super(msg); this.status = status; this.code = code; } }
@@ -638,6 +639,7 @@ async function useStatementCredit(env, D, st, lines) {
   }
 }
 BK.bankRoutes(route, { useCredit: useStatementCredit, requirePosting });
+EC.ecommerceRoutes(route, { requirePosting, requireLicence });
 // GSTR-2B reconciliation
 GS.gstRoutes(route);
 
