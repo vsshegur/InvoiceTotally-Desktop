@@ -115,7 +115,7 @@ export async function saveMapping(D,id,input) {
   if (await D.first("SELECT id FROM ecommerce_vouchers WHERE batch_id=? AND status IN ('queued','synced','duplicate','uncertain') LIMIT 1",id))
     throw new EcommerceError("Mappings are locked after posting starts");
   const [all,rows] = await D.many([
-    ["SELECT kind,name,unit FROM masters WHERE company_id=? AND pending=0",b.company_id],
+    ["SELECT kind,name,unit,hsn,primary_group FROM masters WHERE company_id=? AND pending=0",b.company_id],
     ["SELECT * FROM ecommerce_vouchers WHERE batch_id=?",id]
   ]);
   const ledgers = new Map(all.filter(x=>x.kind==="ledger").map(x=>[x.name.toLowerCase(),x.name]));
@@ -132,13 +132,21 @@ export async function saveMapping(D,id,input) {
     }
   }
   if (eq(mapping.party,mapping.sales)) throw new EcommerceError("Party and sales ledgers must be different");
+  const usedTaxLedgers=["igst","cgst","sgst"].filter(k=>mapping[k]&&rows.some(r=>Math.abs(+r[k]||0)>.004)).map(k=>mapping[k].toLowerCase());
+  if (new Set(usedTaxLedgers).size !== usedTaxLedgers.length || usedTaxLedgers.some(n=>n===mapping.sales.toLowerCase()||n===mapping.party.toLowerCase()))
+    throw new EcommerceError("Output CGST, SGST and IGST must each use their own tax ledger, distinct from Sales and Party");
   if (mapping.mode === "inventory") {
     if(b.platform!=="ME") throw new EcommerceError("Flipkart GST reports have no HSN-wise item quantities; choose accounting mode");
     for(const r of rows) if(r.invoice>0) for(const item of items(r.items)) {
       if (!(+item.qty>0)) throw new EcommerceError("Zero/negative HSN quantity; choose accounting mode");
       const lookup = stocks.get(String(input.stock?.[item.name] || "").toLowerCase());
       if(!lookup) throw new EcommerceError("Choose existing Tally stock item for "+item.name);
-      mapping.stock[item.name]=lookup.name; mapping.units[item.name]=lookup.unit || "PCS";
+      const unit=String(lookup.unit || "PCS").trim();
+      if (!["PCS","NOS","NO","PIECES","NUMBERS"].includes(unit.toUpperCase()))
+        throw new EcommerceError("Stock item "+lookup.name+" uses "+unit+"; HSN report quantity is in pieces. Use a PCS item or accounting mode");
+      if (item.hsn && (!lookup.hsn || String(lookup.hsn).trim() !== String(item.hsn).trim()))
+        throw new EcommerceError("Stock HSN mismatch: "+item.name+" needs HSN "+item.hsn+" in Tally");
+      mapping.stock[item.name]=lookup.name; mapping.units[item.name]=unit;
     }
   }
   for(const r of rows) ecommerceVoucher(c.tally_company || c.name,{...r,items:items(r.items)},mapping);
