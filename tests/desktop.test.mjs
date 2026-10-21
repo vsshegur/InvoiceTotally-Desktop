@@ -202,12 +202,54 @@ test("admin: offline Meesho and Flipkart Excel summaries go directly into Tally 
   assert.equal(posted.vouchers[0].status,"synced",posted.vouchers[0].error||"");
 });
 
+test("admin: GST control, multi-company balances, smart mapping and audited posting work over localhost",async()=>{
+  const dashboard=await call("GET","/dashboard");
+  assert.ok(dashboard.companies.some(x=>x.id===cid));
+  const refresh=await call("POST","/dashboard/refresh/"+cid,{});
+  assert.equal(refresh.ok,true);
+  assert.ok(refresh.ledgers>5);
+  const after=await call("GET","/dashboard");
+  assert.ok(after.companies.find(x=>x.id===cid).balances.bank>0);
+
+  const period="2026-09";
+  assert.equal((await call("POST","/companies/"+cid+"/gst-control/"+period+"/portal",{
+    kind:"gstr1",summary:{taxable:1000,igst:0,cgst:25,sgst:25,cess:0}
+  })).ok,true);
+  assert.equal((await call("POST","/companies/"+cid+"/gst-control/"+period+"/portal",{
+    kind:"gstr3b",summary:{taxable:1000,igst:0,cgst:25,sgst:25,cess:0,itcIgst:0,itcCgst:0,itcSgst:0,itcCess:0}
+  })).ok,true);
+  const tally=await call("POST","/companies/"+cid+"/gst-control/"+period+"/refresh",{});
+  assert.equal(tally.ok,true);
+  assert.equal(tally.sales.taxable,1000);
+  const checked=await call("POST","/companies/"+cid+"/gst-control/"+period+"/reconcile",{});
+  assert.equal(checked.result.salesToPortal.cgst.status,"matched");
+  assert.equal(checked.result.portalTo3b.sgst.status,"matched");
+  assert.match(checked.result.warnings.join(" "),/GSTR-2B/);
+  const mappings=await call("GET","/companies/"+cid+"/smart-maps");
+  assert.ok(Array.isArray(mappings.pending));
+  const alias=await call("GET","/companies/"+cid+"/smart-maps/export");
+  assert.ok(Array.isArray(alias.mappings));
+
+  const audit=await call("GET","/companies/"+cid+"/posting-audit");
+  assert.equal(audit.integrity.ok,true);
+  assert.ok(audit.rows.some(x=>x.phase==="attempt"));
+  assert.ok(audit.rows.some(x=>x.phase==="created"));
+  const backup=await call("POST","/backup",{});
+  assert.ok(backup.file,backup.error||"");
+  const backups=await call("GET","/backups");
+  assert.ok(backups.backups.some(x=>x.valid&&!x.encrypted));
+});
+
 test("user: own companies, company limit, credits counted, posting blocked", async () => {
   await call("POST", "/signout", {});
   assert.equal((await call("GET", "/me")).signed_in, false);
   const me = await signIn(USER);
   assert.deepEqual([me.licence.admin, me.licence.can_post, me.licence.company_limit, me.licence.invoice_credits], [false, false, 1, 2]);
   assert.deepEqual(me.licence.ai_options, ["groq"]);
+  assert.equal((await call("GET","/companies/"+cid+"/smart-maps")).status,403,
+    "other users cannot see private company ledger mappings");
+  assert.equal((await call("GET","/companies/"+cid+"/gst-control/2026-09")).status,403,
+    "other users cannot inspect private GST reconciliation");
   assert.equal((await call("GET", "/companies")).length, 0, "the admin's company is not shown to this account");
 
   const c = await call("POST", "/companies", { name: "Ramesh Traders" });
