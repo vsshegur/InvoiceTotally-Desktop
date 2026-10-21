@@ -293,7 +293,7 @@ async function viewSignin() {
 // account (this PC) · admin (users, limits, credits)
 // ---------------------------------------------------------------------------
 async function viewAccount() {
-  const [me, s] = await Promise.all([api("/licence/refresh", { body: {} }).catch(() => ({ licence: ME?.licence })), api("/settings")]);
+  const [me, s, backups] = await Promise.all([api("/licence/refresh", { body: {} }).catch(() => ({ licence: ME?.licence })), api("/settings"), api("/backups").catch(() => ({backups:[]}))]);
   ME.licence = me.licence || ME.licence;
   const l = ME.licence || {};
   const tick = (b) => b ? `<span class="good">Yes</span>` : `<span class="bad">No</span>`;
@@ -322,13 +322,29 @@ async function viewAccount() {
         <div class="muted small" style="margin-top:4px">A copy of everything is saved here once a day (the last 14 days are kept). A Google Drive or OneDrive folder on this PC is ideal — then a copy is also kept online.</div></div>
       <div class="muted small">${s.backup_last ? (s.backup_last.error ? `<span class="bad">Last backup failed: ${esc(s.backup_last.error)}</span>` : `Last backup ${ago(s.backup_last.at)} — ${esc(s.backup_last.file)}`) : "No backup yet (the first one is made a minute after the app starts)."}</div>
       <div style="margin-top:12px;display:flex;gap:8px"><button class="btn primary">Save</button><button type="button" class="btn" id="bknow">Back up now</button></div></form>
+    <div class="card" style="margin-top:14px;padding:15px"><b>Verified backup history &amp; recovery</b>
+      <p class="muted small">Backups use SQLite integrity checks and SHA-256 verification. The last 14 daily backups are retained. Restore is admin-only, happens after a full app restart, and keeps an additional pre-restore rollback copy.</p>
+      ${(backups.backups||[]).length? `<div style="overflow:auto"><table class="grid"><thead><tr><th>Backup</th><th>Size</th><th>Validation</th><th></th></tr></thead><tbody>
+        ${backups.backups.map(b => `<tr><td class="mono">${esc(b.name)}</td><td>${b.bytes? (b.bytes/1024/1024).toFixed(2)+" MB":"—"}</td>
+          <td class="${b.valid?"good":"bad"}">${b.valid?"Passed":"Failed"} ${b.checked?"· SHA-256":""}</td>
+          <td>${l.admin?`<button type="button" class="btn sm" data-restore="${esc(b.name)}" ${b.valid?"":"disabled"}>Restore</button>`:"Admin only"}</td></tr>`).join("")}
+      </tbody></table></div>`:'<div class="muted small" style="margin-top:10px">No backups yet. Select “Back up now” to create the first verified version.</div>'}</div>
     <div class="kv muted small" style="margin-top:14px"><div><span>App version</span><b>${esc(ME.version)}</b></div><div><span>Data folder</span><b class="mono">${esc(s.data_dir)}</b></div>
       <div><span>Tally</span><b>${esc(ME.tally.detail || ME.tally.status)}${ME.tally.companies?.length ? ` — open: ${ME.tally.companies.map(esc).join(", ")}` : ""}</b></div></div>
   </div>`;
   wireTop();
   $("#signout").onclick = async () => { if (!confirm("Sign out on this PC? Work that is waiting stays here for when you sign in again.")) return; await api("/signout", { body: {} }); ME = null; location.hash = "#/signin"; };
   $("#bk").onsubmit = async (e) => { e.preventDefault(); await act(() => api("/settings", { body: { backup_dir: e.target.backup_dir.value } }), "Saved"); route(); };
-  $("#bknow").onclick = async () => { const r = await act(() => api("/backup", { body: {} })); if (r.error) toast(r.error, true); else toast("Backup saved"); route(); };
+  $("#bknow").onclick = async () => { const r = await act(() => api("/backup", { body: {} })); if (r.error) toast(r.error, true); else toast("Verified backup saved"); route(); };
+  $("[data-restore]").forEach(b=>b.onclick=async()=>{
+    const name=b.dataset.restore;
+    if(!confirm("Replace THIS PC's SQLite database from "+name+" on the next app launch? All companies, drafts and posting history will return to that backup date. A rollback copy of the current database will be kept."))return;
+    if(prompt("Type RESTORE to confirm the next-launch database restore")!=="RESTORE")return;
+    b.disabled=true;
+    try{await api("/backups/restore",{body:{name}});
+      toast("Restore prepared. CLOSE InvoiceTotally completely, then reopen it. The current database remains unchanged until restart.");}
+    catch(e){toast(e.message,true);b.disabled=false;}
+  });
 }
 
 const AI_HELP = {
