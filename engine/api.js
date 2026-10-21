@@ -217,7 +217,7 @@ route("DELETE", "/api/companies/:cid", async ({ D, p }) => {
   // everything that belongs to the company: bank statements and GSTR-2B too (nothing in Tally is touched)
   await D.batch([
     D.stmt("DELETE FROM bank_pages WHERE statement_id IN (SELECT id FROM bank_statements WHERE company_id=?)", p.cid),
-    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "tally_bills", "tally_bank_entries", "gst_docs", "gst_returns", "tally_gst_vouchers"]
+    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "tally_bills", "tally_bank_entries", "gst_docs", "gst_returns", "tally_gst_vouchers", "ecommerce_vouchers", "ecommerce_batches"]
       .map((t) => D.stmt(`DELETE FROM ${t} WHERE company_id=?`, p.cid)),
     D.stmt("DELETE FROM companies WHERE id=?", p.cid)]);
   return json({ ok: true });
