@@ -177,7 +177,7 @@ export async function beforePosting(D,job,tc,readFromTally) {
   const r = must(await D.first("SELECT * FROM ecommerce_vouchers WHERE id=?",job.invoice_id));
   if(r.status!=="queued") throw new EcommerceError("Voucher was not queued");
   const entries = parseExistingVouchers(await readFromTally(ecommerceExistingRequest(tc,r.date)));
-  const found = entries.find(e=>eq(e.number,r.number));
+  const found = entries.find(e=>eq(e.number,r.number)||eq(e.reference,r.number)||(e.narration||"").includes(r.number));
   return found ? {duplicate:true,message:"Voucher number "+r.number+" is already in Tally ("+found.type+"). Review manually; no duplicate posted."} : {duplicate:false};
 }
 // An ambiguous timeout or duplicate remains blocked until a fresh READ from Tally proves
@@ -190,7 +190,7 @@ export async function recheck(D,id,env) {
   const result={present:0,ready:0};
   for(const row of rows) {
     const reply=await env.TALLY.readOnly(ecommerceExistingRequest(c.tally_company || c.name,row.date));
-    const matching=parseExistingVouchers(reply).some(e=>eq(e.number,row.number));
+    const matching=parseExistingVouchers(reply).some(e=>eq(e.number,row.number)||eq(e.reference,row.number)||(e.narration||"").includes(row.number));
     if(matching) result.present++;else result.ready++;
     await D.update("ecommerce_vouchers",row.id,
       {status:matching?"duplicate":"ready",
