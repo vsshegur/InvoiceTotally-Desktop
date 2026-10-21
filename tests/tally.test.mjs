@@ -54,3 +54,29 @@ test("Tally's replies: UTF-16, odd control characters, masters and GST vouchers"
   assert.equal(gst.length, 1, "journals without GST and cancelled vouchers are skipped");
   assert.deepEqual([gst[0].date, gst[0].party, gst[0].gstin, gst[0].kind, gst[0].inv, gst[0].e.length], ["2026-08-05", "R&D Traders", "27AAPFR1234K1Z5", "inv", -1000, 2]);
 });
+
+
+test("bank Receipt and Payment use Tally's accounting voucher XML shape", () => {
+  for (const [vtype, moneyIn, bankAmount] of [["Receipt", true, -56448], ["Payment", false, 55000]]) {
+    const xml = T.bankVoucher("VIPUL TEXTILES", { vtype, date: "2026-04-09", bankLedger: "Siddheshwar Bank Current",
+      ledger: "Suspense", amount: Math.abs(bankAmount), moneyIn, narration: "Bank transfer & clearing" });
+    assert.equal(TL.validatePosting(xml, "VIPUL TEXTILES"), vtype + " voucher");
+    assert.match(xml, new RegExp('<VOUCHER VCHTYPE="' + vtype + '" ACTION="Create" OBJVIEW="Accounting Voucher View">'));
+    assert.match(xml, /<DATE>20260409<\/DATE>/);
+    assert.match(xml, /<EFFECTIVEDATE>20260409<\/EFFECTIVEDATE>/);
+    assert.match(xml, /<PERSISTEDVIEW>Accounting Voucher View<\/PERSISTEDVIEW><ISINVOICE>No<\/ISINVOICE>/);
+    assert.equal((xml.match(/<ALLLEDGERENTRIES\.LIST>/g) || []).length, 2, "two accounting ledger entries");
+    assert.doesNotMatch(xml, /<LEDGERENTRIES\.LIST>/, "do not send invoice-mode ledger entries");
+    assert.doesNotMatch(xml, /<ISPARTYLEDGER>Yes<\/ISPARTYLEDGER>/, "a suspense ledger is not a party");
+    const amounts = [...xml.matchAll(/<ALLLEDGERENTRIES\.LIST>[\s\S]*?<AMOUNT>(-?[\d.]+)<\/AMOUNT>/g)].map((m) => Number(m[1]));
+    assert.equal(amounts.length, 2);
+    assert.equal(amounts.reduce((a, b) => a + b, 0), 0, "debit and credit must balance");
+    assert.ok(amounts.includes(bankAmount), "bank side has the correct sign");
+    assert.match(xml, /<BANKALLOCATIONS\.LIST><DATE>20260409<\/DATE>[\s\S]*?<TRANSACTIONTYPE>Others<\/TRANSACTIONTYPE>/);
+    assert.match(xml, /<NARRATION>Bank transfer &amp; clearing<\/NARRATION>/);
+  }
+  const billXml = T.bankVoucher("VIPUL TEXTILES", { vtype: "Payment", date: "2026-04-09", bankLedger: "Bank",
+    ledger: "Supplier", amount: 100, moneyIn: false, bills: [{ name: "INV-1", amount: 100 }] });
+  assert.match(billXml, /<ISPARTYLEDGER>Yes<\/ISPARTYLEDGER>/, "bill settlement still marks its party ledger");
+  assert.match(billXml, /<BILLTYPE>Agst Ref<\/BILLTYPE>/);
+});
