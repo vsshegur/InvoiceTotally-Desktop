@@ -108,7 +108,10 @@ async function viewBankUpload(cid) {
         <span class="muted">${fmtDate(dates[0])} – ${fmtDate(dates[dates.length - 1])}</span>
         <span class="good">In ${money(tin)}</span><span>Out ${money(tout)}</span>
         ${checked ? (bad ? `<span class="bad">⚠ ${bad} of ${checked} don't match the running balance</span>` : `<span class="good">✓ Every entry matches the running balance</span>`) : `<span class="muted">No balance column — totals can't be cross-checked</span>`}
+        ${p.counted ? `<span class="good">✓ Same count as the bank's</span>` : ""}
         ${p.mapped ? `<button class="btn sm" id="remap">Change columns</button>` : ""}</div>
+      ${p.opening != null || p.closing != null ? `<div class="muted small" style="margin-top:6px">${p.opening != null ? `Opening balance ${money(p.opening)}` : ""}${p.opening != null && p.closing != null ? " → " : ""}${p.closing != null ? `closing balance ${money(p.closing)}` : ""}</div>` : ""}
+      ${(p.warnings || []).map((w) => `<div class="alert warn" style="margin-top:8px">⚠ ${esc(w)} Check that every page of the statement was uploaded.</div>`).join("")}
       ${bad ? `<p class="muted small" style="margin:8px 0 0">Entries that don't match are marked on the next screen — usually a page that was missed or a column read wrongly. You can still save and leave them out.</p>` : ""}
       <table class="grid" style="margin-top:10px"><thead><tr><th>Date</th><th>Narration</th><th class="num">Out</th><th class="num">In</th><th class="num">Balance</th></tr></thead><tbody>
       ${p.rows.slice(0, 6).map((r) => `<tr class="${r.ok === false ? "badrow" : ""}"><td class="mono">${fmtDate(r.date)}</td><td><div class="ellipsis" style="max-width:420px">${esc(r.narration)}</div>${r.ref ? `<div class="muted small">Ref ${esc(r.ref)}</div>` : ""}</td>
@@ -152,9 +155,9 @@ async function viewBankUpload(cid) {
       const t = st.parsed.table;
       const r = BP.parseTable(t, { row: st.mapping.row, map: m });
       if (!r.rows.length) return toast("No transactions found with these columns — check the heading row and the columns", true);
-      const c2 = BP.checkBalances(r.rows, r.opening);
+      const c2 = BP.checkBalances(r.rows, r.opening, r.closing);
       saveJSON(bankMapKey(cid, st.bank), { sig: t[st.mapping.row].map((x) => String(x || "").trim().toLowerCase()).join("|"), map: m });
-      st.parsed = { ...st.parsed, rows: c2.rows, opening: r.opening, mapped: true };
+      st.parsed = { ...st.parsed, rows: c2.rows, opening: r.opening, closing: r.closing, mapped: true, warnings: [], counted: false };
       render();
     });
   }
@@ -167,7 +170,9 @@ async function viewBankUpload(cid) {
     st.busy = "Reading…"; render();
     const say = (t) => { st.busy = t; const r = $("#result"); if (r) r.innerHTML = resultHtml(); };
     try {
-      let rows = [], opening = null, table = [], source = "excel", errors = [];
+      let rows = [], opening = null, closing = null, table = [], source = "excel", errors = [], warnings = [], counted = 0;
+      // the bank's own count / closing balance, from each file
+      const took = (f, r) => { closing = r.closing ?? closing; for (const w of r.warnings || []) warnings.push(st.files.length > 1 ? `${f.name}: ${w}` : w); if (r.counts && !(r.warnings || []).length) counted++; };
       for (const f of st.files) {
         const k = Ingest.kind(f);
         if (k === "xlsx" || k === "csv" || k === "xls") {
@@ -175,7 +180,7 @@ async function viewBankUpload(cid) {
           const text = await Ingest.sheet(f);
           const t = text.split("\n").map((x) => x.split("\t"));
           const r = BP.fromSheetText(text);
-          if (r.rows.length) { rows.push(...r.rows); if (opening == null) opening = r.opening; }
+          if (r.rows.length) { rows.push(...r.rows); if (opening == null) opening = r.opening; took(f, r); }
           else { table.push(...t); errors.push(`${f.name}: ${r.error || "the columns weren't recognised"}`); }
         } else if (k === "pdf") {
           source = "pdf";
@@ -191,7 +196,7 @@ async function viewBankUpload(cid) {
           }
           if (!pages.some((p) => p.hasText)) { errors.push(`${f.name} is a scanned image — download the statement from net banking as PDF or Excel instead (scans can't be read without AI)`); continue; }
           const r = BP.fromPdfPages(pages.filter((p) => p.hasText));
-          if (r.rows.length) { rows.push(...r.rows); if (opening == null) opening = r.opening; }
+          if (r.rows.length) { rows.push(...r.rows); if (opening == null) opening = r.opening; took(f, r); }
           else {
             // columns not found: offer the text lines as a table to map by hand
             for (const p of pages) for (const line of BP.pageText(p.items).split("\n")) table.push(line.split(/\s{3,}/));
@@ -203,10 +208,11 @@ async function viewBankUpload(cid) {
       const saved = loadJSON(bankMapKey(cid, st.bank));
       if (!rows.length && table.length && saved) {
         const hr = table.findIndex((r) => r.map((x) => String(x || "").trim().toLowerCase()).join("|") === saved.sig);
-        if (hr >= 0) { const r = BP.parseTable(table, { row: hr, map: saved.map }); if (r.rows.length) { rows = r.rows; opening = r.opening; } }
+        if (hr >= 0) { const r = BP.parseTable(table, { row: hr, map: saved.map }); if (r.rows.length) { rows = r.rows; opening = r.opening; closing = r.closing; } }
       }
-      const checked = rows.length ? BP.checkBalances(rows, opening) : { rows: [] };
-      st.parsed = { rows: checked.rows, opening, source, table: rows.length ? null : table, error: errors.join(" · ") };
+      const checked = rows.length ? BP.checkBalances(rows, opening, closing) : { rows: [] };
+      st.parsed = { rows: checked.rows, opening, closing, source, table: rows.length ? null : table, error: errors.join(" · "), warnings,
+        counted: counted && counted === st.files.length };
     } catch (e) { st.parsed = { rows: [], error: e.message }; }
     st.busy = false;
     render();

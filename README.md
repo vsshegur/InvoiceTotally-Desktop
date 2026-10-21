@@ -30,17 +30,6 @@ Uninstall from *Settings → Apps* or the Start menu; you choose whether to keep
 Your data lives in `%LOCALAPPDATA%\InvoiceTotally` (one SQLite file). A copy is saved **once a day** (last 14
 kept) — choose a Google Drive or OneDrive folder under **⚙ → This PC** so a copy is also online.
 
-## Owner mode (the admin's PC, without the service)
-
-If the service can't be reached (or Cloudflare's daily limit is used up), the admin can still work on their own PC:
-
-1. Once, in Google Cloud Console → APIs & Services → Credentials → the Web client (the same one TallyBridge uses), add
-   `http://localhost:47821` under **Authorized JavaScript origins**.
-2. On the sign-in screen open **Owner sign-in on this PC**, paste that Web client ID once, and sign in with
-   vipulshegur@gmail.com. The Google sign-in is checked on the PC; no other account can use this.
-3. Under **⚙ → AI keys on this PC**, save your Gemini / Groq / Claude keys. Invoices are then read straight from this
-   PC with those keys. No credits or limits apply; other users are not affected.
-
 ## What each person can do (set by the admin)
 
 The admin opens **★ Admin** in the app:
@@ -52,7 +41,7 @@ The admin opens **★ Admin** in the app:
 | **Posting to Tally** | *Allowed*, or *Blocked* — they can read and review but nothing goes into Tally. |
 | **Invoice credits** | One is used for each invoice read. Reading stops at zero; invoices already read can still be posted. |
 | **Statement credits** | One is used for each bank statement saved. |
-| **AI** | Which of the four AIs they may use (below). |
+| **AI** | Which of the four AIs they may use (below). Each company then puts the allowed ones in order. |
 | **Switch off** | Signs them out on every PC at once. |
 
 Credits are added by the admin (for example after a UPI payment) with a note; every use is in the user's history,
@@ -67,17 +56,32 @@ with the AI cost of each invoice.
 | **Gemini Flash** | paid key, about ₹1 per invoice | most invoices |
 | **Claude** | paid, more per invoice | handwritten and difficult bills |
 
-When one free AI has used its daily quota, the other free one reads instead. Each company chooses its AI in
-**Settings** (from the ones the admin allowed); **Test the AI** checks it without using a credit.
-The keys are set on the service (Cloudflare → the `invoicetotally` Worker → Settings → Variables and Secrets):
+### Several AIs, in priority order
+
+In each company's **Settings**, tick the AIs to use (from the ones the admin allowed) and put them in order with ▲ ▼:
+
+- The **first** one reads every invoice.
+- When a bill is **handwritten**, or its totals don't add up, the **next** one reads it again and the better reading
+  is kept — for example Groq or Gemini Flash-Lite (free) first, then Gemini Flash or Claude for the hard bills.
+- When one is out of its daily limit, has no key on the service, or can't take that many pages (Groq: 3), the next
+  one reads instead.
+
+New companies get every allowed AI, free ones first. **Test the ticked AIs** checks each one without using a credit.
+One invoice credit is used per invoice, however many AIs read it.
+
+The keys are set only on the service (Cloudflare → the `invoicetotally` Worker → Settings → Variables and Secrets):
 `GEMINI_API_KEY` (free), `GROQ_API_KEY` (free, console.groq.com), `GEMINI_PAID_API_KEY`, `ANTHROPIC_API_KEY`.
+Nothing secret is kept on a PC.
 
 ## Bank statements
 
 Download the statement from net banking as **Excel, CSV or PDF** (a password-protected PDF is fine — the app asks
 for the password). It is read on the PC: the column headings are found, every row is checked against the running
-balance, and you see the totals before saving. If a bank's layout isn't recognised, you say once which column is
-which and it is remembered for that bank account.
+balance, and you see the totals before saving. Statements that print the date only on a day's first entry and the
+balance only on its last (common at co-operative banks) are read in full; the entries in between are checked through
+the next printed balance. When the bank prints its own count of debits and credits, the app checks it read the same
+number. If a bank's layout isn't recognised, you say once which column is which and it is remembered for that bank
+account.
 
 Every transaction is posted to the **suspense ledger** you choose — money in as a **Receipt**, money out as a
 **Payment**, with the bank's narration and cheque/reference number as the narration. You then move each entry from

@@ -113,10 +113,12 @@ async function device(env, D, req) {
 const needActive = (u) => { if (!u.active) throw new LicError(403, "Your account is switched off. Ask the admin."); };
 
 // ------------------------------------------------------------------ reading with the AI
-function pickAI(u, wanted) {
-  if (wanted && u.ai_options.includes(wanted)) return wanted;
+/** The company's AIs in priority order, keeping only those the admin allowed for this person. */
+function pickAI(u, company) {
   if (!u.ai_options.length) throw new LicError(403, "No AI is enabled for your account. Ask the admin.");
-  return u.ai_options[0];
+  const wanted = Array.isArray(company?.ai_order) && company.ai_order.length ? company.ai_order : company?.ai ? [company.ai] : [];
+  const order = [...new Set(wanted)].filter((a) => u.ai_options.includes(a));
+  return order.length ? order : [u.ai_options[0]];
 }
 async function companyFor(D, u, c) {
   const id = str(c?.id, 40);
@@ -139,7 +141,7 @@ async function charge(D, u, kind, n, detail, ai = null, cost = 0) {
   await D.batch(stmts);
   if (take) u[col] = Math.max(0, u[col] - take);
 }
-const aiCompany = (c, ai) => ({ ...c, settings: { ai_mode: ai } });
+const aiCompany = (c, order) => ({ ...c, settings: { ai_mode: order[0], ai_order: order } });
 
 // ------------------------------------------------------------------ the sign-in page (Google, on the service's own address)
 export function signinPage(env, url, clientId) {
@@ -242,7 +244,7 @@ export function licenceRoutes(route, { db, googleCheck, ai }) {
   R("POST", "/api/lic/read/split", async ({ env, D, req, body }) => {
     const { u } = await device(env, D, req);
     needActive(u); needCredits(u, "invoice");
-    const c = await companyFor(D, u, body.company), choice = pickAI(u, body.company?.ai);
+    const c = await companyFor(D, u, body.company), choice = pickAI(u, body.company);
     const pages = (body.pages || []).slice(0, 200).map(String);
     const groups = await ai.splitPages(env, pages, aiCompany(c, choice));
     return json({ groups });
@@ -251,22 +253,22 @@ export function licenceRoutes(route, { db, googleCheck, ai }) {
   R("POST", "/api/lic/read/invoice", async ({ env, D, req, body }) => {
     const { d, u } = await device(env, D, req);
     needActive(u); needCredits(u, "invoice");
-    const c = await companyFor(D, u, body.company), choice = pickAI(u, body.company?.ai);
+    const c = await companyFor(D, u, body.company), choice = pickAI(u, body.company);
     const pages = (body.pages || []).slice(0, 30).map(String);
     if (!pages.length) throw new LicError(400, "No pages");
     const data = await ai.readInvoice(env, pages, aiCompany(c, choice), body.voucher_type === "Sales" ? "Sales" : "Purchase");
-    await charge(D, u, "invoice", 1, `${c.name}: ${data.number || "invoice"} ${data.seller?.name || ""}`.trim(), choice, data._ai?.cost_usd);
+    await charge(D, u, "invoice", 1, `${c.name}: ${data.number || "invoice"} ${data.seller?.name || ""}${data._ai?.read_by ? " · read by " + data._ai.read_by : ""}`.trim(), choice[0], data._ai?.cost_usd);
     return reply(env, D, u, d, { data });
   });
 
   R("POST", "/api/lic/read/sheet", async ({ env, D, req, body }) => {
     const { d, u } = await device(env, D, req);
     needActive(u); needCredits(u, "invoice");
-    const c = await companyFor(D, u, body.company), choice = pickAI(u, body.company?.ai);
+    const c = await companyFor(D, u, body.company), choice = pickAI(u, body.company);
     let invoices = await ai.readSheet(env, String(body.text || "").slice(0, 900_000), aiCompany(c, choice), body.voucher_type === "Sales" ? "Sales" : "Purchase");
     // only as many invoices as there are credits
     if (!u.admin && invoices.length > u.invoice_credits) invoices = invoices.slice(0, u.invoice_credits);
-    await charge(D, u, "invoice", invoices.length, `${c.name}: ${invoices.length} invoice(s) from a register`, choice,
+    await charge(D, u, "invoice", invoices.length, `${c.name}: ${invoices.length} invoice(s) from a register`, choice[0],
       invoices.reduce((s, i) => s + (i._ai?.cost_usd || 0), 0));
     return reply(env, D, u, d, { invoices });
   });
@@ -281,7 +283,7 @@ export function licenceRoutes(route, { db, googleCheck, ai }) {
 
   R("POST", "/api/lic/ai/test", async ({ env, D, req, body }) => {
     const { u } = await device(env, D, req);
-    const choice = pickAI(u, body.ai);
+    const [choice] = pickAI(u, { ai: body.ai });
     try { return json({ ok: true, ai: choice, ...(await ai.testAI(env, choice)) }); }
     catch (e) { return json({ ok: false, ai: choice, error: String(e.message || e) }); }
   });

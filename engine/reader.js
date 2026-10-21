@@ -10,25 +10,9 @@ export function makeMeter() { return { usd: 0, calls: [], add() {} }; }
 export const AI_CHOICES = ["gemini_lite", "gemini", "groq", "claude"];
 export const AI_LABELS = { gemini_lite: "Gemini Flash-Lite (free)", gemini: "Gemini Flash", groq: "Groq (free)", claude: "Claude" };
 
-const slim = (c) => c && ({ id: c.id, name: c.name, gstin: c.gstin || "", state_code: c.state_code || "", ai: c.settings?.ai || null });
-
-// Owner mode: the admin's PC reads with the keys kept on it, straight from here (no service).
-async function local(env) {
-  if (!env.OWNER || !(await env.OWNER.session())) return null;
-  const AI = await import("./ai.js");
-  return { AI, aiEnv: await env.OWNER.aiEnv() };
-}
-const aiCompany = (c) => ({ ...slim(c), settings: { ai_mode: c?.settings?.ai || "gemini_lite" } });
-/** Owner mode: the AI module's messages talk about the service's keys; here the keys are on this PC. */
-export function ownerMessage(msg) {
-  return String(msg || "")
-    .replace(/(\w+_API_KEY) is not set( on the service)?[^.]*\.?[^.]*\.?/, (m, k) => `The ${({ GEMINI_API_KEY: "Gemini free", GEMINI_PAID_API_KEY: "Gemini (billing on)", GROQ_API_KEY: "Groq", ANTHROPIC_API_KEY: "Claude" })[k] || k} key isn't saved on this PC. Add it under ⚙ → AI keys on this PC.`)
-    .replace(/check the (\w+) secret in Cloudflare/i, "check the key saved under ⚙ → AI keys on this PC");
-}
-async function viaLocal(fn) {
-  try { return await fn(); }
-  catch (e) { if (e instanceof AIError) throw e; throw new AIError(ownerMessage(e.message || String(e)), !!e.retryable); }
-}
+// the company's AIs in priority order go with each read; the service keeps only the ones the admin allowed
+const slim = (c) => c && ({ id: c.id, name: c.name, gstin: c.gstin || "", state_code: c.state_code || "", ai: c.settings?.ai || null,
+  ai_order: Array.isArray(c.settings?.ai_order) && c.settings.ai_order.length ? c.settings.ai_order : c.settings?.ai ? [c.settings.ai] : [] });
 
 async function service(env, path, body) {
   if (!env.LIC) throw new AIError("Reading is not available: the app is not signed in.");
@@ -46,24 +30,18 @@ export async function splitPages(env, thumbs, company = null) {
   const n = thumbs.length;
   if (n <= 1) return n ? [[0]] : [];
   if (env.EXTRACTOR === "mock") return thumbs.map((_, i) => [i]);
-  const L = await local(env);
-  if (L) return viaLocal(() => L.AI.splitPages(L.aiEnv, thumbs, aiCompany(company)));
   const r = await service(env, "/api/lic/read/split", { company: slim(company), pages: thumbs });
   return r.groups;
 }
 
 export async function readInvoice(env, images, company, vt) {
   if (env.EXTRACTOR === "mock") return mockInvoice();
-  const L = await local(env);
-  if (L) return viaLocal(() => L.AI.readInvoice(L.aiEnv, images, aiCompany(company), vt));
   const r = await service(env, "/api/lic/read/invoice", { company: slim(company), voucher_type: vt, pages: images });
   return r.data;
 }
 
 export async function readSheet(env, text, company, vt) {
   if (env.EXTRACTOR === "mock") return [mockInvoice()];
-  const L = await local(env);
-  if (L) return viaLocal(() => L.AI.readSheet(L.aiEnv, text, aiCompany(company), vt));
   const r = await service(env, "/api/lic/read/sheet", { company: slim(company), voucher_type: vt, text });
   return r.invoices;
 }

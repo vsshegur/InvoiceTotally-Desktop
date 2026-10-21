@@ -13,7 +13,7 @@ export function fakeService({ admin = "vipulshegur@gmail.com" } = {}) {
   const route = (method, pattern, fn) => routes.push({ method, re: new RegExp("^" + pattern.replace(/:(\w+)/g, "(?<$1>[^/]+)") + "$"), fn });
   const calls = [];
   const ai = {
-    async readInvoice(env, pages, company) { calls.push({ kind: "invoice", ai: company.settings.ai_mode, pages: pages.length }); const d = mockInvoice(); d._ai = { read_by: company.settings.ai_mode, cost_usd: 0.001 }; return d; },
+    async readInvoice(env, pages, company) { calls.push({ kind: "invoice", ai: company.settings.ai_mode, order: company.settings.ai_order, pages: pages.length }); const d = mockInvoice(); d._ai = { read_by: company.settings.ai_mode, cost_usd: 0.001 }; return d; },
     async splitPages(env, pages, company) { calls.push({ kind: "split", ai: company.settings.ai_mode }); return pages.map((_, i) => [i]); },
     async readSheet() { return [mockInvoice(), mockInvoice()]; },
     async testAI(env, choice) { return { model: choice, ms: 5 }; },

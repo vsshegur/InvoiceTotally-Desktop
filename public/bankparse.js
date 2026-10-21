@@ -93,13 +93,24 @@ export function findHeader(rows) {
 const OPEN_RE = /opening\s*bal|balance\s*(b\/?f|brought\s*forward)|^b\/?f$|bal(ance)?\s*forward/i;
 const CLOSE_RE = /closing\s*bal|balance\s*(c\/?f|carried)|^c\/?f$/i;
 const TOTAL_RE = /^(grand\s*)?totals?\b|^page\s*total|^transaction\s*total/i;
+// "No Of Transaction(s) : 9 11" — how many debits and credits the bank counted
+const COUNT_RE = /\b(no\.?\s*of|number\s*of|count\s*of)\s*tr?an?s?a?c?tion|\btxn\s*count/i;
+// "Page No :- 1 Of 3", "Page 2 of 5", "End of statement", "computer generated…" — never transactions
+const FOOTER_RE = /\bpage\s*(no\.?)?\s*[:.\-]*\s*\d+\s*(of|\/)\s*\d+|end\s*of\s*(the\s*)?statement|computer(ised|ized)?\s*generated|computeri[sz]ed\s*statement|does\s*not\s*require\s*(a\s*)?signature/i;
+const MONEY = /\d\.\d{2}\b/; // amounts on a statement always have paise
+const isDateText = (t) => !!date(t);
 
-/** Rows of cells → transactions. */
+/**
+ * Rows of cells → transactions.
+ * Many banks print the date only on the first transaction of a day and the balance only on the last one; such rows
+ * take the date from the row above, and are checked through the next balance that is printed.
+ */
 export function parseTable(rows, header = findHeader(rows)) {
   if (!header) return { rows: [], error: "Could not find the column headings (Date, Narration, Debit/Credit, Balance)" };
   const m = header.map;
   const out = [];
-  let opening = null, closing = null;
+  let opening = null, closing = null, counts = null, totals = null, lastDate = null;
+  let summary = false; // after a total, closing or page-end line, loose text is not part of the last narration
   const headerSig = rows[header.row].map(low).join("|");
   // "Opening Balance: 50,000.00 Cr" printed above the table
   for (let i = 0; i < header.row; i++) {
@@ -114,6 +125,7 @@ export function parseTable(rows, header = findHeader(rows)) {
     const cell = (k) => (m[k] == null ? "" : clean(r[m[k]]));
     const text = clean(r.join(" "));
     if (!text) continue;
+    if (FOOTER_RE.test(text)) { summary = true; continue; }
     const d = date(cell("date"));
     const narr = cell("narration");
     let debit = amount(cell("debit")), credit = amount(cell("credit"));
@@ -128,39 +140,65 @@ export function parseTable(rows, header = findHeader(rows)) {
     if (debit != null && debit < 0) { credit = (credit || 0) + -debit; debit = null; }
     if (credit != null && credit < 0) { debit = (debit || 0) + -credit; credit = null; }
     const bal = m.balance == null ? null : balance(cell("balance"));
-    if (OPEN_RE.test(narr) || (!d && OPEN_RE.test(text))) { if (bal != null) opening = bal; else if (credit ?? debit) opening = credit ?? -debit; continue; }
-    if (CLOSE_RE.test(narr) || (!d && CLOSE_RE.test(text))) { if (bal != null) closing = bal; continue; }
-    if (TOTAL_RE.test(clean(r[0])) || TOTAL_RE.test(narr)) continue;
-    if (d && (debit || credit)) {
-      out.push({ date: d, narration: narr, ref: cell("ref"), debit: debit || 0, credit: credit || 0, balance: bal });
-    } else if (!d && out.length && narr && !debit && !credit && bal == null) {
-      // narration wrapped onto the next line
+    if (COUNT_RE.test(text)) {
+      // "No Of Transaction(s) : 9 11" → 9 debits, 11 credits
+      const nums = (text.split(/:/).pop().match(/\b\d+\b/g) || []).map(Number);
+      if (debit != null || credit != null) counts = { debit: debit ?? 0, credit: credit ?? 0 };
+      else if (nums.length >= 2) counts = { debit: nums[0], credit: nums[1] };
+      summary = true; continue;
+    }
+    if (OPEN_RE.test(narr) || (!d && OPEN_RE.test(text))) {
+      // "Balance B/F" at the top of each page repeats the running balance: only the first one is the opening
+      if (!out.length && opening == null) { if (bal != null) opening = bal; else if (credit ?? debit) opening = credit ?? -debit; }
+      summary = false; continue;
+    }
+    if (CLOSE_RE.test(narr) || (!d && CLOSE_RE.test(text))) { if (bal != null) closing = bal; summary = true; continue; }
+    if (TOTAL_RE.test(clean(r[0])) || TOTAL_RE.test(narr) || /^totals?\s*:/i.test(text)) {
+      if (debit != null || credit != null) totals = { debit: debit || 0, credit: credit || 0 };
+      summary = true; continue;
+    }
+    // the cheque column sometimes shares its place with the value date: keep only the cheque/reference number
+    const ref = cell("ref").split(" ").filter((t) => !isDateText(t)).join(" ");
+    const moneyCells = [cell("debit"), cell("credit"), cell("amount"), cell("balance")].join(" ");
+    if ((debit || credit) && (d || (lastDate && MONEY.test(moneyCells)))) {
+      out.push({ date: d || lastDate, narration: narr, ref, debit: debit || 0, credit: credit || 0, balance: bal });
+      if (d) lastDate = d;
+      summary = false;
+    } else if (!d && out.length && !summary && narr && !debit && !credit && bal == null) {
+      // narration wrapped onto the next line (also across a page break)
       const last = out[out.length - 1];
-      last.narration = clean(last.narration + " " + narr);
-      if (m.ref != null && cell("ref") && !last.ref.endsWith(cell("ref"))) last.ref = clean(last.ref + cell("ref"));
+      // a UPI handle cut over two lines ("vijte" + "x@axl/…") is joined without a space
+      const glue = /[a-z0-9._-]$/.test(last.narration) && /^[a-z0-9._-]*@[a-z]/.test(narr);
+      last.narration = clean(last.narration + (glue ? "" : " ") + narr);
+      if (m.ref != null && ref && !last.ref.endsWith(ref)) last.ref = clean(last.ref + ref);
     }
   }
-  return { rows: out, opening, closing, columns: Object.keys(m) };
+  return { rows: out, opening, closing, counts, totals, columns: Object.keys(m) };
 }
 
 const r2 = (x) => Math.round(x * 100) / 100;
 /**
- * Checks each row against the running balance. Statements listed newest-first are
- * turned round. Returns the rows in date order with ok=true/false on each.
+ * Checks each row against the running balance. Rows without a printed balance are checked together with the next row
+ * that has one (and the last ones against the closing balance). Statements listed newest-first are turned round.
+ * Returns the rows in date order with ok=true/false on each (null: nothing to check against).
  */
-export function checkBalances(rows, opening = null) {
+export function checkBalances(rows, opening = null, closing = null) {
   const run = (list) => {
-    let prev = opening, bad = 0, checked = 0;
-    const res = list.map((x, i) => {
-      if (x.balance == null) return { ...x, ok: null };
-      if (prev == null) prev = r2(x.balance - x.credit + x.debit);
-      const want = r2(prev + x.credit - x.debit);
+    const res = list.map((x) => ({ ...x }));
+    let base = opening, acc = 0, pend = [], bad = 0, checked = 0;
+    const mark = (ok) => { for (const j of pend) { res[j].ok = ok; checked++; if (!ok) bad++; } pend = []; acc = 0; };
+    res.forEach((x, i) => {
+      acc = r2(acc + x.credit - x.debit);
+      pend.push(i);
+      if (x.balance == null) { x.ok = null; return; }
+      if (base == null) base = r2(x.balance - acc);
+      const want = r2(base + acc);
       const ok = Math.abs(want - x.balance) < 0.011;
-      checked++;
-      if (!ok) bad++;
-      prev = x.balance;
-      return { ...x, ok, expected: ok ? undefined : want };
+      if (!ok) x.expected = want;
+      mark(ok);
+      base = x.balance;
     });
+    if (pend.length && base != null && closing != null) mark(Math.abs(r2(base + acc) - closing) < 0.011);
     return { res, bad, checked };
   };
   const fwd = run(rows);
@@ -179,12 +217,19 @@ export function fromSheetText(text) {
 
 function finish(p) {
   if (!p.rows.length) return { ...p, ok: false };
-  const c = checkBalances(p.rows, p.opening);
+  const c = checkBalances(p.rows, p.opening, p.closing);
   const okShare = c.checked ? (c.checked - c.bad) / c.checked : 0;
   const datesInOrder = c.rows.every((x, i) => i === 0 || x.date >= c.rows[i - 1].date);
-  return { ...p, rows: c.rows, bad: c.bad, checked: c.checked, reversed: c.reversed,
-    // Trusted without AI only when every row has a balance and nearly all add up.
-    ok: c.checked === c.rows.length && okShare >= 0.98 && datesInOrder };
+  // the bank's own count and totals at the end of the statement, when it prints them
+  const warnings = [];
+  const nd = c.rows.filter((x) => x.debit).length, nc = c.rows.filter((x) => x.credit).length;
+  if (p.counts && (p.counts.debit !== nd || p.counts.credit !== nc))
+    warnings.push(`The statement says ${p.counts.debit} withdrawals and ${p.counts.credit} deposits; ${nd} and ${nc} were read.`);
+  const sum = (k) => r2(c.rows.reduce((a, x) => a + x[k], 0));
+  const totalsOk = !p.totals || (Math.abs(sum("debit") - p.totals.debit) < 0.011 && Math.abs(sum("credit") - p.totals.credit) < 0.011);
+  return { ...p, rows: c.rows, bad: c.bad, checked: c.checked, reversed: c.reversed, warnings,
+    // Trusted only when every row is covered by a printed balance, nearly all add up, and the bank's count agrees.
+    ok: c.checked === c.rows.length && okShare >= 0.98 && datesInOrder && !warnings.length, totals_match: p.totals ? totalsOk : null };
 }
 
 // ---------------------------------------------------------------- PDF text

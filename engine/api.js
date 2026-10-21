@@ -4,7 +4,7 @@ import * as P from "./pipeline.js";
 import * as M from "./matching.js";
 import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
 import { parseAmount } from "./num.js";
-import { AI_CHOICES, AI_LABELS, ownerMessage } from "./reader.js";
+import { AI_CHOICES, AI_LABELS } from "./reader.js";
 import * as BK from "./bank.js";
 import * as GS from "./gstr2b.js";
 
@@ -25,14 +25,13 @@ function requireWindow(env, req, url) {
 /** The signed-in account's licence (company limit, posting, credits). */
 async function licence(env) {
   if (!env.LIC) return env.TEST_LICENCE || null;
-  // owner mode (signed in on this PC without the service) comes first: it is what the owner chose here
-  return (env.OWNER && (await env.OWNER.licence(AI_CHOICES))) || env.LIC.current();
+  return env.LIC.current();
 }
 async function requireLicence(env) {
   const lic = await licence(env);
   if (!lic) throw new HttpError(401, "Please sign in.", "signin");
   if (lic.active === false) throw new HttpError(403, "Your account is switched off. Ask the admin.", "inactive");
-  if (lic.stale && !lic.owner && env.LIC && env.LIC.online === false) throw new HttpError(403, "Connect this PC to the internet once, so your licence can be checked.", "stale");
+  if (lic.stale && env.LIC && env.LIC.online === false) throw new HttpError(403, "Connect this PC to the internet once, so your licence can be checked.", "stale");
   return lic;
 }
 async function requirePosting(env) {
@@ -41,6 +40,16 @@ async function requirePosting(env) {
   return lic;
 }
 const canChooseAI = (lic, ai) => AI_CHOICES.includes(ai) && (lic.admin || (lic.ai_options || []).includes(ai));
+const allowedAI = (lic) => lic.admin ? AI_CHOICES : (lic.ai_options || []).filter((a) => AI_CHOICES.includes(a));
+/** A company's AIs in priority order: only ones this account may use, each once. */
+function aiOrderFor(lic, list) {
+  if (!Array.isArray(list)) throw new HttpError(400, "Choose the AIs as a list.");
+  const order = [...new Set(list.map(String))];
+  const bad = order.find((a) => !canChooseAI(lic, a));
+  if (bad) throw new HttpError(400, `${AI_LABELS[bad] || bad} is not available for your account. Ask the admin.`);
+  if (!order.length) throw new HttpError(400, "Tick at least one AI.");
+  return order;
+}
 
 // ------------------------------------------------------------------ views
 let TALLY = null; // the Tally runner (desktop/runner.mjs), set per request
@@ -88,8 +97,8 @@ function licView(lic) {
   if (!lic) return null;
   return { email: lic.email, name: lic.name || "", admin: !!lic.admin, active: lic.active !== false, company_limit: lic.company_limit ?? 0,
     can_post: !!lic.can_post, invoice_credits: lic.invoice_credits ?? 0, statement_credits: lic.statement_credits ?? 0,
-    unlimited: !!lic.admin, ai_options: lic.admin && !lic.owner ? AI_CHOICES : (lic.ai_options || []).filter((a) => AI_CHOICES.includes(a)),
-    issued_at: lic.issued_at, stale: !!lic.stale, owner: !!lic.owner };
+    unlimited: !!lic.admin, ai_options: allowedAI(lic),
+    issued_at: lic.issued_at, stale: !!lic.stale };
 }
 route("GET", "/api/me", async ({ env, D }) => {
   const lic = await licence(env);
@@ -116,34 +125,8 @@ route("POST", "/api/signin/poll", async ({ env }) => {
   try { return json(await env.LIC.signInPoll()); }
   catch (e) { throw new HttpError(e.status || 503, e.message); }
 }, { keyed: true });
-route("POST", "/api/signout", async ({ env }) => { await env.OWNER?.signOut(); await env.LIC?.signOut(); return json({ ok: true }); }, { keyed: true });
+route("POST", "/api/signout", async ({ env }) => { await env.LIC?.signOut(); return json({ ok: true }); }, { keyed: true });
 
-// Owner mode: the admin signs in with Google on this PC and reads with keys kept here — no service needed.
-route("GET", "/api/owner", async ({ env }) => {
-  if (!env.OWNER) throw new HttpError(404, "Not available");
-  const keys = await env.OWNER.keys();
-  return json({ email: env.OWNER.ownerEmail, client_id: await env.OWNER.clientId(), signed_in: !!(await env.OWNER.session()),
-    keys: Object.fromEntries(["GEMINI_API_KEY", "GEMINI_PAID_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"].map((k) => [k, keys[k] ? "…" + keys[k].slice(-4) : ""])) });
-}, { keyed: true });
-async function ownerAllowed(env) {
-  const lic = await licence(env);
-  return !lic || lic.admin; // before anyone signs in, or the admin
-}
-route("POST", "/api/owner/client", async ({ env, body }) => {
-  if (!(await ownerAllowed(env))) throw new HttpError(403, "Only the admin can do this.");
-  try { await env.OWNER.setClientId(body.client_id); } catch (e) { throw new HttpError(e.status || 400, e.message); }
-  return json({ ok: true });
-}, { keyed: true });
-route("POST", "/api/owner/signin", async ({ env, body }) => {
-  try { return json({ ok: true, ...(await env.OWNER.signIn(body.credential)) }); }
-  catch (e) { throw new HttpError(e.status || 401, e.message); }
-}, { keyed: true });
-route("POST", "/api/owner/keys", async ({ env, body }) => {
-  const lic = await requireLicence(env);
-  if (!lic.admin) throw new HttpError(403, "Only the admin can do this.");
-  try { await env.OWNER.setKeys(body); } catch (e) { throw new HttpError(e.status || 400, e.message); }
-  return json({ ok: true });
-}, { keyed: true });
 route("POST", "/api/licence/refresh", async ({ env }) => {
   const lic = env.LIC ? await env.LIC.refresh() : await licence(env);
   return json({ licence: licView(lic), online: env.LIC?.online ?? true, error: env.LIC?.lastError || "" });
@@ -162,12 +145,6 @@ route("POST", "/api/admin/:action", async ({ env, p, body }) => {
 route("POST", "/api/ai/test", async ({ env, body }) => {
   const lic = await requireLicence(env);
   if (!canChooseAI(lic, body.ai)) throw new HttpError(400, "That AI is not available for your account.");
-  if (lic.owner) {
-    const AI = await import("./ai.js");
-    const provider = body.ai;
-    try { return json({ ok: true, ...(await AI.testAI(await env.OWNER.aiEnv(), provider)) }); }
-    catch (e) { return json({ ok: false, error: ownerMessage(e.message) }); }
-  }
   try { return json({ ok: true, ...(await env.LIC.call("/api/lic/ai/test", { ai: body.ai })) }); }
   catch (e) { return json({ ok: false, error: e.message }); }
 });
@@ -195,7 +172,7 @@ route("POST", "/api/companies", async ({ env, D, body }) => {
     throw new HttpError(403, `Your account allows ${lic.company_limit || 0} compan${lic.company_limit === 1 ? "y" : "ies"}. Ask the admin to increase the limit.`, "limit");
   const id = newId(), g = cleanGstin(body.gstin);
   // the service keeps the count, so the limit holds even if this PC's data is reset (needs the internet once)
-  if (env.LIC && !lic.owner) {
+  if (env.LIC) {
     try { await env.LIC.call("/api/lic/company", { id, name: String(body.name).trim(), gstin: g || "" }); }
     catch (e) { throw new HttpError(e.status || 503, e.offline ? "Adding a company needs an internet connection (to check your licence). Try again when online." : e.message, "limit"); }
   }
@@ -203,7 +180,13 @@ route("POST", "/api/companies", async ({ env, D, body }) => {
     state_code: stateCode(g, body.state), bridge_token: "local_" + id, settings: JSON.stringify(defaultSettings(lic)), owner_email: lic.email, created_at: now() });
   return json(await companyView(D, id));
 });
-const defaultSettings = (lic) => ({ ai: lic.admin ? "gemini_lite" : (lic.ai_options || [])[0] || "gemini_lite" });
+// every AI the account may use, cheapest first: a free AI reads, Gemini or Claude re-reads handwritten bills
+const AI_DEFAULT_ORDER = ["gemini_lite", "groq", "gemini", "claude"];
+function defaultSettings(lic) {
+  const ok = allowedAI(lic);
+  const order = AI_DEFAULT_ORDER.filter((a) => ok.includes(a));
+  return { ai: order[0] || "gemini_lite", ai_order: order.length ? order : ["gemini_lite"] };
+}
 route("GET", "/api/companies/:cid", async ({ D, p }) => json(must(await companyView(D, p.cid))));
 route("PATCH", "/api/companies/:cid", async ({ env, D, p, body }) => {
   const c = must(await P.getCompany(D, p.cid));
@@ -216,8 +199,13 @@ route("PATCH", "/api/companies/:cid", async ({ env, D, p, body }) => {
   if ("tally_company" in body) upd.tally_company = String(body.tally_company || "").trim() || upd.name || c.name;
   if ("gstin" in body) { upd.gstin = cleanGstin(body.gstin); upd.state_code = stateCode(upd.gstin, body.state); }
   if (body.settings) {
-    if (body.settings.ai && !canChooseAI(await requireLicence(env), body.settings.ai)) throw new HttpError(400, "That AI is not available for your account. Ask the admin.");
-    upd.settings = JSON.stringify({ ...c.settings, ...body.settings });
+    const set = { ...body.settings };
+    if ("ai_order" in set) { set.ai_order = aiOrderFor(await requireLicence(env), set.ai_order); set.ai = set.ai_order[0]; }
+    else if (set.ai) {
+      if (!canChooseAI(await requireLicence(env), set.ai)) throw new HttpError(400, "That AI is not available for your account. Ask the admin.");
+      set.ai_order = [set.ai, ...(c.settings.ai_order || []).filter((a) => a !== set.ai)];
+    }
+    upd.settings = JSON.stringify({ ...c.settings, ...set });
   }
   await D.update("companies", p.cid, upd);
   return json(await companyView(D, p.cid));
@@ -608,7 +596,7 @@ route("GET", "/api/invoices/:iid/xml", async ({ D, p }) => {
 
 // bank statements: one statement credit each (counted by the service; needs the internet at that moment)
 async function useStatementCredit(env, D, st, lines) {
-  if (!env.LIC || (await licence(env))?.owner) return;
+  if (!env.LIC) return;
   const c = await D.first("SELECT id, name, gstin FROM companies WHERE id=?", st.company_id);
   try { await env.LIC.call("/api/lic/use/statement", { company: c, name: st.name, lines }); }
   catch (e) {

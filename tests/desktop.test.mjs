@@ -95,6 +95,7 @@ test("admin: signs in, adds a user with limits and credits, sets up a company fr
   const c = await call("POST", "/companies", { name: "Vipul Textiles", tally_company: "VIPUL TEXTILES", gstin: "27ACKPS3168H1Z6" });
   cid = c.id;
   assert.equal(c.settings.ai, "gemini_lite");
+  assert.deepEqual(c.settings.ai_order, ["gemini_lite", "groq", "gemini", "claude"], "every AI, free ones first");
   await call("POST", `/companies/${cid}/import-masters`, {});
   const view = await until(async () => { const v = await call("GET", `/companies/${cid}`); return v.masters.ledger > 0 && v.masters.stock_item > 0 && v.pending_jobs === 0 && v; }, 15000, "masters");
   assert.equal(view.tally_online, true);
@@ -109,6 +110,7 @@ test("admin: an invoice is read through the service and posted straight to Tally
   const batch = await until(async () => { const x = await call("GET", `/batches/${b.id}`); return x.stage === "review" && x; }, 15000, "reading");
   assert.equal(batch.invoices.length, 1);
   assert.equal(svc.calls.at(-1).ai, "gemini_lite", "the company's AI choice is used");
+  assert.deepEqual(svc.calls.at(-1).order, ["gemini_lite", "groq", "gemini", "claude"], "the whole priority list goes to the service");
   // review: the two lines are mapped to stock items once (remembered next time), the purchase ledger picked
   const stock = await call("GET", `/batches/${b.id}/review/stock`);
   const item = { "3060 WHITE 20 DOZ": "3060 ONKAR WHITE CRAPE", "11*11 WHITE 320 DOZ": "1212 ASHOKA" };
@@ -122,6 +124,22 @@ test("admin: an invoice is read through the service and posted straight to Tally
   assert.equal(pushed.pushed, 1);
   const done = await until(async () => { const x = await call("GET", `/invoices/${inv.id}`); return x.status !== "queued" && x; }, 15000, "posting");
   assert.equal(done.status, "synced", done.sync_error);
+});
+
+test("admin: the AIs are put in a new order; the service gets that order", async () => {
+  const c = await call("PATCH", `/companies/${cid}`, { settings: { ai_order: ["claude", "gemini", "claude"] } });
+  assert.deepEqual([c.settings.ai, c.settings.ai_order], ["claude", ["claude", "gemini"]]);
+  assert.equal((await call("PATCH", `/companies/${cid}`, { settings: { ai_order: [] } })).status, 400, "at least one AI");
+  assert.equal((await call("PATCH", `/companies/${cid}`, { settings: { ai_order: ["chatgpt"] } })).status, 400);
+  const b = await call("POST", `/companies/${cid}/batches`, { voucher_type: "Purchase", files: [{ filename: "bill2.pdf", pages: 1 }] });
+  await call("POST", `/files/${b.files[0].id}/pages`, { idx: 0, image_b64: JPEG });
+  await call("POST", `/batches/${b.id}/start`, {});
+  await until(async () => (await call("GET", `/batches/${b.id}`)).stage === "review", 15000, "reading");
+  assert.deepEqual([svc.calls.at(-1).ai, svc.calls.at(-1).order], ["claude", ["claude", "gemini"]]);
+  await call("DELETE", `/batches/${b.id}`);
+  // choosing just one AI the old way puts it first and keeps the rest of the list
+  const c2 = await call("PATCH", `/companies/${cid}`, { settings: { ai: "gemini_lite" } });
+  assert.deepEqual(c2.settings.ai_order, ["gemini_lite", "claude", "gemini"]);
 });
 
 test("admin: a bank statement goes to the suspense ledger as receipts and payments, never twice", async () => {
@@ -162,6 +180,10 @@ test("user: own companies, company limit, credits counted, posting blocked", asy
   assert.equal(c2.status, 403);
   assert.match(c2.error, /allows 1 company/);
   assert.equal((await call("PATCH", `/companies/${c.id}`, { settings: { ai: "claude" } })).status, 400, "only the AI the admin allowed");
+  assert.deepEqual(c.settings.ai_order, ["groq"]);
+  const bad = await call("PATCH", `/companies/${c.id}`, { settings: { ai_order: ["groq", "claude"] } });
+  assert.equal(bad.status, 400);
+  assert.match(bad.error, /Claude is not available for your account/);
 
   const b = await call("POST", `/companies/${c.id}/batches`, { voucher_type: "Purchase", files: [{ filename: "a.pdf", pages: 1 }] });
   await call("POST", `/files/${b.files[0].id}/pages`, { idx: 0, image_b64: JPEG });
