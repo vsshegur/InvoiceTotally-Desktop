@@ -254,8 +254,8 @@ export function bankVoucher(company, { vtype, date, bankLedger, ledger, amount, 
     }
     if (rest >= 0.005) alloc += `<BILLALLOCATIONS.LIST><BILLTYPE>On Account</BILLTYPE><AMOUNT>${amt(sign * rest)}</AMOUNT></BILLALLOCATIONS.LIST>`;
   }
-  const other = `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(ledger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(otherAmt)}</ISDEEMEDPOSITIVE>` +
-    `${vtype === "Contra" ? "" : "<ISPARTYLEDGER>Yes</ISPARTYLEDGER>"}<AMOUNT>${amt(otherAmt)}</AMOUNT>${alloc}</LEDGERENTRIES.LIST>`;
+  const other = `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${esc(ledger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(otherAmt)}</ISDEEMEDPOSITIVE>` +
+    `${bills.length && vtype !== "Contra" ? "<ISPARTYLEDGER>Yes</ISPARTYLEDGER>" : ""}<AMOUNT>${amt(otherAmt)}</AMOUNT>${alloc}</ALLLEDGERENTRIES.LIST>`;
   // TallyPrime's Banking feature requires a BANKALLOCATIONS.LIST on the bank-side ledger entry of
   // Receipt/Payment/Contra vouchers whenever the ledger sits under the Bank Accounts/Bank OD/OCC group
   // and banking features are enabled for it. Without it, Tally silently rejects the voucher as an
@@ -263,10 +263,12 @@ export function bankVoucher(company, { vtype, date, bankLedger, ledger, amount, 
   // (Transaction Type "Others", no instrument number) rather than omit it.
   const bankAlloc = `<BANKALLOCATIONS.LIST><DATE>${d}</DATE><INSTRUMENTDATE>${d}</INSTRUMENTDATE>` +
     `<TRANSACTIONTYPE>Others</TRANSACTIONTYPE><AMOUNT>${amt(bankAmt)}</AMOUNT></BANKALLOCATIONS.LIST>`;
-  const bank = `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(bankLedger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(bankAmt)}</ISDEEMEDPOSITIVE>` +
-    `<AMOUNT>${amt(bankAmt)}</AMOUNT>${bankAlloc}</LEDGERENTRIES.LIST>`;
-  const x = `<VOUCHER VCHTYPE="${vtype}" ACTION="Create"><DATE>${d}</DATE><VCHSTATUSDATE>${d}</VCHSTATUSDATE>` +
+  const bank = `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${esc(bankLedger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(bankAmt)}</ISDEEMEDPOSITIVE>` +
+    `<AMOUNT>${amt(bankAmt)}</AMOUNT>${bankAlloc}</ALLLEDGERENTRIES.LIST>`;
+  const x = `<VOUCHER VCHTYPE="${vtype}" ACTION="Create" OBJVIEW="Accounting Voucher View">` +
+    `<DATE>${d}</DATE><VCHSTATUSDATE>${d}</VCHSTATUSDATE><EFFECTIVEDATE>${d}</EFFECTIVEDATE>` +
     `<VOUCHERTYPENAME>${vtype}</VOUCHERTYPENAME><PARTYLEDGERNAME>${esc(ledger)}</PARTYLEDGERNAME>` +
+    `<PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW><ISINVOICE>No</ISINVOICE>` +
     `<NARRATION>${esc(String(narration || "").slice(0, 1000))}</NARRATION>` +
     // debit side first, as Tally lists it
     (moneyIn ? bank + other : other + bank) + "</VOUCHER>";
