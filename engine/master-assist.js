@@ -99,4 +99,8 @@ export async function learn(D,cid,body){
 export function smartRoutes(route,authorize){
   route("GET","/api/companies/:cid/smart-maps",async ({D,env,p})=>{await authorize(D,env,p.cid);return out(await suggestions(D,p.cid));});
   route("POST","/api/companies/:cid/smart-maps/learn",async ({D,env,p,body})=>{await authorize(D,env,p.cid);return out(await learn(D,p.cid,body));});
+  route("GET","/api/companies/:cid/smart-maps/export",async ({D,env,p})=>{
+    await authorize(D,env,p.cid);
+    return out({mappings:await D.all("SELECT kind,key,value FROM aliases WHERE company_id=? ORDER BY kind,key",p.cid)});
+  });
 }
