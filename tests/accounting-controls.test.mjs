@@ -233,3 +233,52 @@ test("B2B comparisons distinguish same invoice, GSTIN conflict, amount conflict,
   const x=GST.compareGstr1Invoices(portal,books);
   assert.deepEqual(x.map(z=>z.status),["matched","gstin_mismatch","tax_mismatch","missing_in_tally"]);
 });
+
+
+test("restoring a backup freezes old pending Tally imports before the restored runner can replay them",()=>{
+  const temp=fs.mkdtempSync(path.join(os.tmpdir(),"it-no-replay-"));
+  try{
+    const data=path.join(temp,"data"),bdir=path.join(temp,"backups");fs.mkdirSync(data);
+    const filename=path.join(data,"invoicetotally.sqlite");
+    const db=makeD1(filename);
+    db.sql.prepare("INSERT INTO companies(id,name,bridge_token) VALUES('restore-co','Restore Co','token-a')").run();
+    db.sql.prepare("INSERT INTO jobs(id,company_id,kind,invoice_id,payload,status,created_at) VALUES(?,?,?,?,?,?,?)")
+      .run("pending-sale","restore-co","import_voucher","restore-inv","a posting request","pending",100);
+    db.sql.prepare("INSERT INTO invoices(id,company_id,batch_id,status) VALUES(?,?,?,?)")
+      .run("restore-inv","restore-co","batch-a","queued");
+    db.sql.prepare("INSERT INTO jobs(id,company_id,kind,invoice_id,payload,status,created_at) VALUES(?,?,?,?,?,?,?)")
+      .run("pending-ec","restore-co","import_ecommerce","restore-ec","a posting request","sent",101);
+    db.sql.prepare("INSERT INTO ecommerce_vouchers(id,batch_id,company_id,status,number) VALUES(?,?,?,?,?)")
+      .run("restore-ec","batch-a","restore-co","queued","EC-RESTORE");
+    const backup=createBackup(db.sql,bdir,{force:true});
+    db.close();
+    scheduleRestore(bdir,data,path.basename(backup.file));
+    assert.equal(applyPendingRestore(data,filename).restored,true);
+    const reread=makeD1(filename);
+    const jobs=reread.sql.prepare("SELECT status,result FROM jobs WHERE company_id='restore-co'").all();
+    assert.equal(jobs.length,2);
+    assert.ok(jobs.every(x=>x.status==="failed"&&/Check in Tally/.test(x.result)));
+    assert.equal(reread.sql.prepare("SELECT status FROM invoices WHERE id='restore-inv'").get().status,"failed");
+    assert.equal(reread.sql.prepare("SELECT status FROM ecommerce_vouchers WHERE id='restore-ec'").get().status,"uncertain");
+    reread.close();
+  }finally{fs.rmSync(temp,{force:true,recursive:true});}
+});
+
+test("GSTR-1 B2C-large state codes are not falsely matched as buyer GSTIN invoices",()=>{
+  const gstin="27ACKPS3168H1Z6";
+  const result=parsePortalJson({gstin,fp:"092026",
+    b2cl:[{pos:"29",inv:[{inum:"B2CL-01",itms:[{itm_det:{txval:500,iamt:25}}]}]}],
+    b2b:[{ctin:"27ABCPA1234C1ZL",inv:[{inum:"B2B-01",itms:[{itm_det:{txval:100,iamt:5}}]}]}]
+  },"gstr1",{gstin,period:"2026-09"});
+  assert.deepEqual([result.summary.taxable,result.summary.igst],[600,30]);
+  assert.deepEqual(result.docs.map(x=>x.num),["B2B-01"]);
+});
+
+test("accounting control screen uses multi-element selectors for buttons and GST file inputs",()=>{
+  const code=fs.readFileSync(new URL("../public/control-center.js",import.meta.url),"utf8");
+  for(const selector of ["data-remember","data-json","data-save"]){
+    assert.ok(code.includes("$$(") && code.includes(selector),"Missing "+selector);
+    assert.doesNotMatch(code,new RegExp("(?<!\\$)\\$\\([^\\n]*"+selector+"[^\\n]*\\)\\.forEach"),
+      "An element selector cannot have .forEach: "+selector);
+  }
+});
