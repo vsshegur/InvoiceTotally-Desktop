@@ -186,10 +186,24 @@ export async function jobResult(D,job,accepted,raw,error,duplicate=false) {
   return status;
 }
 
-export function ecommerceRoutes(route,{requirePosting}) {
-  route("GET","/api/companies/:cid/ecommerce",async ({D,p})=>json(await list(D,p.cid)));
-  route("POST","/api/companies/:cid/ecommerce/prepare",async ({D,p,body})=>json(await prepare(D,p.cid,body)));
-  route("GET","/api/ecommerce/:id",async ({D,p})=>json(await view(D,p.id)));
-  route("POST","/api/ecommerce/:id/mapping",async ({D,p,body})=>json(await saveMapping(D,p.id,body)));
-  route("POST","/api/ecommerce/:id/post",async ({D,env,p,body})=>{await requirePosting(env);return json(await post(D,p.id,body));});
+// A signed-in account can only read and post to its own local Tally company.
+export function ecommerceRoutes(route,{requirePosting,requireLicence}) {
+  const allow = async (D,env,cid) => {
+    const lic=await requireLicence(env), c=await company(D,cid);
+    if (c.owner_email && !eq(c.owner_email,lic.email)) throw new EcommerceError("This company belongs to another signed-in account",403);
+  };
+  const allowId = async (D,env,id) => {
+    const b=await batch(D,id);await allow(D,env,b.company_id);
+  };
+  route("GET","/api/companies/:cid/ecommerce",async ({D,env,p})=>{await allow(D,env,p.cid);return json(await list(D,p.cid));});
+  route("POST","/api/companies/:cid/ecommerce/prepare",async ({D,env,p,body})=>{
+    await allow(D,env,p.cid);return json(await prepare(D,p.cid,body));
+  });
+  route("GET","/api/ecommerce/:id",async ({D,env,p})=>{await allowId(D,env,p.id);return json(await view(D,p.id));});
+  route("POST","/api/ecommerce/:id/mapping",async ({D,env,p,body})=>{
+    await allowId(D,env,p.id);return json(await saveMapping(D,p.id,body));
+  });
+  route("POST","/api/ecommerce/:id/post",async ({D,env,p,body})=>{
+    await allowId(D,env,p.id);await requirePosting(env);return json(await post(D,p.id,body));
+  });
 }
