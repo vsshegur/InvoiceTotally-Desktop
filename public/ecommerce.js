@@ -114,7 +114,8 @@ async function viewEcommerceBatch(id) {
   app().innerHTML = topBar([[c.name,'#/c/'+c.id],['E-Commerce','#/c/'+c.id+'/ecommerce'],[EC.label(data.platform)+' '+data.period]],c)+
     '<div class="bar"><span class="status">Platform <b>'+EC.label(data.platform)+'</b> · Month <b>'+esc(data.period)+'</b> · '+rows.length+' vouchers</span>' +
     '<div class="spacer"></div><a class="btn" href="#/c/'+c.id+'/ecommerce">Back</a> '+
-    '<button class="btn primary" id="ecPost" '+(!ME?.licence?.can_post?'disabled title="Posting not allowed"':'')+'>Post selected to Tally</button></div>'+
+    '<button class="btn primary" id="ecPost" '+(!ME?.licence?.can_post?'disabled title="Posting not allowed"':'')+'>Post selected to Tally</button>' +
+    (rows.some(r=>r.status==='uncertain'||r.status==='duplicate')?'<button class="btn" id="ecRecheck">Recheck in Tally</button>':'')+'</div>'+
     '<div class="page wide"><h2 style="margin:0 0 14px">Monthly GST sales review</h2>' +
     '<div class="grid-2" style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:16px">' +
     '<div class="card" style="flex:1;min-width:200px;padding:16px"><div class="muted small">Taxable sales</div><h2>'+EC.money(data.summary.taxable)+'</h2></div>'+
@@ -186,6 +187,12 @@ async function viewEcommerceBatch(id) {
   };
   mapping();
   $('#ecAll').onchange=e=>$$('.ec-check:not(:disabled)').forEach(x=>x.checked=e.target.checked);
+  $('#ecRecheck')?.addEventListener('click',async()=>{
+    const b=$('#ecRecheck');b.disabled=true;
+    try{const result=await api('/ecommerce/'+id+'/recheck',{body:{}});
+      toast(result.present+' already in Tally; '+result.ready+' cleared for manual retry.');refresh();}
+    catch(e){toast(e.message,true);b.disabled=false;}
+  });
   $('#ecPost').onclick=async()=>{
     const selected=$$('.ec-check:checked:not(:disabled)').map(x=>x.value);
     if(!selected.length)return toast('Select at least one ready voucher',true);
