@@ -69,7 +69,7 @@ export function ecommerceVoucher(company, row, mapping) {
   const view = stock ? "Invoice Voucher View" : "Accounting Voucher View";
   const detail = items.map(i => i.name + " " + money(i.taxable) +
     (i.qty ? " (" + i.qty + " PCS)" : "")).join("; ").slice(0, 680);
-  const narr = (row.platform === "ME" ? "Meesho" : "Flipkart") + " consolidated " +
+  const narr = row.number + " | " + (row.platform === "ME" ? "Meesho" : "Flipkart") + " consolidated " +
     row.period + ", " + row.state + ", GST " + row.rate + "%; " + detail;
   const voucher = '<VOUCHER VCHTYPE="' + kind + '" ACTION="Create" OBJVIEW="' + view + '">' +
     '<DATE>' + d + '</DATE><VCHSTATUSDATE>' + d + '</VCHSTATUSDATE><EFFECTIVEDATE>' + d + '</EFFECTIVEDATE>' +
@@ -98,7 +98,7 @@ export function ecommerceExistingRequest(company, date) {
     '</SVFROMDATE><SVTODATE TYPE="Date">' + d + '</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE>' +
     '<COLLECTION NAME="ITECommerceExisting" ISMODIFY="No"><TYPE>Voucher</TYPE>' +
     '<FILTER>ITECommerceDateFilter</FILTER>' +
-    '<FETCH>Date,VoucherNumber,VoucherTypeName,PartyLedgerName,Amount</FETCH>' +
+    '<FETCH>Date,VoucherNumber,VoucherTypeName,PartyLedgerName,Amount,Reference,Narration</FETCH>' +
     '</COLLECTION><SYSTEM TYPE="Formulae" NAME="ITECommerceDateFilter">' +
     '$Date = ##SVFromDate</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
 }
@@ -114,7 +114,7 @@ export function parseExistingVouchers(xml) {
   for (const m of input.matchAll(/<VOUCHER\b[^>]*>([\s\S]*?)<\/VOUCHER>/gi)) {
     const tag = (n) => un(new RegExp("<" + n + ">([\\s\\S]*?)</" + n + ">", "i").exec(m[1])?.[1] || "").trim();
     out.push({ number: tag("VOUCHERNUMBER"), type: tag("VOUCHERTYPENAME"),
-      date: tag("DATE"), party: tag("PARTYLEDGERNAME"), amount: Number(tag("AMOUNT")) || 0 });
+      date: tag("DATE"), reference: tag("REFERENCE"), narration: tag("NARRATION"), party: tag("PARTYLEDGERNAME"), amount: Number(tag("AMOUNT")) || 0 });
   }
   return out;
 }
