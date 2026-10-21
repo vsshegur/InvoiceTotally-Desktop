@@ -129,3 +129,24 @@ test("Meesho inventory mode validates HSN, stock unit and emits a balanced item 
   assert.match(xml,/<STOCKITEMNAME>HSN_630260 @ 5%<\/STOCKITEMNAME>/);
   assert.match(xml,/<BILLEDQTY>4 PCS<\/BILLEDQTY>/);
 });
+
+
+test("an uncertain posting is rechecked read-only before a manual retry is allowed", async()=>{
+  const b=(await X.list(D,"ec-c")).find(x=>x.period==="2026-06");
+  const original=(await X.view(D,b.id)).vouchers[0];
+  await D.run("UPDATE ecommerce_vouchers SET status='uncertain' WHERE id=?",original.id);
+  const empty={TALLY:{readOnly:async (xml)=>{
+    assert.match(xml,/ITECommerceExisting/);
+    return "<ENVELOPE><BODY><DATA><COLLECTION></COLLECTION></DATA></BODY></ENVELOPE>";
+  }}};
+  const ok=await X.recheck(D,b.id,empty);
+  assert.deepEqual([ok.checked,ok.ready,ok.present],[1,1,0]);
+  assert.equal((await D.first("SELECT status FROM ecommerce_vouchers WHERE id=?",original.id)).status,"ready");
+  await D.run("UPDATE ecommerce_vouchers SET status='uncertain' WHERE id=?",original.id);
+  const found={TALLY:{readOnly:async()=>
+    "<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><DATE>20260630</DATE><VOUCHERNUMBER>"+
+    original.number+"</VOUCHERNUMBER><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME></VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>"}};
+  const collision=await X.recheck(D,b.id,found);
+  assert.deepEqual([collision.checked,collision.ready,collision.present],[1,0,1]);
+  assert.equal((await D.first("SELECT status FROM ecommerce_vouchers WHERE id=?",original.id)).status,"duplicate");
+});
