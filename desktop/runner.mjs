@@ -5,6 +5,7 @@ import * as GS from "../engine/gstr2b.js";
 import * as EC from "../engine/ecommerce.js";
 import * as AD from "../engine/audit.js";
 import * as T from "../engine/tally.js";
+import * as DUP from "../engine/duplicate-check.js";
 import { now } from "../engine/db.js";
 import * as TL from "./tally.mjs";
 
@@ -102,6 +103,24 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
       if (check.duplicate) {
         await AD.audit(D,job,"duplicate_blocked",check.message,tc);
         await EC.jobResult(D,job,false,"",check.message,true); return;
+      }
+    }
+    if(job.kind==="import_voucher"){
+      // Manual imports and imports from earlier installations are checked in
+      // Tally before a new posting. No duplicate inference from amount alone.
+      let check;
+      try{check=await DUP.guardExternalDuplicate(job,tc,xml=>TL.exportData(xml));}
+      catch(e){
+        if(e.down||e.timeout){state.at=0;await requeue(job,"Waiting for Tally existing-invoice verification");return;}
+        const message="Tally existing-invoice verification failed: "+e.message;
+        await AD.audit(D,job,"not_sent",message,tc);
+        await P.jobResult(D,job,false,"",message);
+        return;
+      }
+      if(check.duplicate){
+        await AD.audit(D,job,"duplicate_blocked",check.message,tc);
+        await P.jobResult(D,job,false,"",check.message);
+        return;
       }
     }
     try {
