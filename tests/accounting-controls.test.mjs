@@ -10,6 +10,7 @@ import * as DASH from "../engine/dashboard.js";
 import * as GST from "../engine/gst-control.js";
 import * as SC from "../engine/master-assist.js";
 import { parsePortalJson } from "../public/gst-control-parse.js";
+import * as DUP from "../engine/duplicate-check.js";
 import { createBackup, createEncryptedBackup, decryptEncryptedBackup, integrity, listBackups, scheduleRestore, applyPendingRestore } from "../desktop/safe-backup.mjs";
 
 const DB=makeD1(),D=db({DB});
@@ -281,4 +282,33 @@ test("accounting control screen uses multi-element selectors for buttons and GST
     assert.doesNotMatch(code,new RegExp("(?<!\\$)\\$\\([^\\n]*"+selector+"[^\\n]*\\)\\.forEach"),
       "An element selector cannot have .forEach: "+selector);
   }
+});
+
+
+test("pre-post invoice guard blocks actual Tally duplicates but not same amount different supplier",async()=>{
+  const xml='<ENVELOPE><BODY><VOUCHER VCHTYPE="Purchase" ACTION="Create">'+
+    '<DATE>20260910</DATE><VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>'+
+    '<VOUCHERNUMBER>SY/244</VOUCHERNUMBER><REFERENCE>SY/244</REFERENCE>'+
+    '<PARTYLEDGERNAME>SUPPLIER A</PARTYLEDGERNAME></VOUCHER></BODY></ENVELOPE>';
+  const identity=DUP.identifyVoucher(xml);
+  assert.deepEqual(identity,{date:"20260910",number:"SY/244",reference:"SY/244",
+    party:"SUPPLIER A",type:"Purchase"});
+  const existing=[
+    {date:"20260910",number:"TALLY 0001",reference:"SY/244",type:"Purchase",party:"SUPPLIER A"},
+    {date:"20260910",number:"SY/244",reference:"SY/244",type:"Purchase",party:"SUPPLIER B"},
+    {date:"20260910",number:"SY/244",reference:"SY/244",type:"Sales",party:"SUPPLIER A"}];
+  assert.equal(DUP.exactDuplicate(identity,existing).number,"TALLY 0001");
+  assert.equal(DUP.exactDuplicate(identity,existing.slice(1)),null);
+  const reply='<ENVELOPE><COLLECTION><VOUCHER>'+
+    '<DATE>20260910</DATE><VOUCHERNUMBER>TALLY 0001</VOUCHERNUMBER>'+
+    '<REFERENCE>SY/244</REFERENCE><VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>'+
+    '<PARTYLEDGERNAME>SUPPLIER A</PARTYLEDGERNAME></VOUCHER></COLLECTION></ENVELOPE>';
+  const job={payload:xml};
+  assert.equal((await DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async request=>{
+    assert.match(request,/ITECommerceExisting/);return reply;
+  })).duplicate,true);
+  assert.equal((await DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async()=>
+    "<ENVELOPE><COLLECTION></COLLECTION></ENVELOPE>")).duplicate,false);
+  await assert.rejects(DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async()=>
+    "<HTML>connection error</HTML>"),/could not confirm/);
 });
