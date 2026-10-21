@@ -98,3 +98,34 @@ test("monthly batch stays in SQLite and requires verified masters before queuing
   assert.equal((await D.first("SELECT status FROM ecommerce_vouchers WHERE id=?",j.invoice_id)).status,"synced");
   await assert.rejects(X.prepare(D,"ec-c",{platform:"ME",year:2026,month:9,files:{sales,returns}}),/already/);
 });
+
+
+test("March selects previous financial year; zero-rated Meesho and Flipkart sales are retained", async () => {
+  const march={year:2027,month:3,fyStart:2026};
+  const zero=file("zero-meesho.xlsx",[head,[GSTIN,"630260",1,0,200,"Maharashtra","",2026,3]]);
+  const empty=file("zero-returns.xlsx",[head]);
+  const me=await parseMeesho({salesFile:zero,returnFile:empty,client:company,info:march});
+  assert.equal(me.vouchers[0].rate,0);
+  assert.equal(me.vouchers[0].taxable,200);
+  assert.equal(me.vouchers[0].invoice,200);
+  const fkZero=file("zero-flipkart.xlsx",[["GSTIN","Aggregate Taxable Value","CGST"],[GSTIN,300,0]],
+    "Section 7(A)(2) in GSTR-1");
+  const fl=await parseFlipkart({file:fkZero,client:company,info:march});
+  assert.deepEqual([fl.vouchers[0].rate,fl.vouchers[0].invoice],[0,300]);
+});
+
+test("Meesho inventory mode validates HSN, stock unit and emits a balanced item voucher", async () => {
+  const june=file("june-sales.xlsx",[head,[GSTIN,"630260",4,5,400,"Maharashtra","",2026,6]]);
+  const blank=file("june-returns.xlsx",[head]);
+  const b=await X.prepare(D,"ec-c",{platform:"ME",year:2026,month:6,files:{sales:june,returns:blank}});
+  await assert.rejects(X.saveMapping(D,b.id,{party:"ABCABC",sales:"GST SALES",cgst:"CGST",sgst:"SGST",igst:"IGST",
+    mode:"inventory",stock:{"HSN_630260 @ 5%":"1212 ASHOKA"}}),/existing Tally stock item/);
+  const mapping=await X.saveMapping(D,b.id,{party:"ABCABC",sales:"GST SALES",cgst:"CGST",sgst:"SGST",igst:"IGST",
+    mode:"inventory",stock:{"HSN_630260 @ 5%":"HSN_630260 @ 5%"}});
+  const r=(await X.view(D,b.id)).vouchers[0];
+  const xml=ecommerceVoucher("VIPUL TEXTILES",r,mapping.mapping);
+  assert.equal(TL.validatePosting(xml,"VIPUL TEXTILES"),"Sales voucher");
+  assert.match(xml,/<ALLINVENTORYENTRIES\.LIST>/);
+  assert.match(xml,/<STOCKITEMNAME>HSN_630260 @ 5%<\/STOCKITEMNAME>/);
+  assert.match(xml,/<BILLEDQTY>4 PCS<\/BILLEDQTY>/);
+});
