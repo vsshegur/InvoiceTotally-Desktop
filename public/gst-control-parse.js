@@ -56,7 +56,7 @@ export function parseGstr1(input,expected={}){
         const isNote=key==="cdnr"||key==="cdnur"||key==="cdnra"||key==="cdnura";
         const sign=isNote&&String(inv.ntty||inv.note_type||"").toUpperCase().startsWith("C")?-1:1;
         accumulate(total,amounts,sign);records++;
-        if(party&&inv.inum||party&&inv.nt_num){
+        if(/^\d{2}[A-Z0-9]{13}$/.test(party) && (inv.inum||inv.nt_num)){
           docs.push({ctin:party,num:String(inv.inum||inv.nt_num||"").trim(),dt:normDate(inv.idt||inv.nt_dt),
             ...Object.fromEntries(fields.map(k=>[k,money(amounts[k]*sign)]))});
         }
