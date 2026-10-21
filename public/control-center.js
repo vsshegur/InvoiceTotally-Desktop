@@ -132,7 +132,9 @@ async function companyGstControl(c,el){
       '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">'+keys.map(k=>
         '<label class="field"><span class="small">'+CC.field(k)+'</span><input class="in ccGstNum" data-kind="'+kind+
         '" data-head="'+k+'" type="number" step="0.01" value="'+(values?.[k]??"")+'" placeholder="Not provided"></label>').join('')+
-      '</div><button class="btn primary" data-save="'+kind+'">Save '+kind.toUpperCase()+' figures</button></div>';
+      '</div><div class="field" style="margin:10px 0"><label>Import '+kind.toUpperCase()+' GST portal JSON (offline)</label>'+
+      '<input class="in" data-json="'+kind+'" type="file" accept=".json,application/json"></div>'+
+      '<button class="btn primary" data-save="'+kind+'">Save '+kind.toUpperCase()+' figures</button></div>';
   };
   const comparison=(label,report)=>{
     if(!report)return "";
@@ -159,8 +161,32 @@ async function companyGstControl(c,el){
     '<div style="display:flex;flex-wrap:wrap;gap:12px;margin:16px 0">'+
       comparison("Tally Sales vs GSTR-1",r.salesToPortal)+comparison("GSTR-1 vs GSTR-3B",r.portalTo3b)+
       comparison("GSTR-2B ITC vs GSTR-3B",r.itc2bVs3b)+comparison("Tally purchase ITC vs GSTR-2B",r.itcBooksVs2b)+'</div>'+
+    ((r.invoices||[]).length?'<details style="margin-bottom:18px"><summary><b>GSTR-1 B2B invoice-by-invoice differences ('+r.invoices.length+')</b></summary>'+
+      '<div style="overflow:auto;margin-top:10px"><table class="grid"><thead><tr><th>Invoice</th><th>Buyer GSTIN</th><th>Status</th><th>Taxable difference</th><th>Tax difference</th></tr></thead><tbody>'+
+      r.invoices.slice(0,500).map(x=>'<tr><td>'+esc(x.number)+'</td><td class="mono">'+esc(x.gstin||"")+'</td>'+
+        '<td class="'+(x.status==="matched"?"good":"bad")+'">'+esc(x.status.replace(/_/g," "))+'</td>'+
+        '<td>'+CC.amount(x.taxable_difference)+'</td><td>'+CC.amount(x.tax_difference)+'</td></tr>').join('')+
+      '</tbody></table></div></details>':'')+
     '<p class="muted small">GST control is a reconciliation aid, not an official filing or legal ITC determination. Unclassified stock/sales ledgers and unusual journals must be reviewed by your accountant.</p>';
-  $$('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
+  $("[data-json]",el).forEach(input=>input.onchange=async()=>{
+    const file=input.files?.[0],kind=input.dataset.json;
+    if(!file)return;
+    try{
+      if(!/\.json$/i.test(file.name)||file.size>12*1024*1024)
+        throw new Error("Choose a GSTR-1 or GSTR-3B portal JSON file under 12 MB");
+      const {parsePortalJson}=await import("/gst-control-parse.js");
+      const data=parsePortalJson(JSON.parse(await file.text()),kind,{period,gstin:c.gstin});
+      if(!confirm("Import "+kind.toUpperCase()+" from "+file.name+"? Detected "+data.records+
+        " records. Taxable "+CC.amount(data.summary.taxable)+
+        "; CGST "+CC.amount(data.summary.cgst)+"; SGST "+CC.amount(data.summary.sgst)+
+        "; IGST "+CC.amount(data.summary.igst)+". Please verify the month and GSTIN."))return;
+      await api("/companies/"+c.id+"/gst-control/"+period+"/portal",{body:{
+        kind,summary:data.summary,docs:data.docs||[]
+      }});
+      toast(kind.toUpperCase()+" portal JSON read offline and saved");companyGstControl(c,el);
+    }catch(e){toast(e.message,true);input.value="";}
+  });
+  $('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
     const kind=btn.dataset.save;
     const fields=$$('.ccGstNum[data-kind="'+kind+'"]',el);
     const summary=Object.fromEntries(fields.map(f=>[f.dataset.head,f.value===""?null:Number(f.value)]));
