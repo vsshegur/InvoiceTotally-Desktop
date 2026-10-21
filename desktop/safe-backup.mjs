@@ -57,7 +57,7 @@ export function createEncryptedBackup(db,dir,passphrase){
   ensure(dir);
   const stamp=new Intl.DateTimeFormat("sv-SE",{timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit",
     hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:false}).format(new Date()).replace(/[-: ]/g,"");
-  const name="invoicetotally-encrypted-"+stamp+"-"+crypto.randomBytes(3).toString("hex")+".itbak";
+  const name="invoicetotally-encrypted-"+stamp.slice(0,8)+"-"+stamp.slice(8)+"-"+crypto.randomBytes(3).toString("hex")+".itbak";
   const file=path.join(dir,name),temp=path.join(dir,".encrypted-source-"+crypto.randomUUID()+".sqlite");
   try{
     db.exec("VACUUM INTO '"+quote(temp)+"'");
