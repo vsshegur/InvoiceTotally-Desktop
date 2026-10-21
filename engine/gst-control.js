@@ -84,6 +84,47 @@ const readJson=s=>{try{return JSON.parse(s||"null");}catch{return null;}};
 const diff=(a,b,tol=1)=>a===null||a===undefined||b===null||b===undefined?
   {status:"missing",difference:null}:
   {status:Math.abs(a-b)<=tol?"matched":"different",difference:r2(a-b)};
+const invoiceKey=s=>String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
+const taxAmount=d=>r2((+d.igst||0)+(+d.cgst||0)+(+d.sgst||0)+(+d.cess||0));
+export function compareGstr1Invoices(portal=[],book=[],tol=1){
+  const books=book.filter(x=>x.gstin&&x.number);
+  const consumed=new Set(),result=[];
+  for(const p of portal){
+    const key=invoiceKey(p.num);
+    if(!key)continue;
+    const candidates=books.map((v,i)=>({...v,index:i})).filter(v=>invoiceKey(v.number)===key);
+    const exact=candidates.find(v=>v.gstin===p.ctin&&!consumed.has(v.index));
+    const mismatch=candidates.find(v=>!consumed.has(v.index));
+    const hit=exact||mismatch;
+    if(!hit){result.push({number:p.num,gstin:p.ctin,status:"missing_in_tally"});continue;}
+    consumed.add(hit.index);
+    const status=hit.gstin!==p.ctin?"gstin_mismatch":
+      Math.abs(taxAmount(hit)-taxAmount(p))>tol||Math.abs((+hit.taxable||0)-(+p.taxable||0))>tol?"tax_mismatch":"matched";
+    result.push({number:p.num,gstin:p.ctin,status,tally_number:hit.number,tally_gstin:hit.gstin,
+      tax_difference:r2(taxAmount(hit)-taxAmount(p)),taxable_difference:r2((+hit.taxable||0)-(+p.taxable||0))});
+  }
+  for(const [i,v] of books.entries())if(!consumed.has(i)){
+    result.push({number:v.number,gstin:v.gstin,status:"missing_in_gstr1"});
+  }
+  return result.slice(0,3000);
+}
+function salesDocs(vouchers,masters){
+  const byName=new Map(masters.filter(x=>x.kind==="ledger"||!x.kind).map(x=>[String(x.name).toLowerCase(),x]));
+  return vouchers.filter(v=>/sale|credit note/i.test(v.vtype)).map(v=>{
+    const m=byName.get(String(v.party||"").toLowerCase());
+    const e=Object.fromEntries(taxHeads.map(k=>[k,0]));
+    let taxable=0;
+    for(const [name,raw]of v.e||[]){
+      const head=taxHead(name),ledger=byName.get(String(name).toLowerCase());
+      if(head&&(ledger?.primary_group==="Duties & Taxes"||/gst|tax/i.test(name)))e[head]+=+raw||0;
+      if(String(ledger?.primary_group||ledger?.parent).toLowerCase()==="sales accounts")taxable+=+raw||0;
+    }
+    if(Math.abs(+v.inv||0)>.005)taxable=+v.inv;
+    return {number:String(v.ref||v.number||""),date:v.refdate||v.date,party:v.party,
+      gstin:String(v.gstin||m?.gstin||"").toUpperCase(),taxable:r2(taxable),
+      ...Object.fromEntries(taxHeads.map(k=>[k,r2(e[k])]))};
+  }).filter(v=>v.number&&v.gstin).slice(0,20000);
+}
 export function compareGst({gstr1,gstr3b,sales,purchases,gstr2b},tol=1){
   const compare=(actual,expected,keys=heads)=>Object.fromEntries(keys.map(k=>[k,diff(actual?.[k],expected?.[k],tol)]));
   const salesToPortal=compare(sales,gstr1);
@@ -102,7 +143,9 @@ export function compareGst({gstr1,gstr3b,sales,purchases,gstr2b},tol=1){
   if(!gstr2b)warnings.push("No GSTR-2B file for this month");
   if(sales?.unclassified?.length)warnings.push(sales.unclassified.length+" outward vouchers lack recognized taxable Sales Accounts/inventory; review mapping");
   if(purchases?.unclassified?.length)warnings.push(purchases.unclassified.length+" inward vouchers lack recognized taxable Purchase Accounts/inventory; review mapping");
-  return {salesToPortal,portalTo3b,itc2bVs3b,itcBooksVs2b,warnings,at:now()};
+  const invoices=Array.isArray(gstr1?.docs)&&Array.isArray(sales?.docs)?
+    compareGstr1Invoices(gstr1.docs,sales.docs,tol):[];
+  return {salesToPortal,portalTo3b,itc2bVs3b,itcBooksVs2b,invoices,warnings,at:now()};
 }
 export async function gstr2bTotals(D,cid,period){
   const ret=await D.first("SELECT id FROM gst_returns WHERE company_id=? AND period=? AND kind='GSTR-2B' AND stage<>'uploading' ORDER BY created_at DESC LIMIT 1",cid,period);
@@ -135,6 +178,20 @@ export async function savePortal(D,cid,period,body){
   const kind=String(body.kind||"").toLowerCase();
   if(!["gstr1","gstr3b"].includes(kind))throw new GstControlError("Choose GSTR-1 or GSTR-3B");
   const clean=cleanSummary(body.summary,kind);
+  if(kind==="gstr1"&&Array.isArray(body.docs)){
+    if(body.docs.length>20000)throw new GstControlError("GSTR-1 JSON has too many invoice records");
+    clean.docs=body.docs.map(d=>{
+      const row={ctin:String(d.ctin||"").trim().toUpperCase().slice(0,15),
+        num:String(d.num||"").trim().slice(0,80),dt:String(d.dt||"").slice(0,10)};
+      if(!row.ctin||!row.num)throw new GstControlError("GSTR-1 invoice is missing buyer GSTIN/number");
+      for(const key of heads){
+        const n=Number(d[key]||0);if(!Number.isFinite(n)||Math.abs(n)>1e13)
+          throw new GstControlError("Invalid GSTR-1 invoice amount");
+        row[key]=r2(n);
+      }
+      return row;
+    });
+  }
   await persist(D,cid,period,kind==="gstr1"?"portal_gstr1":"portal_gstr3b",JSON.stringify(clean));
   return {ok:true,kind,period};
 }
@@ -151,7 +208,9 @@ export async function refreshTally(D,env,cid,period){
     D.all("SELECT name,parent,primary_group FROM masters WHERE company_id=? AND kind='ledger' AND pending=0",cid)
   ]);
   if(!masters.length)throw new GstControlError("Import Tally ledgers first");
-  const sales=tallyTotals(TL.purchaseGstRows(rawSales),masters,"sales");
+  const saleVouchers=TL.purchaseGstRows(rawSales);
+  const sales=tallyTotals(saleVouchers,masters,"sales");
+  sales.docs=salesDocs(saleVouchers,masters);
   const purchases=tallyTotals(TL.purchaseGstRows(rawPurchases),masters,"purchases");
   await D.batch([
     D.stmt("INSERT INTO gst_control(id,company_id,period,updated_at) VALUES(?,?,?,?) ON CONFLICT(company_id,period) DO NOTHING",cid+"_"+period,cid,period,now()),
