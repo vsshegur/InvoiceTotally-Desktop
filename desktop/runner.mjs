@@ -92,7 +92,12 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
     if (!["import_voucher", "import_master", "import_bank", "import_ecommerce", "import_gstr2b_purchase"].includes(job.kind)) { await P.jobResult(D, job, false, "", "Unknown job type"); return; }
     const who = await canPost(c);
     if (who === "other") { await requeue(job, `Waiting for ${c.owner_email || "the company's owner"} to sign in on this PC`); return; }
-    if (!who) { await P.jobResult(D, job, false, "", "Posting to Tally is not allowed for your account. Ask the admin."); return; }
+    if (!who) {
+      const message="Posting to Tally is not allowed for your account. Ask the admin.";
+      if(job.kind==="import_gstr2b_purchase")await G2BP.jobResult(D,job,false,"",message);
+      else await P.jobResult(D,job,false,"",message);
+      return;
+    }
     if (job.kind === "import_ecommerce") {
       let check;
       try { check = await EC.beforePosting(D, job, tc, (xml) => TL.exportData(xml)); }
