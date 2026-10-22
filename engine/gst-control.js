@@ -218,7 +218,7 @@ export function compareGstr1Invoices(portal=[],book=[],tol=1){
   }
   return result.slice(0,3000);
 }
-function salesDocs(vouchers,masters,rules=new Map()){
+function salesDocs(vouchers,masters,rules=new Map(),onlyGstin=true){
   const byName=new Map(masters.filter(x=>x.kind==="ledger"||!x.kind).map(x=>[normName(x.name),x]));
   return vouchers.filter(v=>/sale|credit note/i.test(v.vtype)).map(v=>{
     const partyMaster=byName.get(normName(v.party));
@@ -226,7 +226,7 @@ function salesDocs(vouchers,masters,rules=new Map()){
     return {number:String(v.ref||v.number||""),tally_number:String(v.number||""),mid:String(v.mid||""),date:v.date||"",supplier_date:v.refdate||v.date,party:v.party,
       gstin:String(v.gstin||partyMaster?.gstin||"").toUpperCase(),taxable:amounts.taxable,
       ...Object.fromEntries(taxHeads.map(k=>[k,amounts[k]])),breakdown:amounts.breakdown};
-  }).filter(v=>v.number&&v.gstin).slice(0,20000);
+  }).filter(v=>v.number&&(!onlyGstin||v.gstin)).slice(0,20000);
 }
 // Inward voucher evidence for explaining which individual CGST/SGST/IGST
 // entries make up the Tally monthly total. Uses precisely the same tax-head
@@ -450,6 +450,7 @@ export async function refreshTally(D,env,cid,period){
   const sales=tallyTotals(saleVouchers,masters,"sales",ruleRows);
   sales.calculation_version=2; // cached evidence must be refreshed after adjustment-logic upgrades
   sales.docs=salesDocs(saleVouchers,masters,rules);
+  sales.duplicate_docs=salesDocs(saleVouchers,masters,rules,false);
   const purchaseVouchers=TL.purchaseGstRows(rawPurchases);
   const purchases=tallyTotals(purchaseVouchers,masters,"purchases",ruleRows);
   purchases.docs=purchaseDocs(purchaseVouchers,masters,rules);
