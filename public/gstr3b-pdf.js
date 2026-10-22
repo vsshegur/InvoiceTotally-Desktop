@@ -39,6 +39,71 @@ function detectPeriod(all){
     return `${yr[1]}-${String(mIndex(mo[1])+1).padStart(2,"0")}`;
   return "";
 }
+// Filed GSTR-3B PDFs have used several header formats over time. The
+// selected return month is authoritative only after explicit user confirmation
+// when the downloaded document itself does not print a parseable period.
+function periodFromParts(year,monthValue){
+  const y=Number(year),part=String(monthValue||"").trim();
+  const idx=/^\d{1,2}$/.test(part)?Number(part)-1:mIndex(part);
+  return y>=2018&&y<=2100&&idx>=0&&idx<12?
+    String(y)+"-"+String(idx+1).padStart(2,"0"):"";
+}
+function detectPeriodFlexible(text){
+  const original=detectPeriod(text);
+  if(original)return original;
+  const s=clean(text).replace(/[‐‑‒–—]/g,"-");
+  const monthPattern="(January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)";
+  const label="(?:return\\s*period|tax\\s*period|filing\\s*period|return\\s*for|month\\s*of\\s*return|return\\s*month)";
+  const patterns=[
+    new RegExp(label+"\\s*[:.\\-]?\\s*"+monthPattern+"\\s*[,./-]?\\s*(20\\d{2})","i"),
+    new RegExp(label+"\\s*[:.\\-]?\\s*(20\\d{2})\\s*[,./-]?\\s*"+monthPattern,"i"),
+    new RegExp(label+"\\s*[:.\\-]?\\s*"+monthPattern+"\\s*[,./-]?\\s*(20\\d{2})\\s*[-/]\\s*(?:\\d{2}|20\\d{2})","i")
+  ];
+  for(const p of patterns){
+    const m=p.exec(s);
+    if(!m)continue;
+    const a=/^20\d{2}$/.test(m[1])?periodFromParts(m[1],m[2]):periodFromParts(m[2],m[1]);
+    if(a)return a;
+  }
+  const numeric=[
+    new RegExp(label+"\\s*[:.\\-]?\\s*(0?[1-9]|1[0-2])\\s*[/.-]?\\s*(20\\d{2})","i"),
+    new RegExp(label+"\\s*[:.\\-]?\\s*(20\\d{2})\\s*[/.-]\\s*(0?[1-9]|1[0-2])","i")
+  ];
+  for(let i=0;i<numeric.length;i++){
+    const m=numeric[i].exec(s);
+    if(m)return i===0?periodFromParts(m[2],m[1]):periodFromParts(m[1],m[2]);
+  }
+  const compact=new RegExp(label+"\\s*[:.\\-]?\\s*(0[1-9]|1[0-2])(20\\d{2})(?!\\d)","i").exec(s);
+  if(compact)return periodFromParts(compact[2],compact[1]);
+  const fy=/(?:financial\s*year|f\.?\s*y\.?)\s*[:.\- ]*(20\d{2})\s*[-/]\s*(?:20)?\d{2}/i.exec(s);
+  const periodLabel=new RegExp(label+"\\s*[:.\\-]?\\s*"+monthPattern,"i").exec(s);
+  if(fy&&periodLabel){
+    const idx=mIndex(periodLabel[1]);
+    if(idx>=0)return periodFromParts(+fy[1]+(idx<3?1:0),idx+1);
+  }
+  const year=/(?:^|\s)(?:calendar\s*year|tax\s*year|year)\s*[:.\- ]+(20\d{2})\b/i.exec(s);
+  const month=new RegExp("(?:^|\\s)(?:month|return\\s*period|tax\\s*period)\\s*[:.\\- ]+"+monthPattern,"i").exec(s);
+  if(year&&month)return periodFromParts(year[1],month[1]);
+  return "";
+}
+export function detectGstr3bFilenamePeriod(filename){
+  const name=String(filename||"").replace(/^.*[/\\]/,"").replace(/\.pdf$/i,"");
+  // GST portal example: GSTR3B_27ACKPS3168H1Z6_042026.pdf
+  const patterns=[
+    /(?:^|[^0-9])(0[1-9]|1[0-2])(20\d{2})(?!\d)/g,
+    /(?:^|[^0-9])(20\d{2})[-_.](0?[1-9]|1[0-2])(?!\d)/g,
+    /(?:^|[^A-Za-z])(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|SEPT|OCT|NOV|DEC)[-_ ]?(20\d{2})(?!\d)/gi
+  ];
+  for(const [i,regex] of patterns.entries()){
+    const found=[...name.matchAll(regex)];
+    if(found.length!==1)continue;
+    const m=found[0],period=i===0?periodFromParts(m[2],m[1]):
+      i===1?periodFromParts(m[1],m[2]):periodFromParts(m[2],m[1]);
+    if(period)return period;
+  }
+  return "";
+}
+
 function rowsOfPage(page){
   if(Array.isArray(page.rows))return page.rows.map(row=>typeof row==="string"?{text:row}:row);
   if(Array.isArray(page))return page.map(row=>typeof row==="string"?{text:row}:row);
@@ -77,10 +142,20 @@ export function parseGstr3bPdfPages(pages,expected={}){
   if(!gstins.length)throw new Error("GSTIN not found in the PDF. Cannot safely import it; enter the GSTR-3B figures manually.");
   if(expectedGstin&&!gstins.includes(expectedGstin))
     throw new Error("PDF GSTIN "+gstins[0]+" does not match the selected company's GSTIN "+expectedGstin);
-  const period=detectPeriod(docText),expPeriod=String(expected.period||"").trim();
-  if(!period)throw new Error("Cannot verify the return period from this PDF. Please use a filed GSTR-3B with its period printed, or enter the figures manually.");
-  if(expPeriod&&period!==expPeriod)
-    throw new Error("PDF return period "+period+" does not match the selected month "+expPeriod);
+  const pdfPeriod=detectPeriodFlexible(docText);
+  const filenamePeriod=detectGstr3bFilenamePeriod(expected.filename||"");
+  const expPeriod=String(expected.period||"").trim();
+  if(pdfPeriod&&expPeriod&&pdfPeriod!==expPeriod)
+    throw new Error("PDF return period "+pdfPeriod+" does not match the selected month "+expPeriod);
+  if(!pdfPeriod&&filenamePeriod&&expPeriod&&filenamePeriod!==expPeriod)
+    throw new Error("Filename indicates return period "+filenamePeriod+", but selected month is "+expPeriod+". Select the correct return month or PDF.");
+  // A filename is a helpful clue, not proof of the filed return period.
+  // When PDF text does not state the period, keep it unverified and require
+  // the user to check the PDF header/month explicitly before Save.
+  const period=pdfPeriod||filenamePeriod||expPeriod;
+  if(!period)throw new Error("Return period not visible in the PDF or filename. Select the GST return month and verify the filed return manually.");
+  const periodSource=pdfPeriod?"pdf":filenamePeriod?"filename":"selected-month";
+  const periodConfirmationRequired=periodSource!=="pdf";
   const sec31=rows.findIndex(r=>/\b3\s*\.\s*1\s+details\b|\b3\s*\.\s*1\s+outward\b/i.test(r.text));
   const sec4=rows.findIndex((r,i)=>i>sec31&&/\b4\s*\.\s*eligible\s*(?:input\s*tax\s*credit|itc)\b/i.test(r.text));
   if(sec31<0||sec4<0)throw new Error("Cannot locate GSTR-3B Tables 3.1 and 4. Download the filed return PDF or enter values manually.");
@@ -112,6 +187,7 @@ export function parseGstr3bPdfPages(pages,expected={}){
   if(Object.values(out).some(x=>!Number.isFinite(x)||Math.abs(x)>1e13))
     throw new Error("One or more amounts in the PDF is invalid.");
   return {kind:"gstr3b",summary:out,itcDetails,gstin:expectedGstin||gstins[0],period,
+    periodSource,periodConfirmationRequired,periodVerifiedInPdf:periodSource==="pdf",
     evidence:{outward:{table:"3.1(a)",page:outward.page,row:outward.row},
       itc:{table:"4(C) Net ITC Available",page:net.page,row:net.row}},
     records:2};
@@ -176,7 +252,7 @@ export async function readGstr3bPdf(file,expected={}){
   const bytes=await file.arrayBuffer();
   const loadingTask=pdfjs.getDocument({data:new Uint8Array(bytes)});
   try{
-    return await parseGstr3bPdfTask(loadingTask,expected);
+    return await parseGstr3bPdfTask(loadingTask,{...expected,filename:file.name});
   }catch(err){
     if(err?.name==="PasswordException"||/password/i.test(String(err?.message||"")))
       throw new Error("Password-protected PDFs cannot be read. Please export an unlocked filed return.");
