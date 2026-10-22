@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds build/InvoiceTotally-<version>-Setup.exe
+# Builds build/Vipul-Workplace-<version>-Setup.exe
 #   windows/build.sh <path to Windows node.exe>
 # Works on Linux (cross-compiles) and on Windows (Git Bash). Needs Go and python3/python (for zipping).
 set -euo pipefail
@@ -27,7 +27,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
             z.write(p, os.path.relpath(p, stage).replace(os.sep, "/"))
 PYEOF
 echo "$VERSION" > windows/setup/version.txt
-( cd windows && go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../build/InvoiceTotally-$VERSION-Setup.exe" ./setup )
+( cd windows && go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../build/Vipul-Workplace-$VERSION-Setup.exe" ./setup )
 # a console build of Setup for automated checks (--quiet prints instead of showing message boxes)
 ( cd windows && go build -trimpath -ldflags "-s -w" -o "../build/setup-console.exe" ./setup )
 ls -la build/*.exe
