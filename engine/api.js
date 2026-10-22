@@ -8,6 +8,7 @@ import { AI_CHOICES, AI_LABELS } from "./reader.js";
 import * as BK from "./bank.js";
 import * as EC from "./ecommerce.js";
 import * as GS from "./gstr2b.js";
+import * as G2BP from "./gstr2b-purchase.js";
 import * as SC from "./master-assist.js";
 import * as GC from "./gst-control.js";
 import * as DASH from "./dashboard.js";
@@ -670,6 +671,7 @@ BK.bankRoutes(route, { useCredit: useStatementCredit, requirePosting });
 EC.ecommerceRoutes(route, { requirePosting, requireLicence });
 // GSTR-2B reconciliation
 GS.gstRoutes(route);
+G2BP.purchase2bRoutes(route,{authorizeCompany,requirePosting});
 SC.smartRoutes(route,authorizeCompany);
 DASH.dashboardRoutes(route,requireLicence,authorizeCompany);
 GC.gstControlRoutes(route,authorizeCompany);

@@ -89,6 +89,18 @@ export const SCHEMA = [
     mid TEXT, level INTEGER DEFAULT 0, diffs TEXT, notes TEXT, method TEXT, remark TEXT)`,
   `CREATE INDEX IF NOT EXISTS ix_gst_docs ON gst_docs(return_id, seq)`,
   `CREATE INDEX IF NOT EXISTS ix_gst_docs_c ON gst_docs(company_id, mid)`,
+  `CREATE TABLE IF NOT EXISTS gstr2b_purchase_batches (
+    id TEXT PRIMARY KEY, company_id TEXT NOT NULL, return_id TEXT NOT NULL, period TEXT NOT NULL,
+    mapping TEXT DEFAULT '{}', created_at REAL NOT NULL, UNIQUE(company_id,return_id))`,
+  `CREATE INDEX IF NOT EXISTS ix_g2bp_batch_company ON gstr2b_purchase_batches(company_id, created_at)`,
+  `CREATE TABLE IF NOT EXISTS gstr2b_purchase_vouchers (
+    id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, company_id TEXT NOT NULL, doc_id TEXT NOT NULL,
+    source_key TEXT NOT NULL, seq INTEGER, date TEXT, period TEXT, supplier_name TEXT, supplier_gstin TEXT,
+    supplier_invoice TEXT, voucher_number TEXT, party_ledger TEXT,
+    taxable REAL, invoice REAL, igst REAL, cgst REAL, sgst REAL, cess REAL, round_off REAL,
+    status TEXT NOT NULL, error TEXT, posted_at REAL,
+    UNIQUE(company_id,source_key))`,
+  `CREATE INDEX IF NOT EXISTS ix_g2bp_vouchers_batch ON gstr2b_purchase_vouchers(batch_id,seq)`,
   `CREATE TABLE IF NOT EXISTS tally_gst_vouchers (
     company_id TEXT NOT NULL, mid TEXT, date TEXT, number TEXT, vtype TEXT, kind TEXT, ref TEXT, refdate TEXT, party TEXT, gstin TEXT,
     inv REAL, e TEXT, fetched_at REAL)`,
