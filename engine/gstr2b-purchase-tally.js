@@ -110,7 +110,7 @@ export function findExistingPurchase(row,rows){
 }
 export function parseExistingPurchases(xml){
   const src=String(xml||"");
-  if(!/<(ENVELOPE|COLLECTION|RESPONSE)\b/i.test(src)||/<LINEERROR>/i.test(src))
+  if(!/<COLLECTION\b/i.test(src)||/<LINEERROR>/i.test(src))
     throw new Error("Tally returned an invalid purchase-register response; posting blocked to prevent duplicates");
   const root=parseXml(src);
   if(!root)throw new Error("Unable to verify Tally purchase register");
