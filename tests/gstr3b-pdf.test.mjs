@@ -42,6 +42,7 @@ test("PDF import rejects another month, GSTIN, wrong document, missing table",()
  assert.throws(()=>parseGstr3bPdfPages(pdfRows(),{period:"2026-04",gstin:"27AAGCE8245C1ZP"}),/does not match/);
  assert.throws(()=>parseGstr3bPdfPages([{rows:["GSTR-1",...pdfRows()[0].rows.slice(1)]}],{period:"2026-04",gstin:GSTIN}),/GSTR-3B/);
  assert.throws(()=>parseGstr3bPdfPages([{rows:pdfRows()[0].rows.filter(x=>!x.includes("Net ITC Available"))}],{period:"2026-04",gstin:GSTIN}),/Table 4\(C\)/);
+ assert.throws(()=>parseGstr3bPdfPages([{rows:pdfRows()[0].rows.map(x=>x.includes("Net ITC Available")?"(C) Net ITC Available (A) - (B)":x)}],{period:"2026-04",gstin:GSTIN}),/Table 4\(C\)/);
  assert.throws(()=>parseGstr3bPdfPages([{rows:pdfRows()[0].rows.filter(x=>!x.includes("Return Period")&&!x.includes("Financial Year"))}],{period:"2026-04",gstin:GSTIN}),/return period/);
 });
 
