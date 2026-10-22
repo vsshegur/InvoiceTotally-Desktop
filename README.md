@@ -88,6 +88,35 @@ Every transaction is posted to the **suspense ledger** you choose — money in a
 Suspense to the right ledger in Tally. A transaction already posted from an earlier statement is marked
 *Posted earlier* and not posted again. Scanned or photographed statements can't be read (that would need AI).
 
+## GSTR-2B invoices → Tally Purchases (v3.7.0)
+
+Open a company's **Invoices** tab. It now has **1. Upload Invoices** (the original PDF/photo/Excel flow)
+and **2. Upload GSTR-2B**. The second option reads the official GST portal Excel or JSON
+locally or reuses a previously imported GSTR-2B return. It prepares individual **Purchase**
+vouchers in Tally's **Accounting Voucher View**, without stock items or guessed quantities.
+
+- The purchase base always uses the exact ledger **`PURCHASE-GSTR2B`**, under **Purchase Accounts**.
+  If missing, there is an explicitly approved *Create Ledger* action; wait for its Tally import.
+- A supplier must have a ledger under Sundry Creditors with the same GSTIN as the portal invoice.
+  Other supplier ledgers must be corrected in Tally and re-imported (or chosen if more than one matches).
+- Input IGST/CGST/SGST/Cess and Round Off each require an existing, explicitly mapped Tally ledger.
+  Supplier invoice number appears in **Reference** and bill allocation. The app generates a
+  separate stable Tally voucher number, and uses the **supplier invoice date** even when the
+  GSTR-2B filing month is later.
+- The preview shows the Purchase debit, Input GST debits, round off, supplier credit and total.
+  **Select** the invoices, tick both review confirmations, and approve posting. Up to 120 vouchers
+  can be queued per click. Posting is available only to licensed users with Tally write permission.
+- Matching/ineligible invoices, amendments, notes, reverse-charge and unusual/unbalanced amounts
+  are **blocked for review**, not silently turned into ordinary Purchase entries.
+- Every queued voucher is checked **again against live Tally purchases** before sending XML,
+  including supplier invoice reference, GSTIN and voucher number. A duplicate is not posted.
+  An uncertain Tally response or restart requires a fresh *Recheck* and explicit approval
+  before retrying. No posting is automatic on upload.
+
+The importer neither creates stock quantities nor infers freight/discount/HSN from GSTR-2B.
+If your accounts depend on inventory or invoice-specific charges, use **Upload Invoices** instead.
+Always verify tax/accounting classification and original bills before posting.
+
 ## Offline Meesho / Flipkart → Tally (v3.4)
 
 Open a company's **E-Commerce → Tally** tab. Choose the month and upload **.xlsx** reports:
