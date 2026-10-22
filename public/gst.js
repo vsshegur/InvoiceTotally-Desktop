@@ -54,15 +54,16 @@ async function gstReadFile(file, GP) {
   throw new Error(`${file.name}: choose the JSON or Excel file downloaded from the GST portal`);
 }
 
-async function viewGstUpload(cid) {
+async function viewGstUpload(cid,mode="reconcile") {
+  const purchaseMode=mode==="purchase";
   const [c, existing, { parse: GP }] = await Promise.all([api(`/companies/${cid}`), api(`/companies/${cid}/gstr2b`), GstLib()]);
   const st = { items: [], error: "" };
   const months = (() => { const out = []; const d = new Date(); d.setDate(1); for (let i = 0; i < 24; i++) { out.push(d.toISOString().slice(0, 7)); d.setMonth(d.getMonth() - 1); } return out; })();
   const render = () => {
     const ready = st.items.length && st.items.every((x) => x.period && x.docs.length);
-    app().innerHTML = topBar([[c.name, `#/c/${cid}/gstr2b`], ["Upload GSTR-2B"]], c) + `<div class="bar"><span class="status"></span><div class="spacer"></div>
-      <a class="btn" href="#/c/${cid}/gstr2b">Back <kbd>Esc</kbd></a><button class="btn primary" id="go" ${ready ? "" : "disabled"}>Match with Tally <kbd>↵</kbd></button></div>
-    <div class="page wiz"><div class="eyebrow">GSTR-2B reconciliation</div><h1>${esc(c.name)}</h1>
+    app().innerHTML = topBar([[c.name, purchaseMode ? `#/c/${cid}/gstr2b-purchase` : `#/c/${cid}/gstr2b`], ["Upload GSTR-2B"]], c) + `<div class="bar"><span class="status"></span><div class="spacer"></div>
+      <a class="btn" href="#/c/${cid}/${purchaseMode?"gstr2b-purchase":"gstr2b"}">Back <kbd>Esc</kbd></a><button class="btn primary" id="go" ${ready ? "" : "disabled"}>${purchaseMode?"Prepare Purchase vouchers":"Match with Tally"} <kbd>↵</kbd></button></div>
+    <div class="page wiz"><div class="eyebrow">${purchaseMode?"Purchase vouchers from GSTR-2B":"GSTR-2B reconciliation"}</div><h1>${esc(c.name)}</h1>
       <div class="wstep active"><div class="head"><span class="n">1</span><b>Download GSTR-2B from the GST portal</b></div>
         <p class="muted" style="margin:8px 0 0;font-size:13px">gst.gov.in → <b>Services → Returns → Returns Dashboard</b> → pick the financial year and month → <b>GSTR-2B → View → Download</b> (JSON or Excel; a .zip works too).</p></div>
       <div class="wstep active"><div class="head"><span class="n">2</span><b>Drop the file here</b></div>
@@ -113,17 +114,21 @@ async function viewGstUpload(cid) {
     let last = null;
     try {
       for (const x of st.items) {
-        for (const old of existing.filter((r) => r.period === x.period)) await api(`/gstr2b/${old.id}`, { method: "DELETE" });
+        if(!purchaseMode)for (const old of existing.filter((r) => r.period === x.period)) await api(`/gstr2b/${old.id}`, { method: "DELETE" });
         status.textContent = `Saving ${GP.periodLabel(x.period)}…`;
         const r = await api(`/companies/${cid}/gstr2b`, { body: { period: x.period, gstin: x.gstin, kind: x.kind, filename: x.filename, source: x.source, gendt: x.gendt, rejected: x.rejected } });
         for (let i = 0; i < x.docs.length; i += 500) await api(`/gstr2b/${r.id}/docs`, { body: { part: i / 500, docs: x.docs.slice(i, i + 500) } });
         await api(`/gstr2b/${r.id}/start`, { body: {} });
         last = r.id;
       }
-      location.hash = st.items.length === 1 ? `#/g/${last}` : `#/c/${cid}/gstr2b`;
+      if(purchaseMode&&st.items.length===1){
+        const result=await api("/companies/"+cid+"/gstr2b-purchases/prepare",{body:{return_id:last}});
+        location.hash="#/p2b/"+result.id;
+      }else if(purchaseMode)location.hash="#/c/"+cid+"/gstr2b-purchase";
+      else location.hash = st.items.length === 1 ? `#/g/${last}` : `#/c/${cid}/gstr2b`;
     } catch (e) { toast(e.message, true); busy = false; render(); }
   };
-  keymap.Escape = () => location.hash = `#/c/${cid}/gstr2b`;
+  keymap.Escape = () => location.hash = purchaseMode ? `#/c/${cid}/gstr2b-purchase` : `#/c/${cid}/gstr2b`;
   keymap.enter = () => go();
   render();
 }
