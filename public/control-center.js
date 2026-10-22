@@ -270,7 +270,8 @@ async function companyGstControl(c,el){
         (ordered.length>500?'<p class="muted small">Showing first 500 invoices; totals above include all checked invoices.</p>':"")+
         '</details>';
     })():'')+
-    '<p class="muted small">GST control is a reconciliation aid, not an official filing or legal ITC determination. Unclassified stock/sales ledgers and unusual journals must be reviewed by your accountant.</p>';
+    '<p class="muted small">GST control is a reconciliation aid, not an official filing or legal ITC determination. Unclassified stock/sales ledgers and unusual journals must be reviewed by your accountant.</p>'+
+    '<section id="vwGstSuite"></section>';
   $$("[data-json]",el).forEach(input=>input.onchange=async()=>{
     const file=input.files?.[0],kind=input.dataset.json;
     if(!file)return;
@@ -334,4 +335,5 @@ async function companyGstControl(c,el){
     try{await api("/companies/"+c.id+"/gst-control/"+period+"/reconcile",{body:{}});toast("GST comparison updated");companyGstControl(c,el);}
     catch(e){toast(e.message,true);btn.disabled=false;}
   };
+  GSTWorkplace.mount(c,period,el);
 }
