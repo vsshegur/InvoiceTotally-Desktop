@@ -12,7 +12,7 @@ const entry=([name,amount])=>
 function voucher(mid,number,date,party,gstin,items,entries){
   return '<VOUCHER><MASTERID>'+mid+'</MASTERID><DATE>'+date+'</DATE>'+
     '<VOUCHERNUMBER>'+number+'</VOUCHERNUMBER><VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>'+
-    '<PARTYLEDGERNAME>'+esc(party)+'</PARTYGSTIN>'+gstin+'</PARTYGSTIN>'+
+    '<PARTYLEDGERNAME>'+esc(party)+'</PARTYLEDGERNAME><PARTYGSTIN>'+gstin+'</PARTYGSTIN>'+
     items.map(amount=>'<ALLINVENTORYENTRIES.LIST><AMOUNT>'+amount+'</AMOUNT></ALLINVENTORYENTRIES.LIST>').join("")+
     entries.map(entry).join("")+'</VOUCHER>';
 }
