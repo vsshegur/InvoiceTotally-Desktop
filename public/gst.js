@@ -83,7 +83,7 @@ async function viewGstUpload(cid,mode="reconcile") {
             ${x.period ? "" : `<div class="field" style="margin-top:10px;max-width:260px"><label>Which month is this GSTR-2B for?</label><select class="in" data-period="${i}"><option value="">Choose…</option>${months.map((m) => `<option value="${m}">${GP.periodLabel(m)}</option>`).join("")}</select></div>`}
             ${!x.docs.length ? `<div class="alert warn" style="margin-top:10px">No invoices found in this file.</div>` : ""}
             ${other ? `<div class="alert warn" style="margin-top:10px">This GSTR-2B is for GSTIN <b>${esc(x.gstin)}</b>, but ${esc(c.name)} is set up with <b>${esc(c.gstin)}</b>. Check that it's the right company.</div>` : ""}
-            ${dup ? `<div class="alert warn" style="margin-top:10px">${esc(GP.periodLabel(x.period))} is already here (uploaded ${ago(dup.created_at)}). The older one is replaced; decisions you made there are not carried over.</div>` : ""}
+            ${dup ? `<div class="alert warn" style="margin-top:10px">${esc(GP.periodLabel(x.period))} is already here (uploaded ${ago(dup.created_at)}). ${purchaseMode?"This upload will be saved separately; previously prepared Purchase batches and reconciliation decisions are retained.":"The older one is replaced; decisions you made there are not carried over."}</div>` : ""}
             ${x.rejected ? `<div class="muted" style="font-size:12.5px;margin-top:8px">${x.rejected} document(s) you rejected on the IMS dashboard are left out.</div>` : ""}</div>`;
         }).join("")}
       </div></div>`;
@@ -108,6 +108,7 @@ async function viewGstUpload(cid,mode="reconcile") {
   let busy = false;
   const go = async () => {
     if (busy || !st.items.length || !st.items.every((x) => x.period && x.docs.length)) return;
+    if(purchaseMode&&st.items.some(x=>x.kind!=="GSTR-2B"||!x.gstin||x.gstin.toUpperCase()!==String(c.gstin||"").toUpperCase()))return toast("Only GSTR-2B files matching the selected company GSTIN can create Purchase vouchers.",true);
     busy = true;
     const btn = $("#go"), status = $(".bar .status");
     btn.disabled = true; btn.textContent = "Saving…";
