@@ -27,7 +27,7 @@ func message(text string) {
 	u := syscall.NewLazyDLL("user32.dll")
 	p := u.NewProc("MessageBoxW")
 	t, _ := syscall.UTF16PtrFromString(text)
-	h, _ := syscall.UTF16PtrFromString("InvoiceTotally")
+	h, _ := syscall.UTF16PtrFromString("Vipul Workplace")
 	p.Call(0, uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(h)), 0x30)
 }
 
@@ -89,7 +89,7 @@ func main() {
 			cmd.Stdout, cmd.Stderr = logf, logf
 		}
 		if err := cmd.Start(); err != nil {
-			message("InvoiceTotally could not start:\n\n" + err.Error() + "\n\nTry installing it again.")
+			message("Vipul Workplace could not start:\n\n" + err.Error() + "\n\nTry installing it again.")
 			return
 		}
 		started = true
@@ -107,7 +107,7 @@ func main() {
 			if len(tail) > 600 {
 				tail = tail[len(tail)-600:]
 			}
-			message("InvoiceTotally did not start.\n\n" + tail + "\n\nDetails are in " + filepath.Join(data, "logs"))
+			message("Vipul Workplace did not start.\n\n" + tail + "\n\nDetails are in " + filepath.Join(data, "logs"))
 			_ = cmd.Process.Kill()
 			return
 		}
@@ -130,7 +130,7 @@ func main() {
 	}
 	win := exec.Command(b, args...)
 	if err := win.Start(); err != nil {
-		message("Could not open the InvoiceTotally window:\n\n" + err.Error())
+		message("Could not open the Vipul Workplace window:\n\n" + err.Error())
 		return
 	}
 	_ = started
