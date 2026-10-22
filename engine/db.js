@@ -107,6 +107,8 @@ export const SCHEMA = [
     portal_gstr3b TEXT, tally_sales TEXT, tally_purchases TEXT, result TEXT, reviewed_at REAL, updated_at REAL,
     UNIQUE(company_id, period))`,
   `CREATE INDEX IF NOT EXISTS ix_gst_control_company ON gst_control(company_id, period)`,
+  `CREATE TABLE IF NOT EXISTS gst_ledger_rules (company_id TEXT NOT NULL, ledger_name TEXT NOT NULL, role TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(company_id,ledger_name))`,
+  `CREATE INDEX IF NOT EXISTS ix_gst_ledger_rules_company ON gst_ledger_rules(company_id)`,
   `CREATE TABLE IF NOT EXISTS activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id TEXT, invoice_id TEXT, message TEXT, at REAL)`,
   `CREATE INDEX IF NOT EXISTS ix_activity ON activity(batch_id, invoice_id)`,
