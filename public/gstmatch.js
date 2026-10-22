@@ -26,51 +26,87 @@ export function taxHead(name) {
 }
 
 /** ledgers: masters rows [{name, parent, primary_group, gstin}] → helpers to read Tally vouchers. */
+const normLedger = s => String(s || "").toLowerCase().replace(/\s+/g," ").trim();
+const adjustmentKind = name => {
+  const n=normLedger(name);
+  if(/round[ -]?off|rounding/.test(n))return "round_off";
+  if(/discount|rebate|cash disc|trade disc/.test(n))return "discount";
+  if(/freight|cartage|carriage|transport|shipping|courier|delivery charge|forwarding/.test(n))return "freight";
+  if(/packing|handling|loading|hamali|insurance charge/.test(n))return "other_charge";
+  return null;
+};
+/** Read Tally purchase vouchers without counting item amounts again in the purchase ledger. */
 export function buildBooks(rows, ledgers = []) {
-  const byName = new Map(ledgers.map((l) => [l.name, l]));
+  const byName = new Map(ledgers.map(l => [normLedger(l.name),l]));
   const head = new Map();
   const isTax = (name) => {
-    if (head.has(name)) return head.get(name);
-    const l = byName.get(name);
-    const g = `${l?.primary_group || ""} ${l?.parent || ""}`;
-    const h = taxHead(name);
-    // with masters: only Duties & Taxes ledgers; without: the name has to say GST / tax
-    const ok = h && (l ? /duties|tax/i.test(g) : /gst|tax|cess/i.test(name)) && !/tds|tcs/i.test(name);
-    head.set(name, ok ? h : null);
-    return ok ? h : null;
+    const key=normLedger(name);
+    if(head.has(key))return head.get(key);
+    const l=byName.get(key);
+    const group=`${l?.primary_group||""} ${l?.parent||""}`;
+    const h=taxHead(name);
+    const ok=h&&(l?/duties|tax/i.test(group):/gst|tax|cess/i.test(name))&&!/tds|tcs/i.test(name);
+    head.set(key,ok?h:null);
+    return ok?h:null;
   };
-  const out = [];
-  for (const v of rows) {
-    const e = Array.isArray(v.e) ? v.e : [];
-    // purchases / journals / payments: input tax is a debit (negative in Tally XML);
-    // a debit note (purchase return) turns it round.
-    const sign = v.kind === "dn" ? 1 : -1;
-    const t = { igst: 0, cgst: 0, sgst: 0, cess: 0 };
-    let party = v.party || "", value = 0, other = 0;
-    for (const [name, amt] of e) {
-      const h = isTax(name);
-      if (h) { if (amt * sign > 0) t[h] += amt * sign; continue; }
-      if (party && name === party) { value += Math.abs(amt); continue; }
-      if (/round/i.test(name)) continue;
-      if (amt * sign > 0) other += amt * sign;
+  const out=[];
+  for(const v of rows){
+    const e=Array.isArray(v.e)?v.e:[];
+    // The debit side of a purchase is negative in Tally XML; returns reverse it.
+    const sign=v.kind==="dn"?1:-1;
+    const t={igst:0,cgst:0,sgst:0,cess:0};
+    let party=v.party||"",value=0,purchaseLedger=0,unmappedBase=0,adjustments=0,roundOff=0;
+    const adjustmentLines=[],unclassified=[];
+    for(const [name,raw] of e){
+      const amount=Number(raw)||0,signed=amount*sign;
+      if(Math.abs(amount)<0.005)continue;
+      const h=isTax(name);
+      if(h){if(signed>0)t[h]+=signed;continue;}
+      if(party&&normLedger(name)===normLedger(party)){value+=Math.abs(amount);continue;}
+      const m=byName.get(normLedger(name));
+      const group=normLedger(m?.primary_group||m?.parent);
+      const kind=adjustmentKind(name);
+      if(kind==="round_off"){roundOff+=signed;continue;}
+      // A freight / discount ledger can itself be under Purchase Accounts.
+      // Classify it before handling the ordinary purchase allocation.
+      if(!kind&&group==="purchase accounts"){purchaseLedger+=signed;continue;}
+      // Explicit voucher-level discount/freight/packing lines are the only extra
+      // amounts added to a stock invoice; unknown accounting allocations are not
+      // silently added over the inventory value.
+      if(kind){
+        adjustments+=signed;
+        adjustmentLines.push({name,amount:r2(signed),kind});
+        continue;
+      }
+      if(signed>0){
+        unmappedBase+=signed;
+        unclassified.push({name,amount:r2(signed)});
+      }
     }
-    if (!party || !value) {
-      // no party line (journal): the biggest line on the other side is the supplier
-      const cand = e.filter(([n, a]) => !isTax(n) && a * sign < 0).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
-      if (cand) { party = party || cand[0]; value = value || Math.abs(cand[1]); }
+    if(!party||!value){
+      const cand=e.filter(([n,a])=>!isTax(n)&&Number(a)*sign<0)
+        .sort((a,b)=>Math.abs(Number(b[1]))-Math.abs(Number(a[1])))[0];
+      if(cand){party=party||cand[0];value=value||Math.abs(Number(cand[1]));}
     }
-    const taxable = r2(Math.abs(v.inv || 0) + other);
-    const gstin = String(v.gstin || byName.get(party)?.gstin || "").toUpperCase();
-    const tax = r2(t.igst + t.cgst + t.sgst + t.cess);
+    const inventory=r2(Math.abs(Number(v.inv)||0));
+    const hasInventory=inventory>0.005;
+    const base=hasInventory?inventory:Math.abs(purchaseLedger)>0.005?purchaseLedger:unmappedBase;
+    const source=hasInventory?"inventory":Math.abs(purchaseLedger)>0.005?"purchase_ledger":"other_debit_ledgers";
+    const taxable=r2(base+adjustments);
+    const gstin=String(v.gstin||byName.get(normLedger(party))?.gstin||"").toUpperCase();
+    for(const k of HEADS)t[k]=r2(t[k]);
+    const tax=r2(t.igst+t.cgst+t.sgst+t.cess);
     out.push({
-      id: String(v.mid || `${v.date}|${v.number}`), mid: v.mid, date: v.date, number: v.number, vtype: v.vtype, kind: v.kind || "inv",
-      num: String(v.ref || v.number || "").trim(), refFromNumber: !v.ref, dt: v.refdate || v.date, party, gstin,
-      igst: r2(t.igst), cgst: r2(t.cgst), sgst: r2(t.sgst), cess: r2(t.cess), tax, txval: taxable, val: r2(value || taxable + tax),
+      id:String(v.mid||`${v.date}|${v.number}`),mid:v.mid,date:v.date,number:v.number,vtype:v.vtype,kind:v.kind||"inv",
+      num:String(v.ref||v.number||"").trim(),refFromNumber:!v.ref,dt:v.refdate||v.date,party,gstin,
+      ...t,tax,txval:taxable,val:r2(value||taxable+tax),
+      breakdown:{base:r2(base),source,inventory,purchase_ledger:r2(purchaseLedger),
+        adjustments:r2(adjustments),round_off:r2(roundOff),taxable,
+        adjustment_lines:adjustmentLines,unclassified:hasInventory?unclassified:[]}
     });
   }
   return out;
 }
-
 const days = (a, b) => (a && b ? Math.round(Math.abs(Date.parse(a) - Date.parse(b)) / 864e5) : 0);
 const normName = (s) => String(s || "").toLowerCase().replace(/\b(m\/s|the|pvt|private|ltd|limited|llp|co|company|and|&)\b|[^a-z0-9]/g, "");
 
@@ -87,12 +123,15 @@ export function compare(d, b, tol = 1) {
   const diffs = [];
   for (const h of HEADS) if (Math.abs((d[h] || 0) - (b[h] || 0)) > tol) diffs.push({ field: h, b2b: d[h] || 0, books: b[h] || 0 });
   const taxGap = Math.abs(totals(d) - b.tax);
+  if(Number.isFinite(Number(d.txval))&&Number.isFinite(Number(b.txval))&&
+    Math.abs(Number(d.txval)-Number(b.txval))>tol)
+    diffs.push({field:"txval",b2b:r2(d.txval),books:r2(b.txval)});
   // invoice value: 2B "val" is the full invoice; small round-off is normal
   if (d.val && b.val && Math.abs(d.val - b.val) > Math.max(tol, 1)) diffs.push({ field: "val", b2b: d.val, books: b.val });
   // tax put under the wrong head (IGST in 2B, CGST+SGST in Tally)
   const wrongHead = taxGap <= tol && diffs.some((x) => HEADS.includes(x.field));
   const dateGap = days(d.dt, b.dt);
-  const ok = !diffs.some((x) => HEADS.includes(x.field)) && !diffs.some((x) => x.field === "val" && Math.abs(x.b2b - x.books) > Math.max(tol, 10));
+  const ok = !diffs.some(x=>HEADS.includes(x.field)||x.field==="txval") && !diffs.some((x) => x.field === "val" && Math.abs(x.b2b - x.books) > Math.max(tol, 10));
   const score = level * 1000 - taxGap - Math.min(60, dateGap) / 10;
   return { level, diffs, ok, wrongHead, score, taxGap, dateGap };
 }
@@ -195,6 +234,7 @@ export function summarize(docs, results, booksOnly, byMid) {
     if (r.mid && byMid?.get(r.mid)) add(s.books, byMid.get(r.mid), byMid.get(r.mid).kind === "dn" ? -1 : 1);
   }
   for (const b of booksOnly) { add(s.booksOnly, b, b.kind === "dn" ? -1 : 1); add(s.books, b, b.kind === "dn" ? -1 : 1); }
+  s.calculation_version=2;
   return s;
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "invoicetotally-desktop",
-  "version": "3.5.2",
+  "version": "3.5.3",
   "private": true,
   "type": "module",
   "description": "InvoiceTotally for Windows: reads invoices with AI and posts them straight to TallyPrime. One app, no connector.",
