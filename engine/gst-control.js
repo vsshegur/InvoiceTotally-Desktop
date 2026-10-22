@@ -305,6 +305,7 @@ export async function refreshTally(D,env,cid,period){
   if(!masters.length)throw new GstControlError("Import Tally ledgers first");
   const saleVouchers=TL.purchaseGstRows(rawSales);
   const sales=tallyTotals(saleVouchers,masters,"sales");
+  sales.calculation_version=2; // cached evidence must be refreshed after adjustment-logic upgrades
   sales.docs=salesDocs(saleVouchers,masters);
   const purchases=tallyTotals(TL.purchaseGstRows(rawPurchases),masters,"purchases");
   await D.batch([
@@ -316,8 +317,13 @@ export async function refreshTally(D,env,cid,period){
 }
 export async function reconcile(D,cid,period){
   const row=await current(D,cid,period),b2b=await gstr2bTotals(D,cid,period);
-  const result=compareGst({gstr1:row.portal_gstr1,gstr3b:row.portal_gstr3b,sales:row.tally_sales,
+  // Old cached sales amounts were calculated without voucher-level discounts or freight.
+  // Do not present an old false mismatch as a new reconciliation before Tally is re-read.
+  const staleSales=row.tally_sales&&row.tally_sales.calculation_version!==2;
+  const sales=staleSales?{...row.tally_sales,taxable:null,docs:null}:row.tally_sales;
+  const result=compareGst({gstr1:row.portal_gstr1,gstr3b:row.portal_gstr3b,sales,
     purchases:row.tally_purchases,gstr2b:b2b});
+  if(staleSales)result.warnings.unshift("Sales were last read with old discount/freight logic. Click Read Tally sales & purchases, then Compare all three returns.");
   await D.run("UPDATE gst_control SET result=?,reviewed_at=? WHERE company_id=? AND period=?",JSON.stringify(result),now(),cid,period);
   return { ...row, result,gstr2b:b2b };
 }
