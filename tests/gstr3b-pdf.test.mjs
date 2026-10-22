@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {parseGstr3bPdfPages,parseGstr3bPdfTask,releaseGstr3bPdf} from "../public/gstr3b-pdf.js";
+import {parseGstr3bPdfPages,parseGstr3bPdfTask,releaseGstr3bPdf,detectGstr3bFilenamePeriod} from "../public/gstr3b-pdf.js";
 import fs from "node:fs";
 
 const GSTIN="27ACKPS3168H1Z6";
@@ -43,7 +43,10 @@ test("PDF import rejects another month, GSTIN, wrong document, missing table",()
  assert.throws(()=>parseGstr3bPdfPages([{rows:["GSTR-1",...pdfRows()[0].rows.slice(1)]}],{period:"2026-04",gstin:GSTIN}),/GSTR-3B/);
  assert.throws(()=>parseGstr3bPdfPages([{rows:pdfRows()[0].rows.filter(x=>!x.includes("Net ITC Available"))}],{period:"2026-04",gstin:GSTIN}),/Table 4\(C\)/);
  assert.throws(()=>parseGstr3bPdfPages([{rows:pdfRows()[0].rows.map(x=>x.includes("Net ITC Available")?"(C) Net ITC Available (A) - (B)":x)}],{period:"2026-04",gstin:GSTIN}),/Table 4\(C\)/);
- assert.throws(()=>parseGstr3bPdfPages([{rows:pdfRows()[0].rows.filter(x=>!x.includes("Return Period")&&!x.includes("Financial Year"))}],{period:"2026-04",gstin:GSTIN}),/return period/);
+ const unknown=parseGstr3bPdfPages([{rows:pdfRows()[0].rows.filter(x=>!x.includes("Return Period")&&!x.includes("Financial Year"))}],{period:"2026-04",gstin:GSTIN});
+ assert.equal(unknown.period,"2026-04");
+ assert.equal(unknown.periodSource,"selected-month");
+ assert.equal(unknown.periodConfirmationRequired,true);
 });
 
 test("offline PDF parser handles two-page documents and financial-year period resolution",()=>{
@@ -118,4 +121,59 @@ test("GSTR-3B PDF releases loading task when opening the document fails",async()
   };
   await assert.rejects(()=>parseGstr3bPdfTask(task),/not readable/);
   assert.equal(closed,1);
+});
+
+
+test("GST portal compact filename _042026 identifies April 2026 and requires confirmation if PDF text omits month",()=>{
+ assert.equal(detectGstr3bFilenamePeriod("GSTR3B_27ACKPS3168H1Z6_042026.pdf"),"2026-04");
+ assert.equal(detectGstr3bFilenamePeriod("GSTR3B_27ACKPS3168H1Z6_2026-04.pdf"),"2026-04");
+ assert.equal(detectGstr3bFilenamePeriod("gstr3b_27ACKPS3168H1Z6_Apr2026.pdf"),"2026-04");
+ assert.equal(detectGstr3bFilenamePeriod("other_file.pdf"),"");
+ const pages=pdfRows();
+ pages[0].rows=pages[0].rows.filter(x=>!x.includes("Return Period")&&!x.includes("Financial Year"));
+ const x=parseGstr3bPdfPages(pages,{period:"2026-04",gstin:GSTIN,
+   filename:"GSTR3B_27ACKPS3168H1Z6_042026.pdf"});
+ assert.equal(x.period,"2026-04");
+ assert.equal(x.periodSource,"filename");
+ assert.equal(x.periodConfirmationRequired,true);
+ assert.equal(x.periodVerifiedInPdf,false);
+ assert.equal(x.summary.taxable,123450.5);
+});
+
+test("Wrong GSTR-3B PDF filename or visible PDF month cannot bypass month mismatch",()=>{
+ const pages=pdfRows();
+ pages[0].rows=pages[0].rows.filter(x=>!x.includes("Return Period")&&!x.includes("Financial Year"));
+ assert.throws(()=>parseGstr3bPdfPages(pages,{period:"2026-05",gstin:GSTIN,
+   filename:"GSTR3B_27ACKPS3168H1Z6_042026.pdf"}),/Filename indicates return period 2026-04/);
+ assert.throws(()=>parseGstr3bPdfPages(pdfRows(),{period:"2026-05",gstin:GSTIN,
+   filename:"GSTR3B_27ACKPS3168H1Z6_052026.pdf"}),/PDF return period 2026-04/);
+});
+
+test("Alternate GSTR-3B return-period formats use authoritative PDF month",()=>{
+ for(const [date,period] of [
+  ["Tax Period : 04/2026","2026-04"],
+  ["Return Period : 04.2026","2026-04"],
+  ["Return Period : 042026","2026-04"],
+  ["Filing Period : April 2026","2026-04"],
+  ["Return for Apr 2026","2026-04"],
+  ["Return Period : 2026-April","2026-04"],
+  ["Return Period : 2026/04","2026-04"],
+  ["Financial Year : 2025-26 Return Period: March","2026-03"]
+ ]){
+  const rows=pdfRows(date);
+  rows[0].rows[2]="Financial Year : 2025-26";
+  const result=parseGstr3bPdfPages(rows,{period,gstin:GSTIN,
+    filename:"GSTR3B_27ACKPS3168H1Z6_042026.pdf"});
+  assert.equal(result.period,period,date);
+  assert.equal(result.periodSource,"pdf",date);
+  assert.equal(result.periodConfirmationRequired,false,date);
+ }
+});
+
+test("GSTR-3B PDF UI requires explicit human confirmation for filename/selected-month inference",()=>{
+ const text=fs.readFileSync(new URL("../public/control-center.js",import.meta.url),"utf8");
+ assert.match(text,/pendingPdfPeriodConfirmation/);
+ assert.match(text,/ccConfirmGstr3bPeriod/);
+ assert.match(text,/confirmedByUser/);
+ assert.match(text,/return month was not readable/i);
 });
