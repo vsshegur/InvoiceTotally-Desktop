@@ -219,6 +219,108 @@ function salesDocs(vouchers,masters){
       ...Object.fromEntries(taxHeads.map(k=>[k,amounts[k]])),breakdown:amounts.breakdown};
   }).filter(v=>v.number&&v.gstin).slice(0,20000);
 }
+// Inward voucher evidence for explaining which individual CGST/SGST/IGST
+// entries make up the Tally monthly total. Uses precisely the same tax-head
+// detection / debit sign as tallyTotals(..., "purchases").
+function purchaseDocs(vouchers,masters){
+  const lookup=new Map(masters.map(m=>[normName(m.name),m]));
+  return vouchers.filter(v=>/purchase|debit note|credit note/i.test(v.vtype)).map(v=>{
+    const amounts={igst:0,cgst:0,sgst:0,cess:0};
+    for(const [name,raw] of v.e||[]){
+      const ledger=lookup.get(normName(name));
+      const group=normName(ledger?.primary_group||ledger?.parent);
+      const head=taxHead(name);
+      if(head&&(/duties|tax/.test(group)||/\bgst\b/.test(normName(name))))
+        amounts[head]-=Number(raw)||0;
+    }
+    return {mid:String(v.mid||""),number:String(v.number||""),num:String(v.ref||v.number||""),
+      date:v.date||"",supplier_date:v.refdate||v.date||"",party:v.party||"",
+      gstin:String(v.gstin||lookup.get(normName(v.party))?.gstin||"").toUpperCase(),
+      ...Object.fromEntries(taxHeads.map(k=>[k,r2(amounts[k])]))};
+  }).filter(v=>v.number).slice(0,20000);
+}
+// Keep a transparent source trail; a 3B summary cannot prove which single
+// invoice explains an adjustment made in the return.
+export function explainItcDifferences(gstr2b,purchases,gstr3b,tol=1){
+  const docs=(gstr2b?.evidence||[]).filter(x=>x.eligible);
+  const books=purchases?.docs||[];
+  const complete=Boolean(gstr2b&&!gstr2b.evidence_truncated&&Array.isArray(purchases?.docs));
+  const result={complete,return_id:gstr2b?.return_id||null,
+    message:"GSTR-2B is grouped by filing month; Tally purchases below are grouped by voucher date. GSTR-3B is a claim summary, so a 2B-to-3B gap cannot be assigned to an individual invoice from the summary alone.",
+    heads:{}};
+  for(const head of taxHeads){
+    const signed=x=>r2(Number(x[head])||0);
+    const eligible=docs.filter(x=>Math.abs(signed(x))>0.005);
+    const monthly=books.filter(x=>Math.abs(signed(x))>0.005);
+    // Pair only reliable supplier-GSTIN + normalised invoice-number matches,
+    // or the explicit voucher link saved by the GSTR-2B panel.
+    const used=new Set(),pairs=[],portalOnly=[];
+    const allBooks=new Map(books.map((b,i)=>[i,b]));
+    for(const d of docs){
+      const key=invoiceKey(d.num);
+      let found=-1;
+      if(d.mid)found=books.findIndex((b,i)=>!used.has(i)&&b.mid&&b.mid===d.mid);
+      if(found<0&&key&&d.ctin)
+        found=books.findIndex((b,i)=>!used.has(i)&&b.gstin===d.ctin&&invoiceKey(b.num)===key);
+      if(found>=0){
+        used.add(found);pairs.push({portal:d,book:allBooks.get(found)});
+      }else if(Math.abs(signed(d))>0.005)portalOnly.push(d);
+    }
+    const bookOnly=books.filter((b,i)=>!used.has(i)&&Math.abs(signed(b))>0.005);
+    const residual=pairs.filter(({portal,book})=>Math.abs(r2(signed(book)-signed(portal)))>tol);
+    const sum=list=>r2(list.reduce((n,x)=>n+signed(x),0));
+    const totalOutside=sum(portalOnly);
+    const totalBooksOnly=sum(bookOnly);
+    const totalPaired=r2(pairs.reduce((n,x)=>n+signed(x.book)-signed(x.portal),0));
+    const delta=r2(totalBooksOnly-totalOutside+totalPaired);
+    const portalLines=eligible.map(d=>({
+      num:d.num,party:d.name,gstin:d.ctin,date:d.dt,booked_date:d.tally_date||"",
+      tally_voucher:d.tally_number||"",section:d.sec,status:d.status,
+      note:d.note||"",value:signed(d),source:"GSTR-2B",
+      reason:d.tally_date&&d.tally_date.slice(0,7)!==gstr2b.period?
+        "Matched in GSTR-2B, but Tally voucher is dated outside the selected return month":
+        "Eligible GST in imported GSTR-2B"
+    })).sort((a,b)=>Math.abs(b.value)-Math.abs(a.value));
+    const unpairedPortal=portalOnly.map(d=>({
+      num:d.num,party:d.name,gstin:d.ctin,date:d.dt,booked_date:d.tally_date||"",
+      tally_voucher:d.tally_number||"",value:r2(-signed(d)),source:"GSTR-2B only",
+      reason:d.tally_date&&d.tally_date.slice(0,7)!==gstr2b.period?
+        "Linked Tally voucher is booked in "+d.tally_date.slice(0,7)+", outside this month's Tally purchase total":
+        "No reliable GSTIN + invoice match in this month's Tally purchases (it may be booked in another month)"
+    }));
+    const unpairedBooks=bookOnly.map(b=>({
+      num:b.num,party:b.party,gstin:b.gstin,date:b.date,
+      tally_voucher:b.number,value:signed(b),source:"Tally only",
+      reason:"Tally purchase GST for this month not matched to an eligible invoice in this GSTR-2B"
+    }));
+    const changed=residual.map(({portal,book})=>({
+      num:portal.num,party:portal.name,gstin:portal.ctin,date:book.date,
+      tally_voucher:book.number,value:r2(signed(book)-signed(portal)),source:"Tax head mismatch",
+      reason:head.toUpperCase()+" differs for the same supplier invoice"
+    }));
+    const portTotal=gstr2b?.itc?.[head]??null;
+    const tallyTotal=purchases?.[head]??null;
+    const declared=gstr3b?.["itc"+head[0].toUpperCase()+head.slice(1)]??null;
+    result.heads[head]={
+      gstr2b:portTotal,tally:tallyTotal,gstr3b:declared,
+      books_vs_2b:tallyTotal==null||portTotal==null?null:r2(tallyTotal-portTotal),
+      gstr2b_vs_3b:declared==null||portTotal==null?null:r2(portTotal-declared),
+      eligible_count:eligible.length,eligible_total:sum(eligible),
+      eligible_lines:portalLines.slice(0,120),
+      tally_only_count:unpairedBooks.length,tally_only_total:totalBooksOnly,
+      portal_only_count:unpairedPortal.length,portal_only_total:totalOutside,
+      matched_difference_count:residual.length,matched_difference_total:totalPaired,
+      books_vs_2b_explained_delta:delta,
+      evidence_lines:[...unpairedPortal,...unpairedBooks,...changed]
+        .sort((a,b)=>Math.abs(b.value)-Math.abs(a.value)).slice(0,160)
+    };
+  }
+  if(!gstr2b)result.message="Import GSTR-2B for the selected month to trace the GST differences.";
+  else if(!purchases?.docs)result.message+=" Read Tally sales & purchases again to get invoice-level purchase evidence.";
+  else if(gstr2b.evidence_truncated)result.message+=" Portal evidence is truncated: totals are correct, but not all invoices are displayed.";
+  return result;
+}
+
 export function compareGst({gstr1,gstr3b,sales,purchases,gstr2b},tol=1){
   const compare=(actual,expected,keys=heads)=>Object.fromEntries(keys.map(k=>[k,diff(actual?.[k],expected?.[k],tol)]));
   const salesToPortal=compare(sales,gstr1);
@@ -229,6 +331,7 @@ export function compareGst({gstr1,gstr3b,sales,purchases,gstr2b},tol=1){
   }:null;
   const itc2bVs3b=compare(itcFrom2b,itcFrom3b,taxHeads);
   const itcBooksVs2b=compare(purchases,itcFrom2b,taxHeads);
+  const itcDiagnostics=explainItcDifferences(gstr2b,purchases,gstr3b,tol);
   const warnings=[];
   if(!gstr1)warnings.push("GSTR-1 portal figures not uploaded");
   if(!gstr3b)warnings.push("GSTR-3B portal figures not entered");
@@ -240,20 +343,33 @@ export function compareGst({gstr1,gstr3b,sales,purchases,gstr2b},tol=1){
   if(purchases?.unclassified?.length)warnings.push(purchases.unclassified.length+" inward vouchers lack recognized taxable Purchase Accounts/inventory; review mapping");
   const invoices=Array.isArray(gstr1?.docs)&&Array.isArray(sales?.docs)?
     compareGstr1Invoices(gstr1.docs,sales.docs,tol):[];
-  return {salesToPortal,portalTo3b,itc2bVs3b,itcBooksVs2b,invoices,warnings,at:now()};
+  return {salesToPortal,portalTo3b,itc2bVs3b,itcBooksVs2b,itcDiagnostics,invoices,warnings,at:now()};
 }
 export async function gstr2bTotals(D,cid,period){
   const ret=await D.first("SELECT id FROM gst_returns WHERE company_id=? AND period=? AND kind='GSTR-2B' AND stage<>'uploading' ORDER BY created_at DESC LIMIT 1",cid,period);
   if(!ret)return null;
-  const rows=await D.all("SELECT note,itc,compare,igst,cgst,sgst,cess FROM gst_docs WHERE return_id=?",ret.id);
+  const rows=await D.all("SELECT id,ctin,name,num,dt,sec,note,itc,compare,status,mid,igst,cgst,sgst,cess FROM gst_docs WHERE return_id=? ORDER BY seq",ret.id);
+  const links=await D.all("SELECT d.id,v.date tally_date,v.number tally_number FROM gst_docs d JOIN tally_gst_vouchers v ON v.company_id=d.company_id AND v.mid=d.mid WHERE d.return_id=? AND d.mid IS NOT NULL",ret.id);
+  const linkByDoc=new Map();
+  for(const link of links)if(!linkByDoc.has(link.id))linkByDoc.set(link.id,link);
   const itc={igst:0,cgst:0,sgst:0,cess:0};
+  const evidence=[];
   for(const r of rows){
-    if(!r.compare||r.itc==="N")continue;
+    const eligible=Boolean(r.compare)&&r.itc!=="N";
     const sign=r.note==="C"?-1:1;
-    for(const k of taxHeads)itc[k]+=sign*(Number(r[k])||0);
+    if(eligible)for(const k of taxHeads)itc[k]+=sign*(Number(r[k])||0);
+    if(evidence.length<2000){
+      const link=linkByDoc.get(r.id);
+      evidence.push({ctin:r.ctin||"",name:r.name||"",num:r.num||"",
+        dt:r.dt||"",sec:r.sec||"",note:r.note||"",status:r.status||"",
+        eligible,mid:r.mid||"",tally_date:link?.tally_date||"",
+        tally_number:link?.tally_number||"",
+        ...Object.fromEntries(taxHeads.map(k=>[k:r2(sign*(+r[k]||0))]))});
+    }
   }
   for(const k of taxHeads)itc[k]=r2(itc[k]);
-  return {return_id:ret.id,itc,documents:rows.length};
+  return {return_id:ret.id,period,itc,documents:rows.length,evidence,
+    evidence_truncated:rows.length>evidence.length};
 }
 export async function current(D,cid,period){
   monthPeriod(period);
@@ -307,7 +423,10 @@ export async function refreshTally(D,env,cid,period){
   const sales=tallyTotals(saleVouchers,masters,"sales");
   sales.calculation_version=2; // cached evidence must be refreshed after adjustment-logic upgrades
   sales.docs=salesDocs(saleVouchers,masters);
-  const purchases=tallyTotals(TL.purchaseGstRows(rawPurchases),masters,"purchases");
+  const purchaseVouchers=TL.purchaseGstRows(rawPurchases);
+  const purchases=tallyTotals(purchaseVouchers,masters,"purchases");
+  purchases.docs=purchaseDocs(purchaseVouchers,masters);
+  purchases.calculation_version=2;
   await D.batch([
     D.stmt("INSERT INTO gst_control(id,company_id,period,updated_at) VALUES(?,?,?,?) ON CONFLICT(company_id,period) DO NOTHING",cid+"_"+period,cid,period,now()),
     D.stmt("UPDATE gst_control SET tally_sales=?,tally_purchases=?,result=NULL,updated_at=? WHERE company_id=? AND period=?",
