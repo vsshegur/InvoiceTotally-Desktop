@@ -177,7 +177,7 @@ const RELEASES = conf.releases || "https://api.github.com/repos/vsshegur/invoice
 const newer = (a, b) => { const x = String(a).replace(/^v/, "").split(".").map(Number), y = String(b).split(".").map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
 async function checkUpdate() {
   try {
-    const r = await fetch(RELEASES, { headers: { "user-agent": "InvoiceTotally/" + pkg.version, accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(15000) });
+    const r = await fetch(RELEASES, { headers: { "user-agent": "VipulWorkplace/" + pkg.version, accept: "application/vnd.github+json" }, signal: AbortSignal.timeout(15000) });
     if (!r.ok) return;
     const j = await r.json();
     const asset = (j.assets || []).find((a) => /Setup\.exe$/i.test(a.name));
@@ -194,7 +194,7 @@ export function start() {
     server.listen(PORT, "127.0.0.1", () => {
       server6.listen(PORT, "::1");
       try { fs.writeFileSync(keyFile, WINDOW_KEY, { mode: 0o600 }); } catch {}
-      log(`InvoiceTotally ${pkg.version} on http://localhost:${PORT} (data in ${DATA})`);
+      log(`Vipul Workplace ${pkg.version} on http://localhost:${PORT} (data in ${DATA})`);
       readLoop();
       runner.start();
       licenceLoop();
