@@ -289,6 +289,7 @@ async function companyGstControl(c,el){
       toast(kind.toUpperCase()+" portal JSON read offline and saved");companyGstControl(c,el);
     }catch(e){toast(e.message,true);input.value="";}
   });
+  let pdfItcDetails=null;
   const pdfInput=$('[data-gstr3b-pdf]',el);
   if(pdfInput)pdfInput.onchange=async()=>{
     const file=pdfInput.files?.[0];if(!file)return;
@@ -297,6 +298,7 @@ async function companyGstControl(c,el){
       preview.textContent="Reading GSTR-3B PDF locally…";
       const {readGstr3bPdf}=await import("/gstr3b-pdf.js");
       const report=await readGstr3bPdf(file,{period,gstin:c.gstin});
+      pdfItcDetails=report.itcDetails||null;
       for(const field of $$('.ccGstNum[data-kind="gstr3b"]',el)){
         const amount=report.summary[field.dataset.head];
         if(Number.isFinite(amount))field.value=String(amount);
@@ -305,16 +307,21 @@ async function companyGstControl(c,el){
         '<div>File: '+esc(file.name)+' · GSTIN '+esc(report.gstin)+' · Month '+esc(report.period)+'</div>'+
         '<div>Table '+esc(report.evidence.outward.table)+' page '+report.evidence.outward.page+
         ' · Table '+esc(report.evidence.itc.table)+' page '+report.evidence.itc.page+'</div>'+
+        '<div>'+esc(pdfItcDetails?.verified?
+          "Table 4(A) − Table 4(B) agrees with Table 4(C).":
+          "Table 4(A) / 4(B) gross and reversal details are unavailable or do not agree with 4(C); review manually.")+'</div>'+
         '<div>Please verify taxable and all GST-head values against the filed PDF before clicking Save GSTR-3B figures. No external service was contacted.</div></div>';
       toast("GSTR-3B PDF read offline. Verify values and Save.");
-    }catch(error){preview.textContent=error.message;toast(error.message,true);}
+    }catch(error){pdfItcDetails=null;preview.textContent=error.message;toast(error.message,true);}
   };
   $$('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
     const kind=btn.dataset.save;
     const fields=$$('.ccGstNum[data-kind="'+kind+'"]',el);
     const summary=Object.fromEntries(fields.map(f=>[f.dataset.head,f.value===""?null:Number(f.value)]));
     btn.disabled=true;
-    try{await api("/companies/"+c.id+"/gst-control/"+period+"/portal",{body:{kind,summary}});toast(kind.toUpperCase()+" totals saved");companyGstControl(c,el);}
+    try{await api("/companies/"+c.id+"/gst-control/"+period+"/portal",{body:{kind,summary,
+      ...(kind==="gstr3b"&&pdfItcDetails?{itcDetails:pdfItcDetails}:{})}});
+      toast(kind.toUpperCase()+" totals saved");companyGstControl(c,el);}
     catch(e){toast(e.message,true);btn.disabled=false;}
   });
   $('#ccReadGst').onclick=async()=>{
