@@ -172,9 +172,13 @@ async function companyGstControl(c,el){
       '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">'+keys.map(k=>
         '<label class="field"><span class="small">'+CC.field(k)+'</span><input class="in ccGstNum" data-kind="'+kind+
         '" data-head="'+k+'" type="number" step="0.01" value="'+(values?.[k]??"")+'" placeholder="Not provided"></label>').join('')+
-      '</div><div class="field" style="margin:10px 0"><label>Import '+kind.toUpperCase()+' GST portal JSON (offline)</label>'+
-      '<input class="in" data-json="'+kind+'" type="file" accept=".json,application/json"></div>'+
-      '<button class="btn primary" data-save="'+kind+'">Save '+kind.toUpperCase()+' figures</button></div>';
+      '</div><div class="field" style="margin:10px 0"><label>Import '+kind.toUpperCase()+' '+(kind==="gstr3b"?"filed return PDF":"GST portal JSON")+' (offline)</label>'+
+      (kind==="gstr3b"?
+        '<input class="in" data-gstr3b-pdf="1" type="file" accept=".pdf,application/pdf">'+
+        '<p class="muted small">Choose the <b>filed</b> GSTR-3B PDF (not the system-generated draft). Reads Table 3.1(a) and Table 4(C) Net ITC. Review all amounts and click Save.</p>'+
+        '<div id="ccGstr3bPdfPreview" class="muted small" aria-live="polite"></div>':
+        '<input class="in" data-json="'+kind+'" type="file" accept=".json,application/json">')+
+      '</div><button class="btn primary" data-save="'+kind+'">Save '+kind.toUpperCase()+' figures</button></div>';
   };
   // Show source invoices and the reason for each difference by GST head.
   const itcExplanation=(head,mode)=>{
@@ -272,7 +276,7 @@ async function companyGstControl(c,el){
     if(!file)return;
     try{
       if(!/\.json$/i.test(file.name)||file.size>12*1024*1024)
-        throw new Error("Choose a GSTR-1 or GSTR-3B portal JSON file under 12 MB");
+        throw new Error("Choose a GSTR-1 portal JSON file under 12 MB");
       const {parsePortalJson}=await import("/gst-control-parse.js");
       const data=parsePortalJson(JSON.parse(await file.text()),kind,{period,gstin:c.gstin});
       if(!confirm("Import "+kind.toUpperCase()+" from "+file.name+"? Detected "+data.records+
@@ -285,6 +289,26 @@ async function companyGstControl(c,el){
       toast(kind.toUpperCase()+" portal JSON read offline and saved");companyGstControl(c,el);
     }catch(e){toast(e.message,true);input.value="";}
   });
+  const pdfInput=$('[data-gstr3b-pdf]',el);
+  if(pdfInput)pdfInput.onchange=async()=>{
+    const file=pdfInput.files?.[0];if(!file)return;
+    const preview=$('#ccGstr3bPdfPreview',el);
+    try{
+      preview.textContent="Reading GSTR-3B PDF locally…";
+      const {readGstr3bPdf}=await import("/gstr3b-pdf.js");
+      const report=await readGstr3bPdf(file,{period,gstin:c.gstin});
+      for(const field of $$('.ccGstNum[data-kind="gstr3b"]',el)){
+        const amount=report.summary[field.dataset.head];
+        if(Number.isFinite(amount))field.value=String(amount);
+      }
+      preview.innerHTML='<div class="alert warn" style="margin-top:8px"><b>PDF figures extracted — not yet saved.</b>'+
+        '<div>File: '+esc(file.name)+' · GSTIN '+esc(report.gstin)+' · Month '+esc(report.period)+'</div>'+
+        '<div>Table '+esc(report.evidence.outward.table)+' page '+report.evidence.outward.page+
+        ' · Table '+esc(report.evidence.itc.table)+' page '+report.evidence.itc.page+'</div>'+
+        '<div>Please verify taxable and all GST-head values against the filed PDF before clicking Save GSTR-3B figures. No external service was contacted.</div></div>';
+      toast("GSTR-3B PDF read offline. Verify values and Save.");
+    }catch(error){preview.textContent=error.message;toast(error.message,true);}
+  };
   $$('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
     const kind=btn.dataset.save;
     const fields=$$('.ccGstNum[data-kind="'+kind+'"]',el);
