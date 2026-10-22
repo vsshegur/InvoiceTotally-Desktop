@@ -145,7 +145,7 @@ async function gstData(rid, GM) {
   const ctx = await api(`/gstr2b/${rid}/context`);
   const books = GM.buildBooks(ctx.books, ctx.ledgers);
   const opts = { tol: s.tol ?? 1, period: s.period, usedElsewhere: new Set(ctx.elsewhere) };
-  const fresh = ctx.books_at && (!s.matched_at || ctx.books_at > s.matched_at || s.docs.some((d) => d.status === "new"));
+  const fresh = ctx.books_at && (!s.matched_at || ctx.books_at > s.matched_at || s.docs.some((d) => d.status === "new") || s.summary?.calculation_version !== 2);
   if (fresh) {
     const r = GM.reconcile(s.docs, books, opts);
     const summary = GM.summarize(s.docs, r.results, r.booksOnly, r.byMid);
