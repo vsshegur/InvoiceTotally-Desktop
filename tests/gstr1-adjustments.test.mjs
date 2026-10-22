@@ -48,6 +48,7 @@ test("GSTR-1 Tally tax base includes the actual VIJTEX-305 discount and VIJTEX-3
       request.includes("ITSalesGSTControl")?sales:"<ENVELOPE><COLLECTION></COLLECTION></ENVELOPE>"}};
     const refreshed=await GST.refreshTally(D,env,cid,"2026-04");
     assert.equal(refreshed.sales.taxable,353577.28);
+    assert.equal(refreshed.sales.calculation_version,2);
     assert.equal(refreshed.sales.discount,1134.72);
     assert.equal(refreshed.sales.freight,30450);
     assert.equal(refreshed.sales.igst,888.86);
@@ -75,6 +76,15 @@ test("GSTR-1 Tally tax base includes the actual VIJTEX-305 discount and VIJTEX-3
     assert.equal(checked.invoices[0].taxable_difference,0);
     assert.equal(checked.invoices[1].tax_difference,0);
     assert.equal(checked.invoices[1].breakdown.ledger_lines.find(l=>l.kind==="freight").amount,30450);
+    // After upgrading the app, older cached sales must not show false mismatches.
+    const oldCache={...refreshed.sales,taxable:305350,docs:refreshed.sales.docs.map(d=>({...d,taxable:305350}))};
+    delete oldCache.calculation_version;
+    await D.run("UPDATE gst_control SET tally_sales=? WHERE company_id=? AND period=?",
+      JSON.stringify(oldCache),cid,"2026-04");
+    const stale=(await GST.reconcile(D,cid,"2026-04")).result;
+    assert.equal(stale.salesToPortal.taxable.status,"missing");
+    assert.deepEqual(stale.invoices,[]);
+    assert.ok(stale.warnings.some(w=>/old discount\/freight logic/.test(w)));
   }finally{DB.close();}
 });
 test("GSTR-1 compares GST heads individually and explains true taxable differences",()=>{
