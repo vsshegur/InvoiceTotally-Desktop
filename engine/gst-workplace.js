@@ -93,6 +93,16 @@ export async function getMonthInsight(D,cid,period){
   const masters=await D.all("SELECT name,gstin FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND gstin<>''",cid);
   const gstinByName=new Map(masters.map(x=>[String(x.name||"").toLowerCase().trim(),x.gstin]));
   for(const v of duplicatesPurchase)if(!v.gstin)v.gstin=gstinByName.get(String(v.party||"").toLowerCase().trim())||"";
+  const suggestedLinks=[];
+  for(const doc of unlinked){
+    const eligible=duplicatesPurchase.filter(v=>String(v.gstin||"").toUpperCase()===String(doc.gstin||"").toUpperCase()&&
+      cleanDocumentKey(v.ref||v.number)===cleanDocumentKey(doc.num));
+    const distinct=[...new Map(eligible.map(v=>[String(v.mid||v.number)+"@"+v.date,v])).values()];
+    if(distinct.length===1&&month(distinct[0].date)!==period)
+      suggestedLinks.push({invoice:doc.num,name:doc.name,gstin:doc.gstin,
+        voucher:distinct[0].number,mid:distinct[0].mid,date:distinct[0].date,
+        note:"Unique GSTIN + invoice-number candidate in cached Tally; verify in GSTR-2B before linking"});
+  }
   let salesRows=[];
   const saleCaches=await D.all("SELECT period,tally_sales FROM gst_control WHERE company_id=? AND period BETWEEN ? AND ?",cid,
     (+period.slice(0,4)-1)+"-04",(+period.slice(0,4)+1)+"-03");
@@ -108,6 +118,7 @@ export async function getMonthInsight(D,cid,period){
       gstr3b:g3?Object.fromEntries(heads.map(h=>[h,g3["itc"+h[0].toUpperCase()+h.slice(1)]])):null},
     cross_month:crossMonth.slice(0,250),cross_month_total:crossMonth.length,
     unlinked:unlinked.slice(0,250),unlinked_total:unlinked.length,
+    suggested_links:suggestedLinks.slice(0,150),
     not_available:unavailable.slice(0,100),duplicates:[
       ...duplicates(duplicatesPurchase,"purchase"),...duplicates(salesRows,"sales")].slice(0,180),
     duplicates_scope:"Only vouchers present in cached GST reads; possible duplicates require verification in Tally."};
@@ -157,7 +168,7 @@ export async function getYearly(D,cid,fy){
   const data=months.map(period=>{
     const row=byMonth.get(period),g1=jload(row?.portal_gstr1),g3=jload(row?.portal_gstr3b),sales=jload(row?.tally_sales),purchase=jload(row?.tally_purchases);
     const itc=portal.has(period)?portal.get(period):latest.has(period)?{igst:0,cgst:0,sgst:0,cess:0}:null;
-    const total=x=>x==null?null:r2(heads.reduce((a,h)=>a+(Number(x[h])||0),0));
+    const total=x=>x==null||heads.every(h=>x[h]==null)?null:r2(heads.reduce((a,h)=>a+(Number(x[h])||0),0));
     const claim=g3?{igst:g3.itcIgst,cgst:g3.itcCgst,sgst:g3.itcSgst,cess:g3.itcCess}:null;
     const net=total(claim),eligible=total(itc);
     return {period,gstr1_taxable:g1?.taxable??null,tally_sales_taxable:sales?.taxable??null,
