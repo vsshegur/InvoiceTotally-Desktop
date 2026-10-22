@@ -198,6 +198,8 @@ export async function setTolerance(D, rid, body) {
 }
 
 export async function remove(D, rid) {
+  const used=await D.first("SELECT id FROM gstr2b_purchase_batches WHERE return_id=? LIMIT 1",rid);
+  if(used)throw new GstError(409,"This GSTR-2B has purchase vouchers prepared for Tally. Keep the original evidence and import a fresh return separately.");
   await D.batch([D.stmt("DELETE FROM gst_docs WHERE return_id=?", rid), D.stmt("DELETE FROM jobs WHERE invoice_id=? AND kind='export_purchase_gst' AND status IN ('pending','sent')", rid),
     D.stmt("DELETE FROM gst_returns WHERE id=?", rid)]);
   return { ok: true };
