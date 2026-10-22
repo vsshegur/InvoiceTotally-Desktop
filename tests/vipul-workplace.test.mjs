@@ -106,7 +106,7 @@ test("GSTR-3B PDF parser reads 4(A), 4(B), 4(C) and flags source inconsistencies
   assert.equal(good.itcDetails.reversed.cgst,40);
   assert.equal(good.itcDetails.reclaimed.cgst,20);
   assert.equal(good.summary.itcCgst,160);
-  const bad=parseGstr3bPdfPages([{rows:lines.slice(0,-1).concat("(C) Net ITC Available 80.00 170.00 160.00 0.00")}],{gstin:GSTIN,period:"2026-04"});
+  const bad=parseGstr3bPdfPages([{rows:lines.map(x=>x.startsWith("(C) Net ITC")?"(C) Net ITC Available 80.00 170.00 160.00 0.00":x)}],{gstin:GSTIN,period:"2026-04"});
   assert.equal(bad.itcDetails.verified,false);
 });
 test("UI and Windows installer use Vipul Workplace without relocating existing database",()=>{
