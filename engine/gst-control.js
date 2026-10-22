@@ -310,7 +310,7 @@ export function explainItcDifferences(gstr2b,purchases,gstr3b,tol=1){
       tally_only_count:unpairedBooks.length,tally_only_total:totalBooksOnly,
       portal_only_count:unpairedPortal.length,portal_only_total:totalOutside,
       matched_difference_count:residual.length,matched_difference_total:totalPaired,
-      books_vs_2b_explained_delta:delta,
+      books_vs_2b_explained_delta:complete?delta:null,
       evidence_lines:[...unpairedPortal,...unpairedBooks,...changed]
         .sort((a,b)=>Math.abs(b.value)-Math.abs(a.value)).slice(0,160)
     };
@@ -349,7 +349,7 @@ export async function gstr2bTotals(D,cid,period){
   const ret=await D.first("SELECT id FROM gst_returns WHERE company_id=? AND period=? AND kind='GSTR-2B' AND stage<>'uploading' ORDER BY created_at DESC LIMIT 1",cid,period);
   if(!ret)return null;
   const rows=await D.all("SELECT id,ctin,name,num,dt,sec,note,itc,compare,status,mid,igst,cgst,sgst,cess FROM gst_docs WHERE return_id=? ORDER BY seq",ret.id);
-  const links=await D.all("SELECT d.id,v.date tally_date,v.number tally_number FROM gst_docs d JOIN tally_gst_vouchers v ON v.company_id=d.company_id AND v.mid=d.mid WHERE d.return_id=? AND d.mid IS NOT NULL",ret.id);
+  const links=await D.all("SELECT d.id,v.date tally_date,v.number tally_number FROM gst_docs d JOIN tally_gst_vouchers v ON v.company_id=d.company_id AND v.mid=d.mid WHERE d.return_id=? AND d.mid IS NOT NULL ORDER BY v.fetched_at DESC",ret.id);
   const linkByDoc=new Map();
   for(const link of links)if(!linkByDoc.has(link.id))linkByDoc.set(link.id,link);
   const itc={igst:0,cgst:0,sgst:0,cess:0};
