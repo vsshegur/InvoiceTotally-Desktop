@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import vm from "node:vm";
 import {db} from "../engine/db.js";
 import {makeD1} from "../desktop/d1.mjs";
 import {gstinValid} from "../engine/gst.js";
@@ -176,4 +177,7 @@ test("Invoices offers two upload choices and GSTR-2B parser is reused, not repla
  assert.match(gst,/viewGstUpload\(cid,mode="reconcile"\)/);
  assert.match(gst,/gstr2b-purchases\/prepare/);
  assert.match(index,/gstr2b-purchase\.js/);
+ const frontend=fs.readFileSync(new URL("../public/gstr2b-purchase.js",import.meta.url),"utf8");
+ assert.doesNotThrow(()=>new vm.Script(frontend,{filename:"gstr2b-purchase.js"}),"Purchase UI script must parse before the app boots");
+ assert.match(frontend,/PURCHASE-GSTR2B/);
 });
