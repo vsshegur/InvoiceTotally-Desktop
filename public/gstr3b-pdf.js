@@ -95,10 +95,15 @@ export function parseGstr3bPdfPages(pages,expected={}){
     t=>/^(?:\(?a\)?[.)\s-]*)?itc\s+available\b/i.test(t),4);
   const reversed=rowAt(rows,sec4+1,end4<0?rows.length:end4,
     t=>/^(?:\(?b\)?[.)\s-]*)?itc\s+reversed\b/i.test(t),4);
+  const reclaimed=rowAt(rows,sec4+1,end4<0?rows.length:end4,
+    t=>/^(?:\(?1\)?[.)\s-]*)?itc\s+reclaimed\b/i.test(t),4);
+  const reversalOther=rowAt(rows,sec4+1,end4<0?rows.length:end4,
+    t=>/^(?:\(?2\)?[.)\s-]*)?other\s+reversals\b/i.test(t),4);
   const itcHeads=["igst","cgst","sgst","cess"];
   const amounts=entry=>entry?Object.fromEntries(itcHeads.map((h,i)=>[h,entry.values[i]])):null;
   const itcDetails={available:amounts(available),reversed:amounts(reversed),net:amounts(net),
-    pages:{available:available?.page||null,reversed:reversed?.page||null,net:net.page},
+    reclaimed:amounts(reclaimed),reversalOther:amounts(reversalOther),
+    pages:{available:available?.page||null,reversed:reversed?.page||null,net:net.page,reclaimed:reclaimed?.page||null},
     source:"Filed GSTR-3B PDF, Table 4",
     verified:!!(available&&reversed&&itcHeads.every((h,i)=>
       Math.abs(Math.round((available.values[i]-reversed.values[i]-net.values[i])*100)/100)<=1))};
