@@ -340,7 +340,7 @@ async function companyGstControl(c,el){
       }
       pdfPeriodEvidence={...pdfPeriodEvidence,confirmedByUser:true};
     }
-    const fields=$('.ccGstNum[data-kind="'+kind+'"]',el);
+    const fields=$$('.ccGstNum[data-kind="'+kind+'"]',el);
     const summary=Object.fromEntries(fields.map(f=>[f.dataset.head,f.value===""?null:Number(f.value)]));
     btn.disabled=true;
     try{await api("/companies/"+c.id+"/gst-control/"+period+"/portal",{body:{kind,summary,
