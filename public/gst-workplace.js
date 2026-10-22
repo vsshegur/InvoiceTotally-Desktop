@@ -21,8 +21,8 @@ const GSTWorkplace=(()=>{
     const disclaimer=r?.changed_after_import?"Net claim was edited after PDF extraction. Original Table 4 amounts remain as evidence.":null;
     const hdr='<p class="muted small">Table 4(A) gross eligible ITC, 4(B) reversals and 4(C) net available ITC from the filed GSTR-3B. The GSTR-2B gap is not automatically an error or a recoverable claim.</p>';
     const lines=heads.map(h=>'<tr><td>'+h.toUpperCase()+'</td><td>'+cur(gross?.[h])+'</td><td>'+cur(back?.[h])+'</td><td>'+cur(net?.[h])+'</td>'+
-      '<td>'+cur(c.gstr2b?.[h])+'</td><td>'+cur(c.gstr3b?.[h])+'</td><td>'+cur(c.gstr2b&&c.gstr3b?c.gstr2b[h]-c.gstr3b[h]:null)+'</td></tr>');
-    const t=table(["Head","4(A) Available","4(B) Reversed","4(C) Net","2B eligible","3B filed claim","2B − 3B"],lines);
+      '<td>'+cur(r?.reclaimed?.[h])+'</td><td>'+cur(c.gstr2b?.[h])+'</td><td>'+cur(c.gstr3b?.[h])+'</td><td>'+cur(c.gstr2b&&c.gstr3b?c.gstr2b[h]-c.gstr3b[h]:null)+'</td></tr>');
+    const t=table(["Head","4(A) Available","4(B) Reversed","4(C) Net","4(D)(1) Reclaimed","2B eligible","3B filed claim","2B − 3B"],lines);
     return hdr+(r?'<p class="'+(r.verified?"good":"warn")+'">PDF 4(A) − 4(B) = 4(C): '+(r.verified?"Verified within ₹1":"Unverified; inspect return")+'</p>':
       '<p class="warn">No Table 4(A/B) source data has been saved yet. Import a filed GSTR-3B PDF and save its reviewed figures to enable reversal analysis.</p>')+
       (disclaimer?'<p class="warn">'+safe(disclaimer)+'</p>':"")+t;
