@@ -25,7 +25,7 @@ async function company(D,cid){return must(await D.first("SELECT * FROM companies
 async function batch(D,id){return must(await D.first("SELECT * FROM gstr2b_purchase_batches WHERE id=?",id),"GSTR-2B purchase batch not found");}
 async function companyBatch(D,id){const b=await batch(D,id);return {batch:b,company:await company(D,b.company_id)};}
 function matchedCandidates(ledgers,gstin){
-  return ledgers.filter(x=>x.kind==="ledger"&&!x.pending&&eq(x.gstin,gstin)&&x.gstin);
+  return ledgers.filter(x=>x.kind==="ledger"&&!x.pending&&eq(x.gstin,gstin)&&x.gstin&&/sundry creditors/i.test(x.primary_group||x.parent||""));
 }
 function validNormalDoc(d){
   if(d.sec!=="B2B")return "Only original B2B invoices are supported. Amendments, e-commerce sections, notes, imports and ISD require separate review.";
