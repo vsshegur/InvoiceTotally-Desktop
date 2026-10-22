@@ -428,6 +428,18 @@ export async function savePortal(D,cid,period,body){
         net[k]!=null&&clean["itc"+k[0].toUpperCase()+k.slice(1)]!=null&&
         Math.abs(net[k]-clean["itc"+k[0].toUpperCase()+k.slice(1)])>1))};
   }
+  if(kind==="gstr3b"&&body.periodEvidence){
+    const evidence=body.periodEvidence;
+    const returnPeriod=String(evidence.return_period||"").trim();
+    const source=String(evidence.source||"").trim();
+    if(returnPeriod!==period)throw new GstControlError("GSTR-3B PDF return month does not match selected month");
+    if(!["pdf","filename","selected-month"].includes(source))
+      throw new GstControlError("GSTR-3B PDF period source is invalid");
+    if(source!=="pdf"&&evidence.confirmedByUser!==true)
+      throw new GstControlError("Confirm the filed GSTR-3B return month before saving");
+    clean.periodEvidence={return_period:period,source,confirmedByUser:evidence.confirmedByUser===true,
+      saved_at:now()};
+  }
   await persist(D,cid,period,kind==="gstr1"?"portal_gstr1":"portal_gstr3b",JSON.stringify(clean));
   return {ok:true,kind,period};
 }
