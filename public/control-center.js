@@ -297,7 +297,7 @@ async function companyGstControl(c,el){
       preview.textContent="Reading GSTR-3B PDF locally…";
       const {readGstr3bPdf}=await import("/gstr3b-pdf.js");
       const report=await readGstr3bPdf(file,{period,gstin:c.gstin});
-      for(const field of $('.ccGstNum[data-kind="gstr3b"]',el)){
+      for(const field of $$('.ccGstNum[data-kind="gstr3b"]',el)){
         const amount=report.summary[field.dataset.head];
         if(Number.isFinite(amount))field.value=String(amount);
       }
@@ -309,7 +309,7 @@ async function companyGstControl(c,el){
       toast("GSTR-3B PDF read offline. Verify values and Save.");
     }catch(error){preview.textContent=error.message;toast(error.message,true);}
   };
-  $('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
+  $$('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
     const kind=btn.dataset.save;
     const fields=$$('.ccGstNum[data-kind="'+kind+'"]',el);
     const summary=Object.fromEntries(fields.map(f=>[f.dataset.head,f.value===""?null:Number(f.value)]));
