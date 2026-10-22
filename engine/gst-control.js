@@ -420,7 +420,7 @@ export async function savePortal(D,cid,period,body){
         return [k,value==null?null:(Number.isFinite(Number(value))&&Math.abs(Number(value))<1e13?r2(Number(value)):null)];
       })):null;
     const available=sanitise(raw.available),reversed=sanitise(raw.reversed),net=sanitise(raw.net);
-    clean.itcDetails={available,reversed,net,source:"GSTR-3B PDF (reviewed)",
+    clean.itcDetails={available,reversed,net,reclaimed:sanitise(raw.reclaimed),reversalOther:sanitise(raw.reversalOther),source:"GSTR-3B PDF (reviewed)",
       verified:!!(available&&reversed&&net&&taxHeads.every(k=>
         available[k]!==null&&reversed[k]!==null&&net[k]!==null&&
         Math.abs(r2(available[k]-reversed[k]-net[k]))<=1)),
