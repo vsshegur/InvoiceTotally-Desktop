@@ -290,7 +290,7 @@ async function companyGstControl(c,el){
       toast(kind.toUpperCase()+" portal JSON read offline and saved");companyGstControl(c,el);
     }catch(e){toast(e.message,true);input.value="";}
   });
-  let pdfItcDetails=null;
+  let pdfItcDetails=s.portal_gstr3b?.itcDetails||null;
   const pdfInput=$('[data-gstr3b-pdf]',el);
   if(pdfInput)pdfInput.onchange=async()=>{
     const file=pdfInput.files?.[0];if(!file)return;
@@ -313,7 +313,7 @@ async function companyGstControl(c,el){
           "Table 4(A) / 4(B) gross and reversal details are unavailable or do not agree with 4(C); review manually.")+'</div>'+
         '<div>Please verify taxable and all GST-head values against the filed PDF before clicking Save GSTR-3B figures. No external service was contacted.</div></div>';
       toast("GSTR-3B PDF read offline. Verify values and Save.");
-    }catch(error){pdfItcDetails=null;preview.textContent=error.message;toast(error.message,true);}
+    }catch(error){pdfItcDetails=s.portal_gstr3b?.itcDetails||null;preview.textContent=error.message;toast(error.message,true);}
   };
   $$('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
     const kind=btn.dataset.save;
