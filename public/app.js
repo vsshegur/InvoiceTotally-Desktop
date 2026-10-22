@@ -568,7 +568,7 @@ async function companyBatches(c, el) {
     '<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/gstr2b-purchase">'+
     '<h3 style="margin:0 0 5px">2. Upload GSTR-2B</h3><p class="muted small">Prepare Purchase vouchers from GST portal GSTR-2B with fixed PURCHASE-GSTR2B ledger, review, then post to Tally.</p>'+
     '<span class="btn sm primary">Upload GSTR-2B →</span></a></div>';
-  el.innerHTML = choices + (rows.length ? `<table class="grid"`<thead><tr><th>Batch</th><th>Type</th><th>Uploaded</th><th class="num">Invoices</th><th>Progress</th></tr></thead><tbody>
+  el.innerHTML = choices + (rows.length ? `<table class="grid"><thead><tr><th>Batch</th><th>Type</th><th>Uploaded</th><th class="num">Invoices</th><th>Progress</th></tr></thead><tbody>
     ${rows.map((b) => { const n = b.counts || {}; const done = n.synced || 0;
       return `<tr class="click" data-href="#/b/${b.id}"><td><b>${esc(b.name)}</b></td><td>${esc(b.voucher_type)}</td><td class="muted">${ago(b.created_at)}</td>
       <td class="num">${b.invoices}</td><td>${b.stage !== "review" ? `<span class="${b.stage === "error" ? "bad" : "warn"}">${stageLbl[b.stage]} ${b.stage === "error" ? esc(b.error || "") : ""}</span>` :
