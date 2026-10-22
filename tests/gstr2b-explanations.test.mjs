@@ -64,6 +64,14 @@ test("Accounting vouchers use purchase ledgers; separate freight and discount ad
   assert.equal(extra.txval,1100);
   assert.equal(extra.breakdown.adjustments,100);
   assert.equal(extra.breakdown.round_off,0.25);
+  // Freight is sometimes classified under Purchase Accounts in Tally.
+  const asPurchases=ledgers.map(l=>l.name==="Freight on Purchase"?
+    {...l,primary_group:"Purchase Accounts"}:l);
+  const grouped=M.buildBooks([{mid:"4",date:"2026-04-04",number:"4",vtype:"Purchase",
+    kind:"inv",party:"Vanita Textile",gstin:VANITA,inv:-1000,
+    e:[["GST PURCHASE ACCOUNT",-1000],["Freight on Purchase",-150],["Vanita Textile",1150]]}],asPurchases)[0];
+  assert.equal(grouped.txval,1150);
+  assert.equal(grouped.breakdown.purchase_ledger,1000);
 });
 test("GST control reconciles 2B claim with March invoice in April filing and pinpoints each head",async()=>{
   const DB=makeD1(),D=db({DB}),cid="itc-source-case",period="2026-04";
