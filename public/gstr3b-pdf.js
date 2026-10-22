@@ -168,7 +168,7 @@ export async function parseGstr3bPdfTask(loadingTask,expected={}){
   }
 }
 export async function readGstr3bPdf(file,expected={}){
-  if(!file||!(/\\.pdf$/i.test(file.name)||file.type==="application/pdf"))
+  if(!file||!(/\.pdf$/i.test(file.name)||file.type==="application/pdf"))
     throw new Error("Select a GSTR-3B PDF downloaded from the GST portal.");
   if(file.size>20*1024*1024)throw new Error("Choose a GSTR-3B PDF smaller than 20 MB.");
   const pdfjs=await import("/vendor/pdfjs/pdf.min.mjs");
