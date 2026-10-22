@@ -123,14 +123,15 @@ export async function view(D, rid) {
 /** What the browser needs to match: the vouchers read from Tally, the ledgers, and vouchers other months already claimed. */
 export async function context(D, rid) {
   const g = await getReturn(D, rid);
-  const [books, ledgers, elsewhere, [fresh], jobs] = await D.many([
+  const [books, ledgers, elsewhere, [fresh], jobs, rules] = await D.many([
     ["SELECT mid, date, number, vtype, kind, ref, refdate, party, gstin, inv, e FROM tally_gst_vouchers WHERE company_id=? AND date BETWEEN ? AND ?", g.company_id, g.books_from, g.books_to],
     ["SELECT name, parent, primary_group, gstin FROM masters WHERE company_id=? AND kind='ledger'", g.company_id],
     ["SELECT DISTINCT d.mid FROM gst_docs d JOIN gst_returns r ON r.id=d.return_id WHERE d.company_id=? AND d.return_id<>? AND d.mid IS NOT NULL AND r.period<>?", g.company_id, rid, g.period],
     ["SELECT max(updated_at) at FROM jobs WHERE company_id=? AND kind='export_purchase_gst' AND status='done'", g.company_id],
-    ["SELECT status, result, updated_at FROM jobs WHERE company_id=? AND kind='export_purchase_gst' AND invoice_id=? ORDER BY created_at DESC LIMIT 3", g.company_id, rid]]);
+    ["SELECT status, result, updated_at FROM jobs WHERE company_id=? AND kind='export_purchase_gst' AND invoice_id=? ORDER BY created_at DESC LIMIT 3", g.company_id, rid],
+    ["SELECT ledger_name,role FROM gst_ledger_rules WHERE company_id=?",g.company_id]]);
   for (const b of books) b.e = jload(b.e, []);
-  return { books, ledgers, elsewhere: elsewhere.map((r) => r.mid), books_at: fresh?.at || null, tally_asked_at: g.tally_asked_at, matched_at: g.matched_at, jobs };
+  return { books, ledgers, rules, elsewhere: elsewhere.map((r) => r.mid), books_at: fresh?.at || null, tally_asked_at: g.tally_asked_at, matched_at: g.matched_at, jobs };
 }
 
 /** Results of matching in the browser. Decisions made by hand (method "manual") are never overwritten. */

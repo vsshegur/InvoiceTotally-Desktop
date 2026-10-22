@@ -1,4 +1,4 @@
-# InvoiceTotally for Windows
+# Vipul Workplace for Windows
 
 One app on the PC that reads purchase and sales invoices with AI and posts them **straight into TallyPrime** —
 no connector, no TallyBridge, no web app. Bank statements are read on the PC without any AI and posted to a
@@ -13,13 +13,13 @@ Worker, repo `vsshegur/invoicetotally`):
 
 ## Install
 
-1. Download `InvoiceTotally-<version>-Setup.exe` from this repository's **Releases** page and run it.
-   It installs for your Windows user (no administrator needed) and puts **InvoiceTotally** on the desktop and in
+1. Download `Vipul-Workplace-<version>-Setup.exe` from this repository's **Releases** page and run it.
+   It installs for your Windows user (no administrator needed) and puts **Vipul Workplace** on the desktop and in
    the Start menu. Windows may say *"Windows protected your PC"* because the installer isn't signed: press
    **More info → Run anyway**.
 2. In TallyPrime: **F1 Help → Settings → Connectivity** → *TallyPrime acts as* **Both**, port **9000**.
    Keep the company open (several companies can be open with **Alt+F3**).
-3. Open InvoiceTotally and press **Sign in with Google**. A window opens on the service's page; sign in with the
+3. Open Vipul Workplace and press **Sign in with Google**. A window opens on the service's page; sign in with the
    Google account the admin added. The app stays signed in on this PC.
 4. **Add company** — pick it from the companies open in Tally. Its ledgers, groups, units and stock items are read
    from Tally straight away.
@@ -27,7 +27,7 @@ Worker, repo `vsshegur/invoicetotally`):
 Updating: run the newer Setup — your data is kept. The app shows a notice when a newer version is on Releases.
 Uninstall from *Settings → Apps* or the Start menu; you choose whether to keep your data.
 
-Your data lives in `%LOCALAPPDATA%\InvoiceTotally` (one SQLite file). A copy is saved **once a day** (last 14
+Your data remains in the legacy `%LOCALAPPDATA%\InvoiceTotally` folder (intentionally unchanged so existing invoices, companies and backups survive the rename) (one SQLite file). A copy is saved **once a day** (last 14
 kept) — choose a Google Drive or OneDrive folder under **⚙ → This PC** so a copy is also online.
 
 ## What each person can do (set by the admin)
@@ -190,12 +190,12 @@ desktop/   main.mjs   — the app on the PC: serves the window, reads in the bac
 engine/    the invoice engine (matching, tax, vouchers, GSTR-2B, bank) on SQLite
 public/    the screens (plain JavaScript, no build step)
 service/   licence.js — the service side (deployed as worker/licence.js in vsshegur/invoicetotally)
-windows/   launcher (InvoiceTotally.exe), Setup and Uninstall, build.sh
+windows/   launcher (legacy internal filename InvoiceTotally.exe), Setup and Uninstall, build.sh
 tests/     node --test tests/*.test.mjs — the whole app with a stand-in service and a stand-in TallyPrime
 ```
 
 The installer bundles Node.js (the runtime) — nothing else needs installing. GitHub Actions builds it on every
-push to `main`, installs it on a Windows machine, starts it, and attaches `InvoiceTotally-<version>-Setup.exe` to
+push to `main`, installs it on a Windows machine, starts it, and attaches `Vipul-Workplace-<version>-Setup.exe` to
 the release.
 
 Try it without Windows or Tally: `node tests/fake-service.mjs 8790`, `python3 tests/mock_tally.py 9100`, then

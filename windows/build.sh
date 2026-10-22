@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds build/InvoiceTotally-<version>-Setup.exe
+# Builds build/Vipul-Workplace-<version>-Setup.exe
 #   windows/build.sh <path to Windows node.exe>
 # Works on Linux (cross-compiles) and on Windows (Git Bash). Needs Go and python3/python (for zipping).
 set -euo pipefail
@@ -11,12 +11,13 @@ rm -rf "$STAGE" && mkdir -p "$STAGE/runtime" "$STAGE/app/desktop" build
 export GOOS=windows GOARCH=amd64 CGO_ENABLED=0
 ( cd windows && go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../$STAGE/InvoiceTotally.exe" ./launcher \
   && go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../$STAGE/Uninstall InvoiceTotally.exe" ./uninstall )
-cp assets/InvoiceTotally.ico "$STAGE/"
+# Create updated VW icon while preserving the legacy filename in existing installations.
+PY=$(command -v python3 || command -v python)
+"$PY" windows/make-icon.py "$STAGE/InvoiceTotally.ico"
 cp "$NODE_EXE" "$STAGE/runtime/node.exe"
 cp package.json "$STAGE/app/"
 cp desktop/*.mjs desktop/config.json "$STAGE/app/desktop/"
 cp -r engine public "$STAGE/app/"
-PY=$(command -v python3 || command -v python)
 "$PY" - "$STAGE" windows/setup/payload.zip <<'PYEOF'
 import sys, os, zipfile
 stage, out = sys.argv[1], sys.argv[2]
@@ -27,7 +28,7 @@ with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
             z.write(p, os.path.relpath(p, stage).replace(os.sep, "/"))
 PYEOF
 echo "$VERSION" > windows/setup/version.txt
-( cd windows && go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../build/InvoiceTotally-$VERSION-Setup.exe" ./setup )
+( cd windows && go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../build/Vipul-Workplace-$VERSION-Setup.exe" ./setup )
 # a console build of Setup for automated checks (--quiet prints instead of showing message boxes)
 ( cd windows && go build -trimpath -ldflags "-s -w" -o "../build/setup-console.exe" ./setup )
 ls -la build/*.exe

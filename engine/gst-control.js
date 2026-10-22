@@ -3,6 +3,8 @@
 import * as TL from "../desktop/tally.mjs";
 import * as T from "./tally.js";
 import { newId, now } from "./db.js";
+import {normaliseRules,gstRole} from "./gst-insight-core.js";
+import {gstSuiteRoutes,getLedgerRules} from "./gst-workplace.js";
 
 export class GstControlError extends Error { constructor(message,status=400){super(message);this.status=status;} }
 const json=x=>new Response(JSON.stringify(x),{headers:{"content-type":"application/json","cache-control":"no-store"}});
@@ -48,7 +50,7 @@ const salesLineKind=name=>{
   if(/packing|handling|loading|hamali|insurance charge/.test(n))return "other_charge";
   return null;
 };
-function salesBreakdown(v,lookup){
+function salesBreakdown(v,lookup,rules=new Map()){
   const inventory=r2(+v.inv||0);
   let salesLedger=0,discount=0,freight=0,otherCharges=0,roundOff=0;
   const tax={igst:0,cgst:0,sgst:0,cess:0},ledger_lines=[],unclassified=[];
@@ -57,18 +59,20 @@ function salesBreakdown(v,lookup){
     if(Math.abs(amount)<0.005)continue;
     const master=lookup.get(normName(name));
     const group=normName(master?.primary_group||master?.parent);
-    const head=taxHead(name);
-    if(head&&(/duties|tax/.test(group)||/\bgst\b/.test(name.toLowerCase()))){
+    const role=gstRole(name,rules);
+    if(role==="ignore")continue;
+    const head=taxHeads.includes(role)?role:taxHead(name);
+    if(head&&(taxHeads.includes(role)||/duties|tax/.test(group)||/\bgst\b/.test(name.toLowerCase()))){
       tax[head]+=amount;continue;
     }
     // These are invoice totals / counterparties, not additional taxable supplies.
     if(normName(name)===normName(v.party)||/sundry debtors|sundry creditors/.test(group))continue;
-    const kind=group==="duties & taxes"?null:salesLineKind(name);
+    const kind=role==="auto"?(group==="duties & taxes"?null:salesLineKind(name)):role;
     if(kind==="round_off"){roundOff+=amount;ledger_lines.push({name,amount:r2(amount),kind});continue;}
     if(kind==="discount"){discount-=amount;ledger_lines.push({name,amount:r2(amount),kind});continue;}
     if(kind==="freight"){freight+=amount;ledger_lines.push({name,amount:r2(amount),kind});continue;}
     if(kind==="other_charge"){otherCharges+=amount;ledger_lines.push({name,amount:r2(amount),kind});continue;}
-    if(group==="sales accounts"){salesLedger+=amount;continue;}
+    if(kind==="base"||group==="sales accounts"){salesLedger+=amount;continue;}
     // Do not silently treat an unknown expense / ledger as taxable freight.
     const line={name,amount:r2(amount),kind:"unclassified"};
     unclassified.push(line);ledger_lines.push(line);
@@ -89,7 +93,8 @@ function salesBreakdown(v,lookup){
   }};
 }
 
-export function tallyTotals(vouchers,masters,mode){
+export function tallyTotals(vouchers,masters,mode,rulesInput=[]){
+  const rules=normaliseRules(rulesInput);
   const lookup=new Map(masters.map(x=>[normName(x.name),x]));
   const total={taxable:0,igst:0,cgst:0,sgst:0,cess:0,unclassified:[],review:[],vouchers:0,discount:0,freight:0,other_charges:0};
   for(const v of vouchers){
@@ -98,7 +103,7 @@ export function tallyTotals(vouchers,masters,mode){
     if(mode==="purchases"&&!(/purchase|debit note|credit note/.test(vt)))continue;
     total.vouchers++;
     if(mode==="sales"){
-      const amounts=salesBreakdown(v,lookup);
+      const amounts=salesBreakdown(v,lookup,rules);
       total.taxable+=amounts.taxable;
       for(const k of taxHeads)total[k]+=amounts[k];
       for(const k of ["discount","freight","other_charges"])total[k]+=amounts.breakdown[k];
@@ -108,21 +113,25 @@ export function tallyTotals(vouchers,masters,mode){
         total.review.push({number:v.number,ledgers:amounts.breakdown.unclassified});
       continue;
     }
-    let salesLedger=0;
+    let salesLedger=0,adjustments=0;
     for(const [name,raw] of v.e||[]){
       const m=lookup.get(normName(name)),group=normName(m?.primary_group||m?.parent);
-      const amount=Number(raw)||0,head=taxHead(name);
-      if(head&&(/duties|tax/i.test(group)||/\bgst\b/i.test(name))){
+      const amount=Number(raw)||0,role=gstRole(name,rules);
+      if(role==="ignore")continue;
+      const head=taxHeads.includes(role)?role:taxHead(name);
+      if(head&&(taxHeads.includes(role)||/duties|tax/i.test(group)||/\bgst\b/i.test(name))){
         total[head]+=mode==="sales"?amount:-amount;
-      }else if(group===(mode==="sales"?"sales accounts":"purchase accounts")){
-        salesLedger+=mode==="sales"?amount:-amount;
+      }else if(["discount","freight","other_charge"].includes(role)){
+        adjustments-=amount;
+      }else if(role==="base"||group==="purchase accounts"){
+        salesLedger-=amount;
       }
     }
     // Inventoried invoices carry taxable values in ALLINVENTORYENTRIES; avoid
     // double counting if an accounting ledger also represents the same sale.
     const inventory=Number(v.inv)||0;
-    if(Math.abs(inventory)>0.005)total.taxable+=mode==="sales"?inventory:-inventory;
-    else if(Math.abs(salesLedger)>0.005)total.taxable+=salesLedger;
+    if(Math.abs(inventory)>0.005)total.taxable+=-inventory+adjustments;
+    else if(Math.abs(salesLedger)>0.005)total.taxable+=salesLedger+adjustments;
     else total.unclassified.push({number:v.number,date:v.date,type:v.vtype});
   }
   for(const k of [...heads,"discount","freight","other_charges"])total[k]=r2(total[k]);
@@ -209,28 +218,28 @@ export function compareGstr1Invoices(portal=[],book=[],tol=1){
   }
   return result.slice(0,3000);
 }
-function salesDocs(vouchers,masters){
+function salesDocs(vouchers,masters,rules=new Map(),onlyGstin=true){
   const byName=new Map(masters.filter(x=>x.kind==="ledger"||!x.kind).map(x=>[normName(x.name),x]));
   return vouchers.filter(v=>/sale|credit note/i.test(v.vtype)).map(v=>{
     const partyMaster=byName.get(normName(v.party));
-    const amounts=salesBreakdown(v,byName);
-    return {number:String(v.ref||v.number||""),date:v.refdate||v.date,party:v.party,
+    const amounts=salesBreakdown(v,byName,rules);
+    return {number:String(v.ref||v.number||""),tally_number:String(v.number||""),mid:String(v.mid||""),date:v.date||"",supplier_date:v.refdate||v.date,party:v.party,
       gstin:String(v.gstin||partyMaster?.gstin||"").toUpperCase(),taxable:amounts.taxable,
       ...Object.fromEntries(taxHeads.map(k=>[k,amounts[k]])),breakdown:amounts.breakdown};
-  }).filter(v=>v.number&&v.gstin).slice(0,20000);
+  }).filter(v=>v.number&&(!onlyGstin||v.gstin)).slice(0,20000);
 }
 // Inward voucher evidence for explaining which individual CGST/SGST/IGST
 // entries make up the Tally monthly total. Uses precisely the same tax-head
 // detection / debit sign as tallyTotals(..., "purchases").
-function purchaseDocs(vouchers,masters){
+function purchaseDocs(vouchers,masters,rules=new Map()){
   const lookup=new Map(masters.map(m=>[normName(m.name),m]));
   return vouchers.filter(v=>/purchase|debit note|credit note/i.test(v.vtype)).map(v=>{
     const amounts={igst:0,cgst:0,sgst:0,cess:0};
     for(const [name,raw] of v.e||[]){
       const ledger=lookup.get(normName(name));
       const group=normName(ledger?.primary_group||ledger?.parent);
-      const head=taxHead(name);
-      if(head&&(/duties|tax/.test(group)||/\bgst\b/.test(normName(name))))
+      const role=gstRole(name,rules),head=taxHeads.includes(role)?role:taxHead(name);
+      if(role!=="ignore"&&head&&(taxHeads.includes(role)||/duties|tax/.test(group)||/\bgst\b/.test(normName(name))))
         amounts[head]-=Number(raw)||0;
     }
     return {mid:String(v.mid||""),number:String(v.number||""),num:String(v.ref||v.number||""),
@@ -403,6 +412,22 @@ export async function savePortal(D,cid,period,body){
       return row;
     });
   }
+  if(kind==="gstr3b"&&body.itcDetails){
+    const raw=body.itcDetails;
+    const sanitise=obj=>obj&&typeof obj==="object"&&!Array.isArray(obj)?
+      Object.fromEntries(taxHeads.map(k=>{
+        const value=obj[k];
+        return [k,value==null?null:(Number.isFinite(Number(value))&&Math.abs(Number(value))<1e13?r2(Number(value)):null)];
+      })):null;
+    const available=sanitise(raw.available),reversed=sanitise(raw.reversed),net=sanitise(raw.net);
+    clean.itcDetails={available,reversed,net,reclaimed:sanitise(raw.reclaimed),reversalOther:sanitise(raw.reversalOther),source:"GSTR-3B PDF (reviewed)",
+      verified:!!(available&&reversed&&net&&taxHeads.every(k=>
+        available[k]!==null&&reversed[k]!==null&&net[k]!==null&&
+        Math.abs(r2(available[k]-reversed[k]-net[k]))<=1)),
+      changed_after_import:!!(net&&taxHeads.some(k=>
+        net[k]!=null&&clean["itc"+k[0].toUpperCase()+k.slice(1)]!=null&&
+        Math.abs(net[k]-clean["itc"+k[0].toUpperCase()+k.slice(1)])>1))};
+  }
   await persist(D,cid,period,kind==="gstr1"?"portal_gstr1":"portal_gstr3b",JSON.stringify(clean));
   return {ok:true,kind,period};
 }
@@ -413,19 +438,22 @@ export async function refreshTally(D,env,cid,period){
   if(!env.TALLY?.readOnly)throw new GstControlError("Tally is not connected",503);
   const tc=c.tally_company||c.name;
   // Read both registers. A failed read never wipes previous cached totals.
-  const [rawSales,rawPurchases,masters]=await Promise.all([
+  const [rawSales,rawPurchases,masters,ruleRows]=await Promise.all([
     env.TALLY.readOnly(salesRequest(tc,range.from,range.to)),
     env.TALLY.readOnly(T.purchaseGstRequest(tc,range.from,range.to)),
-    D.all("SELECT name,parent,primary_group,gstin FROM masters WHERE company_id=? AND kind='ledger' AND pending=0",cid)
+    D.all("SELECT name,parent,primary_group,gstin FROM masters WHERE company_id=? AND kind='ledger' AND pending=0",cid),
+    getLedgerRules(D,cid)
   ]);
   if(!masters.length)throw new GstControlError("Import Tally ledgers first");
+  const rules=normaliseRules(ruleRows);
   const saleVouchers=TL.purchaseGstRows(rawSales);
-  const sales=tallyTotals(saleVouchers,masters,"sales");
+  const sales=tallyTotals(saleVouchers,masters,"sales",ruleRows);
   sales.calculation_version=2; // cached evidence must be refreshed after adjustment-logic upgrades
-  sales.docs=salesDocs(saleVouchers,masters);
+  sales.docs=salesDocs(saleVouchers,masters,rules);
+  sales.duplicate_docs=salesDocs(saleVouchers,masters,rules,false);
   const purchaseVouchers=TL.purchaseGstRows(rawPurchases);
-  const purchases=tallyTotals(purchaseVouchers,masters,"purchases");
-  purchases.docs=purchaseDocs(purchaseVouchers,masters);
+  const purchases=tallyTotals(purchaseVouchers,masters,"purchases",ruleRows);
+  purchases.docs=purchaseDocs(purchaseVouchers,masters,rules);
   purchases.calculation_version=2;
   await D.batch([
     D.stmt("INSERT INTO gst_control(id,company_id,period,updated_at) VALUES(?,?,?,?) ON CONFLICT(company_id,period) DO NOTHING",cid+"_"+period,cid,period,now()),
@@ -460,4 +488,5 @@ export function gstControlRoutes(route,authorize){
   route("POST","/api/companies/:cid/gst-control/:period/reconcile",async({D,env,p})=>{
     await authorize(D,env,p.cid);return json(await reconcile(D,p.cid,p.period));
   });
+  gstSuiteRoutes(route,authorize,{refreshTally,reconcile});
 }

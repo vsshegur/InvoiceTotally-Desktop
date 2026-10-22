@@ -1,4 +1,4 @@
-/* InvoiceTotally for Windows — the app window. No build step, plain modern JavaScript. */
+/* Vipul Workplace for Windows — the app window. No build step, plain modern JavaScript. */
 "use strict";
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ async function api(path, opts = {}) {
   try {
     let r;
     try { r = await fetch("/api" + path, { method: opts.method || (body ? "POST" : "GET"), headers, body }); }
-    catch { throw new Error("InvoiceTotally has stopped. Close this window and open it again from the desktop icon."); }
+    catch { throw new Error("Vipul Workplace has stopped. Close this window and open it again from the desktop icon."); }
     const data = r.headers.get("content-type")?.includes("json") ? await r.json() : await r.text();
     if (r.status === 401 && data?.code === "window") { showNoKey(); throw new Error(data.error); }
     if (r.status === 401 && data?.code === "signin" && !path.startsWith("/signin")) { ME = null; location.hash = "#/signin"; throw new Error("Please sign in"); }
@@ -74,9 +74,9 @@ async function api(path, opts = {}) {
   } finally { loadingEnd(); }
 }
 function showNoKey() {
-  app().innerHTML = `<div class="page signin"><div class="brandmark">IT</div><h1>Open InvoiceTotally from its icon</h1>
-    <p class="muted">This page was opened in an ordinary browser. For your data's safety, InvoiceTotally only works in its own window —
-    double-click <b>InvoiceTotally</b> on the desktop or in the Start menu.</p></div>`;
+  app().innerHTML = `<div class="page signin"><div class="brandmark">VW</div><h1>Open Vipul Workplace from its icon</h1>
+    <p class="muted">This page was opened in an ordinary browser. For your data's safety, Vipul Workplace only works in its own window —
+    double-click <b>Vipul Workplace</b> on the desktop or in the Start menu.</p></div>`;
 }
 const IMG_CACHE = new Map();
 async function loadPageImages(root) {
@@ -149,11 +149,11 @@ function topBar(crumbs = [], company = null) {
       ${creditsChip()}
       <a class="btn sm ghost" href="#/account" title="Your account and this PC's settings" aria-label="Account and settings">⚙</a>` : "";
   return `<header class="top">
-    <a class="logo" href="#/"><span class="mark">IT</span>InvoiceTotally</a>
+    <a class="logo" href="#/"><span class="mark">VW</span>Vipul Workplace</a>
     <nav class="crumbs">${cr ? '<span class="sep">›</span>' + cr : ""}</nav>
     <div class="spacer"></div>${right}
     <button class="btn sm ghost icon" id="themeBtn" title="Switch between light and dark" aria-label="Switch between light and dark"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z" fill="currentColor"/></svg></button>
-  </header>${ME?.update ? `<div class="banner info">InvoiceTotally ${esc(ME.update.version)} is available. <a href="${esc(ME.update.url)}" target="_blank" rel="noopener"><u>Download the installer</u></a> and run it — your data is kept.</div>` : ""}${ME?.licence?.stale ? `<div class="banner warn">Your licence hasn't been checked for a while — connect this PC to the internet so it can be confirmed.</div>` : ""}`;
+  </header>${ME?.update ? `<div class="banner info">Vipul Workplace ${esc(ME.update.version)} is available. <a href="${esc(ME.update.url)}" target="_blank" rel="noopener"><u>Download the installer</u></a> and run it — your data is kept.</div>` : ""}${ME?.licence?.stale ? `<div class="banner warn">Your licence hasn't been checked for a while — connect this PC to the internet so it can be confirmed.</div>` : ""}`;
 }
 function wireTop(company) {
   $("#themeBtn")?.addEventListener("click", () => {
@@ -234,7 +234,7 @@ async function route() {
         if (!hit) { location.hash = "#/"; break; }
         await hit[1](...hit[0].exec(h).slice(1));
       } catch (e) {
-        if (!/sign in|Open InvoiceTotally from/.test(e.message)) {
+        if (!/sign in|Open Vipul Workplace from/.test(e.message)) {
           app().innerHTML = topBar() + `<div class="page"><div class="alert bad"><b>Couldn't load this page.</b> ${esc(e.message)}</div>
             <p><button class="btn" onclick="route()">↻ Try again</button> <a class="btn ghost" href="#/">Home</a></p></div>`;
         }
@@ -248,18 +248,18 @@ const refresh = () => { if (!routing) quietNext = true; route(); };
 window.addEventListener("hashchange", route);
 
 // ---------------------------------------------------------------------------
-// signing in (Google, on the InvoiceTotally service's page)
+// signing in (Google, on the Vipul Workplace service's page)
 // ---------------------------------------------------------------------------
 async function viewSignin() {
   if (ME?.signed_in) { location.hash = "#/"; return; }
   app().innerHTML = topBar() + `<div class="page signin">
-    <div class="brandmark">IT</div>
-    <h1>Sign in to InvoiceTotally</h1>
+    <div class="brandmark">VW</div>
+    <h1>Sign in to Vipul Workplace</h1>
     <p class="muted">Use the Google account the admin added for you. Sign in once on this PC — it stays signed in.</p>
     <button class="btn primary big" id="go">Sign in with Google</button>
     <div id="msg" style="margin-top:16px"></div>
     ${ME?.service ? `<p class="muted small" style="margin-top:28px">Service: ${esc(ME.service)} · <a href="#" id="chgSvc"><u>change</u></a></p>` : ""}
-    <form id="svc" class="card" style="margin-top:16px;${ME?.service ? "display:none" : ""}"><b>InvoiceTotally service address</b>
+    <form id="svc" class="card" style="margin-top:16px;${ME?.service ? "display:none" : ""}"><b>Vipul Workplace service address</b>
       <p class="muted small" style="margin:4px 0 8px">Ask the admin for it — for example https://vipulshegur.packpilot.in</p>
       <div style="display:flex;gap:8px"><input class="in" name="url" value="${esc(ME?.service || "")}" placeholder="https://…" required><button class="btn">Save</button></div></form>
   </div>`;
@@ -313,7 +313,7 @@ async function viewAccount() {
         <div><span>Licence checked</span><b>${me.online === false ? `<span class="warn">offline — last ${ago(l.issued_at)}</span>` : ago(l.issued_at)}</b></div>
       </div>
       ${l.unlimited ? "" : `<p class="muted small" style="margin:12px 0 0">One invoice credit is used for each invoice read; one statement credit for each bank statement saved. To buy more, contact the admin.</p>`}</div>
-    ${l.admin ? `<div class="card" style="margin-top:12px"><b>Admin</b><p class="muted" style="margin:4px 0 10px">Add the people who may use InvoiceTotally, set their limits and give them credits.</p>
+    ${l.admin ? `<div class="card" style="margin-top:12px"><b>Admin</b><p class="muted" style="margin:4px 0 10px">Add the people who may use Vipul Workplace, set their limits and give them credits.</p>
       <a class="btn primary" href="#/admin">Open the admin panel</a></div>` : ""}
     <h2 style="margin-top:26px">This PC</h2>
     <form class="card" id="bk">
@@ -355,7 +355,7 @@ async function viewAccount() {
     const run=async passphrase=>{
       b.disabled=true;
       try{await api("/backups/restore",{body:{name,passphrase}});
-        toast("Restore prepared. CLOSE InvoiceTotally completely, then reopen it. The current database remains unchanged until restart.");}
+        toast("Restore prepared. CLOSE Vipul Workplace completely, then reopen it. The current database remains unchanged until restart.");}
       catch(e){toast(e.message,true);b.disabled=false;throw e;}
     };
     if(encrypted){

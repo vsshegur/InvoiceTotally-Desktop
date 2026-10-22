@@ -36,7 +36,8 @@ const adjustmentKind = name => {
   return null;
 };
 /** Read Tally purchase vouchers without counting item amounts again in the purchase ledger. */
-export function buildBooks(rows, ledgers = []) {
+export function buildBooks(rows, ledgers = [], rulesInput = []) {
+  const rules=new Map(rulesInput.map(r=>[normLedger(r.ledger_name),r.role]));
   const byName = new Map(ledgers.map(l => [normLedger(l.name),l]));
   const head = new Map();
   const isTax = (name) => {
@@ -44,8 +45,9 @@ export function buildBooks(rows, ledgers = []) {
     if(head.has(key))return head.get(key);
     const l=byName.get(key);
     const group=`${l?.primary_group||""} ${l?.parent||""}`;
-    const h=taxHead(name);
-    const ok=h&&(l?/duties|tax/i.test(group):/gst|tax|cess/i.test(name))&&!/tds|tcs/i.test(name);
+    const role=rules.get(key)||"auto";
+    const h=["igst","cgst","sgst","cess"].includes(role)?role:taxHead(name);
+    const ok=role!=="ignore"&&h&&(["igst","cgst","sgst","cess"].includes(role)||(l?/duties|tax/i.test(group):/gst|tax|cess/i.test(name)))&&!/tds|tcs/i.test(name);
     head.set(key,ok?h:null);
     return ok?h:null;
   };
@@ -60,16 +62,18 @@ export function buildBooks(rows, ledgers = []) {
     for(const [name,raw] of e){
       const amount=Number(raw)||0,signed=amount*sign;
       if(Math.abs(amount)<0.005)continue;
+      const role=rules.get(normLedger(name))||"auto";
+      if(role==="ignore")continue;
       const h=isTax(name);
       if(h){if(signed>0)t[h]+=signed;continue;}
       if(party&&normLedger(name)===normLedger(party)){value+=Math.abs(amount);continue;}
       const m=byName.get(normLedger(name));
       const group=normLedger(m?.primary_group||m?.parent);
-      const kind=adjustmentKind(name);
+      const kind=role==="auto"?adjustmentKind(name):role;
       if(kind==="round_off"){roundOff+=signed;continue;}
       // A freight / discount ledger can itself be under Purchase Accounts.
       // Classify it before handling the ordinary purchase allocation.
-      if(!kind&&group==="purchase accounts"){purchaseLedger+=signed;continue;}
+      if((!kind&&group==="purchase accounts")||kind==="base"){purchaseLedger+=signed;continue;}
       // Explicit voucher-level discount/freight/packing lines are the only extra
       // amounts added to a stock invoice; unknown accounting allocations are not
       // silently added over the inventory value.

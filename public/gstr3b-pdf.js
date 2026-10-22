@@ -91,11 +91,27 @@ export function parseGstr3bPdfPages(pages,expected={}){
   const net=rowAt(rows,sec4+1,end4<0?rows.length:end4,
     t=>/(?:\(?c\)?[.)\s-]*)?net\s*itc\s*available\b/i.test(t),4);
   if(!net)throw new Error("Could not reliably read all four amounts from Table 4(C) Net ITC Available. Enter them manually.");
+  const available=rowAt(rows,sec4+1,end4<0?rows.length:end4,
+    t=>/^(?:\(?a\)?[.)\s-]*)?itc\s+available\b/i.test(t),4);
+  const reversed=rowAt(rows,sec4+1,end4<0?rows.length:end4,
+    t=>/^(?:\(?b\)?[.)\s-]*)?itc\s+reversed\b/i.test(t),4);
+  const reclaimed=rowAt(rows,sec4+1,end4<0?rows.length:end4,
+    t=>/^(?:\(?1\)?[.)\s-]*)?itc\s+reclaimed\b/i.test(t),4);
+  const reversalOther=rowAt(rows,sec4+1,end4<0?rows.length:end4,
+    t=>/^(?:\(?2\)?[.)\s-]*)?other\s+reversals\b/i.test(t),4);
+  const itcHeads=["igst","cgst","sgst","cess"];
+  const amounts=entry=>entry?Object.fromEntries(itcHeads.map((h,i)=>[h,entry.values[i]])):null;
+  const itcDetails={available:amounts(available),reversed:amounts(reversed),net:amounts(net),
+    reclaimed:amounts(reclaimed),reversalOther:amounts(reversalOther),
+    pages:{available:available?.page||null,reversed:reversed?.page||null,net:net.page,reclaimed:reclaimed?.page||null},
+    source:"Filed GSTR-3B PDF, Table 4",
+    verified:!!(available&&reversed&&itcHeads.every((h,i)=>
+      Math.abs(Math.round((available.values[i]-reversed.values[i]-net.values[i])*100)/100)<=1))};
   const out={...Object.fromEntries(heads.map((h,i)=>[h,outward.values[i]])),
     ...Object.fromEntries(["itcIgst","itcCgst","itcSgst","itcCess"].map((h,i)=>[h,net.values[i]]))};
   if(Object.values(out).some(x=>!Number.isFinite(x)||Math.abs(x)>1e13))
     throw new Error("One or more amounts in the PDF is invalid.");
-  return {kind:"gstr3b",summary:out,gstin:expectedGstin||gstins[0],period,
+  return {kind:"gstr3b",summary:out,itcDetails,gstin:expectedGstin||gstins[0],period,
     evidence:{outward:{table:"3.1(a)",page:outward.page,row:outward.row},
       itc:{table:"4(C) Net ITC Available",page:net.page,row:net.row}},
     records:2};

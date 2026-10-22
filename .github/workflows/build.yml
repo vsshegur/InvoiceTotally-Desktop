@@ -58,7 +58,7 @@ jobs:
           "Installed app answered: version $($r.version)"
           $key = Get-Content (Join-Path $env:IT_DATA_DIR 'window.key')
           $page = Invoke-WebRequest http://localhost:47899/
-          if ($page.Content -notmatch 'InvoiceTotally') { throw 'page not served' }
+          if ($page.Content -notmatch 'Vipul Workplace') { throw 'page not served' }
           Invoke-RestMethod -Method Post -Uri http://127.0.0.1:47899/api/quit -Headers @{ 'x-it-key' = $key } | Out-Null
           Start-Sleep -Seconds 2
           if (!$p.HasExited) { throw 'the app did not stop when asked' }
@@ -71,9 +71,9 @@ jobs:
         run: |
           VERSION=$(node -p "require('./package.json').version")
           TAG="v$VERSION"
-          SETUP="build/InvoiceTotally-$VERSION-Setup.exe"
-          (cd build && sha256sum "InvoiceTotally-$VERSION-Setup.exe" > "InvoiceTotally-$VERSION-Setup.sha256.txt")
+          SETUP="build/Vipul-Workplace-$VERSION-Setup.exe"
+          (cd build && sha256sum "Vipul-Workplace-$VERSION-Setup.exe" > "Vipul-Workplace-$VERSION-Setup.sha256.txt")
           gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "InvoiceTotally $VERSION" --target "$GITHUB_SHA" \
-              --notes "Windows installer. Download InvoiceTotally-$VERSION-Setup.exe and run it — it installs for your Windows user, no administrator needed. Your data is kept when you update."
-          gh release upload "$TAG" "$SETUP" "build/InvoiceTotally-$VERSION-Setup.sha256.txt" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "Vipul Workplace $VERSION" --target "$GITHUB_SHA" \
+              --notes "Windows installer. Download Vipul-Workplace-$VERSION-Setup.exe and run it — it installs for your Windows user, no administrator needed. Your data is kept when you update."
+          gh release upload "$TAG" "$SETUP" "build/Vipul-Workplace-$VERSION-Setup.sha256.txt" --repo "$GITHUB_REPOSITORY" --clobber

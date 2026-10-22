@@ -55,7 +55,7 @@ function boot({authenticated=false}={}){
 
 test("desktop scripts execute in their actual HTML order without a ReferenceError",()=>{
   const result=boot();
-  assert.match(result.html,/Open InvoiceTotally from its icon/);
+  assert.match(result.html,/Open Vipul Workplace from its icon/);
   assert.doesNotMatch(result.html,/class="boot"/);
 });
 

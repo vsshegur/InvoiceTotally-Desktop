@@ -27,18 +27,18 @@ func ask(text string, flags uintptr) int {
 	u := syscall.NewLazyDLL("user32.dll")
 	p := u.NewProc("MessageBoxW")
 	t, _ := syscall.UTF16PtrFromString(text)
-	h, _ := syscall.UTF16PtrFromString("Uninstall InvoiceTotally")
+	h, _ := syscall.UTF16PtrFromString("Uninstall Vipul Workplace")
 	r, _, _ := p.Call(0, uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(h)), flags)
 	return int(r)
 }
 
 func main() {
-	r := ask("Uninstall InvoiceTotally?\n\nYes = remove the program but KEEP your data (companies, invoices, backups).\nNo = remove the program AND all your InvoiceTotally data on this PC.\nCancel = do nothing.", 0x23|0x30)
+	r := ask("Uninstall Vipul Workplace?\n\nYes = remove the program but KEEP your data (companies, invoices, backups).\nNo = remove the program AND all your Vipul Workplace data on this PC.\nCancel = do nothing.", 0x23|0x30)
 	if r == 2 {
 		return
 	}
 	removeData := r == 7
-	if removeData && ask("Delete all InvoiceTotally data on this PC? This can't be undone (entries already in Tally stay in Tally).", 0x34) != 6 {
+	if removeData && ask("Delete all Vipul Workplace data on this PC? This can't be undone (entries already in Tally stay in Tally).", 0x34) != 6 {
 		return
 	}
 	local := os.Getenv("LOCALAPPDATA")
@@ -55,7 +55,7 @@ func main() {
 	self, _ := os.Executable()
 	dir := filepath.Dir(self)
 	programs := filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs")
-	for _, p := range []string{filepath.Join(os.Getenv("USERPROFILE"), "Desktop", "InvoiceTotally.lnk"), filepath.Join(programs, "InvoiceTotally.lnk")} {
+	for _, p := range []string{filepath.Join(os.Getenv("USERPROFILE"), "Desktop", "InvoiceTotally.lnk"), filepath.Join(programs, "InvoiceTotally.lnk"), filepath.Join(os.Getenv("USERPROFILE"), "Desktop", "Vipul Workplace.lnk"), filepath.Join(programs, "Vipul Workplace.lnk")} {
 		_ = os.Remove(p)
 	}
 	_ = hidden("reg.exe", "delete", `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\InvoiceTotally`, "/f").Run()
