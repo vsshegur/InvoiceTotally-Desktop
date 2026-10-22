@@ -11,12 +11,13 @@ rm -rf "$STAGE" && mkdir -p "$STAGE/runtime" "$STAGE/app/desktop" build
 export GOOS=windows GOARCH=amd64 CGO_ENABLED=0
 ( cd windows && go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../$STAGE/InvoiceTotally.exe" ./launcher \
   && go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../$STAGE/Uninstall InvoiceTotally.exe" ./uninstall )
-cp assets/InvoiceTotally.ico "$STAGE/"
+# Create updated VW icon while preserving the legacy filename in existing installations.
+PY=$(command -v python3 || command -v python)
+"$PY" windows/make-icon.py "$STAGE/InvoiceTotally.ico"
 cp "$NODE_EXE" "$STAGE/runtime/node.exe"
 cp package.json "$STAGE/app/"
 cp desktop/*.mjs desktop/config.json "$STAGE/app/desktop/"
 cp -r engine public "$STAGE/app/"
-PY=$(command -v python3 || command -v python)
 "$PY" - "$STAGE" windows/setup/payload.zip <<'PYEOF'
 import sys, os, zipfile
 stage, out = sys.argv[1], sys.argv[2]
