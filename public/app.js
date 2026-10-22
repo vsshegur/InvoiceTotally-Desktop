@@ -202,6 +202,9 @@ const routes = [
   [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
   [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
   [/^#\/s\/(\w+)$/, (sid) => viewStatement(sid)],
+  [/^#\/c\/(\w+)\/gstr2b-purchase$/, (cid) => viewGstr2bPurchaseChoose(cid)],
+  [/^#\/c\/(\w+)\/gstr2b-purchase\/upload$/, (cid) => viewGstUpload(cid,"purchase")],
+  [/^#\/p2b\/(\w+)$/, (id) => viewGstr2bPurchaseBatch(id)],
   [/^#\/c\/(\w+)\/gstr2b\/upload$/, (cid) => viewGstUpload(cid)],
   [/^#\/g\/(\w+)$/, (rid) => viewGst(rid)],
   [/^#\/c\/(\w+)\/upload$/, viewUpload],
@@ -558,12 +561,19 @@ async function companyBatches(c, el) {
   if (!c.masters.ledger) el.insertAdjacentHTML("beforebegin", `<div class="alert warn" style="margin-bottom:12px">${help || (c.pending_jobs ? "Reading your ledgers and stock items from Tally…" : "Masters aren't imported yet. Press <b>Import masters</b> (top right) so invoices can be matched to your ledgers and stock items.")}</div>`);
   else if (help && c.pending_jobs) el.insertAdjacentHTML("beforebegin", `<div class="alert warn" style="margin-bottom:12px">${help} ${plural(c.pending_jobs, "entry is", "entries are")} waiting to go to Tally.</div>`);
   const stageLbl = { find: "Finding invoices…", split: "Checking the split…", read: "Reading…", review: "", error: "Failed" };
-  el.innerHTML = rows.length ? `<table class="grid"><thead><tr><th>Batch</th><th>Type</th><th>Uploaded</th><th class="num">Invoices</th><th>Progress</th></tr></thead><tbody>
+  const choices='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:18px">'+
+    '<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/upload">'+
+    '<h3 style="margin:0 0 5px">1. Upload Invoices</h3><p class="muted small">Existing PDF, photo and Excel invoice reader. Supports purchase/sales, item lines, discounts and freight.</p>'+
+    '<span class="btn sm">Upload invoices →</span></a>'+
+    '<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/gstr2b-purchase">'+
+    '<h3 style="margin:0 0 5px">2. Upload GSTR-2B</h3><p class="muted small">Prepare Purchase vouchers from GST portal GSTR-2B with fixed PURCHASE-GSTR2B ledger, review, then post to Tally.</p>'+
+    '<span class="btn sm primary">Upload GSTR-2B →</span></a></div>';
+  el.innerHTML = choices + (rows.length ? `<table class="grid"`<thead><tr><th>Batch</th><th>Type</th><th>Uploaded</th><th class="num">Invoices</th><th>Progress</th></tr></thead><tbody>
     ${rows.map((b) => { const n = b.counts || {}; const done = n.synced || 0;
       return `<tr class="click" data-href="#/b/${b.id}"><td><b>${esc(b.name)}</b></td><td>${esc(b.voucher_type)}</td><td class="muted">${ago(b.created_at)}</td>
       <td class="num">${b.invoices}</td><td>${b.stage !== "review" ? `<span class="${b.stage === "error" ? "bad" : "warn"}">${stageLbl[b.stage]} ${b.stage === "error" ? esc(b.error || "") : ""}</span>` :
         `<span class="${done === b.invoices && done ? "good" : ""}">${done} of ${b.invoices} in Tally</span>${n.failed ? ` · <span class="bad">${n.failed} failed</span>` : ""}`}</td></tr>`; }).join("")}
-    </tbody></table>` : `<div class="card empty">No invoices yet. <a class="btn primary" style="margin-left:8px" href="#/c/${c.id}/upload">Upload invoices</a></div>`;
+    </tbody></table>` : `<div class="card empty">No invoices yet. Choose one of the two upload options above.</div>`);
   $$("tr[data-href]", el).forEach((tr) => tr.onclick = () => location.hash = tr.dataset.href);
   every(5000, async () => { if (rows.some((b) => b.stage !== "review" && b.stage !== "error") || (!c.masters.ledger && c.pending_jobs)) refresh(); });
 }
