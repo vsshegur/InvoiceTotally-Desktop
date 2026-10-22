@@ -20,7 +20,7 @@ const mIndex=s=>months.findIndex(m=>m===String(s||"").toLowerCase()||m.slice(0,3
 function detectPeriod(all){
   const text=clean(all).replace(/\s*[-–]\s*/g,"-");
   let m=/(?:return\s*period|tax\s*period|period\s*of\s*return)\s*[:.\- ]*([A-Za-z]{3,9})[\s,/\-]+(20\d{2})/i.exec(text);
-  if(m)return `${m[2]}-${String(mIndex(m[1])+1).padStart(2,"0")}`;
+  if(m&&mIndex(m[1])>=0)return `${m[2]}-${String(mIndex(m[1])+1).padStart(2,"0")}`;
   m=/(?:return\s*period|tax\s*period|period\s*of\s*return)\s*[:.\- ]*(0?[1-9]|1[0-2])[/-](20\d{2})/i.exec(text);
   if(m)return `${m[2]}-${String(+m[1]).padStart(2,"0")}`;
   m=/(?:return\s*period|tax\s*period|period\s*of\s*return)\s*[:.\- ]*(20\d{2})[-/](0?[1-9]|1[0-2])/i.exec(text);
@@ -47,7 +47,7 @@ function rowsOfPage(page){
 function nearAmounts(rows,find,count,endAt){
   for(let i=find+1;i<Math.min(rows.length,find+4,endAt);i++){
     const next=clean(rows[i].text);
-    if(/^\s*(?:\(?[a-e]\)|\(?[1-5]\)|\d+\.\d+)\b/i.test(next))break;
+    if(/^\s*(?:\([a-e]\)|[a-e]\)|\([1-5]\)|[1-5]\))(?=\s|$)/i.test(next))break;
     const amounts=moneyInRow(next,count);
     if(amounts)return {values:amounts,row:next};
   }
