@@ -2,6 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {parseGstr3bPdfPages,parseGstr3bPdfTask,releaseGstr3bPdf,detectGstr3bFilenamePeriod} from "../public/gstr3b-pdf.js";
 import fs from "node:fs";
+import {db} from "../engine/db.js";
+import {makeD1} from "../desktop/d1.mjs";
+import {savePortal} from "../engine/gst-control.js";
 
 const GSTIN="27ACKPS3168H1Z6";
 const pdfRows=(date="Return Period: April 2026")=>[{
@@ -176,4 +179,27 @@ test("GSTR-3B PDF UI requires explicit human confirmation for filename/selected-
  assert.match(text,/ccConfirmGstr3bPeriod/);
  assert.match(text,/confirmedByUser/);
  assert.match(text,/return month was not readable/i);
+});
+
+test("GSTR-3B persisted figures require confirmed month when only filename supplies month",async()=>{
+ const DB=makeD1(),D=db({DB}),cid="gstr3b-period-evidence-company",period="2026-04";
+ try{
+  await D.insert("companies",{id:cid,name:"VIJAYALAXMI TEXTILES",tally_company:"VIJAYALAXMI TEXTILES",
+    bridge_token:"gstr3b-evidence-token",gstin:GSTIN});
+  const summary={taxable:100,igst:5,cgst:0,sgst:0,cess:0,
+    itcIgst:0,itcCgst:0,itcSgst:0,itcCess:0};
+  const payload={kind:"gstr3b",summary,
+    periodEvidence:{return_period:period,source:"filename",confirmedByUser:false}};
+  await assert.rejects(()=>savePortal(D,cid,period,payload),/Confirm the filed GSTR-3B return month/);
+  await assert.rejects(()=>savePortal(D,cid,period,{...payload,periodEvidence:{
+    return_period:"2026-05",source:"filename",confirmedByUser:true}}),/does not match selected month/);
+  const ok=await savePortal(D,cid,period,{...payload,periodEvidence:{
+    return_period:period,source:"filename",confirmedByUser:true}});
+  assert.equal(ok.ok,true);
+  const stored=await D.first("SELECT portal_gstr3b FROM gst_control WHERE company_id=? AND period=?",cid,period);
+  const record=JSON.parse(stored.portal_gstr3b);
+  assert.equal(record.periodEvidence.return_period,period);
+  assert.equal(record.periodEvidence.confirmedByUser,true);
+  assert.equal(record.periodEvidence.source,"filename");
+ }finally{DB.close();}
 });
