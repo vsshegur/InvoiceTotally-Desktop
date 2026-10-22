@@ -364,7 +364,7 @@ export async function gstr2bTotals(D,cid,period){
         dt:r.dt||"",sec:r.sec||"",note:r.note||"",status:r.status||"",
         eligible,mid:r.mid||"",tally_date:link?.tally_date||"",
         tally_number:link?.tally_number||"",
-        ...Object.fromEntries(taxHeads.map(k=>[k:r2(sign*(+r[k]||0))]))});
+        ...Object.fromEntries(taxHeads.map(k=>[k,r2(sign*(+r[k]||0))]))});
     }
   }
   for(const k of taxHeads)itc[k]=r2(itc[k]);
