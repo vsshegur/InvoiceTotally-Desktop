@@ -11,11 +11,16 @@ const month=x=>String(x||"").slice(0,7);
 const money=(x,h)=>x==null?null:r2(x[h]);
 const sum=(xs,key,sign=()=>1)=>r2(xs.reduce((n,x)=>n+(Number(x[key])||0)*sign(x),0));
 const key=x=>cleanDocumentKey(x);
-const identity=d=>[String(d.gstin||d.ctin||"").toUpperCase(),key(d.ref||d.num||d.number),yearFor(d.dt||d.date)].join("|");
+const identity=d=>{
+  const gstin=String(d.gstin||d.ctin||"").toUpperCase().trim();
+  const party=String(d.party||d.name||"").toUpperCase().replace(/\s+/g," ").trim();
+  const owner=gstin?"GSTIN:"+gstin:party?"PARTY:"+party:"";
+  return [owner,key(d.ref||d.num||d.number),yearFor(d.date||d.dt)].join("|");
+};
 function duplicates(rows,type){
   const groups=new Map();
   for(const row of rows){
-    const k=identity(row);if(k.includes("||")||!key(row.ref||row.num||row.number))continue;
+    const k=identity(row);if(k.startsWith("|")||k.includes("||")||!key(row.ref||row.num||row.number))continue;
     if(!groups.has(k))groups.set(k,[]);
     groups.get(k).push(row);
   }
@@ -30,7 +35,7 @@ function duplicates(rows,type){
       supplier:records[0].party||"",count:distinct.length,
       vouchers:distinct.slice(0,12).map(x=>({number:x.number||"",date:x.date||x.dt||"",mid:x.mid||"",value:x.val??null,
         gst:r2(heads.reduce((v,h)=>v+(Number(x[h])||0),0))})),
-      reason:"Multiple distinct Tally vouchers have the same party GSTIN and normalized supplier invoice number in one financial year; verify before changing entries."});
+      reason:"Multiple distinct Tally vouchers have the same supplier GSTIN (or exact party name when unregistered) and invoice number within one financial year. Review in Tally before changing entries."});
   }
   return result.slice(0,150);
 }
@@ -106,8 +111,11 @@ export async function getMonthInsight(D,cid,period){
   let salesRows=[];
   const saleCaches=await D.all("SELECT period,tally_sales FROM gst_control WHERE company_id=? AND period BETWEEN ? AND ?",cid,
     (+period.slice(0,4)-1)+"-04",(+period.slice(0,4)+1)+"-03");
-  for(const c of saleCaches)for(const v of jload(c.tally_sales)?.docs||[])
-    salesRows.push({...v,number:v.tally_number||v.number,num:v.number,id:v.mid||"",date:v.date||c.period+"-01"});
+  for(const c of saleCaches){
+    const cached=jload(c.tally_sales);
+    for(const v of cached?.duplicate_docs||cached?.docs||[])
+      salesRows.push({...v,number:v.tally_number||v.number,num:v.number,id:v.mid||"",date:v.date||c.period+"-01"});
+  }
   const reversal=g3?.itcDetails||null;
   const baseline=await gst2bTotalsForPeriod(D,cid,period);
   return {period,reviewed_at:row.reviewed_at||null,has_gstr1:!!g1,has_gstr3b:!!g3,
