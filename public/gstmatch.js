@@ -232,6 +232,7 @@ export function summarize(docs, results, booksOnly, byMid) {
     if (r.mid && byMid?.get(r.mid)) add(s.books, byMid.get(r.mid), byMid.get(r.mid).kind === "dn" ? -1 : 1);
   }
   for (const b of booksOnly) { add(s.booksOnly, b, b.kind === "dn" ? -1 : 1); add(s.books, b, b.kind === "dn" ? -1 : 1); }
+  s.calculation_version=2;
   return s;
 }
 
