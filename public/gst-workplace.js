@@ -134,7 +134,7 @@ const GSTWorkplace=(()=>{
     link.href=url;link.download="Vipul-Workplace-GST-FY-"+yearly.fy+".csv";
     document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
-  async function mount(company,period){
+  async function mount(company,period,parentEl){
     const node=document.querySelector("#vwGstSuite");
     if(!node)return;
     node.innerHTML='<div class="card" style="padding:14px"><h3>Vipul Workplace GST Workspace</h3><p class="muted small">Loading locally saved GST evidence…</p></div>';
@@ -165,7 +165,7 @@ const GSTWorkplace=(()=>{
       try{
         const out=await api(base+"/"+period+"/run",{body:{}});
         toast("Tally GST refreshed: "+out.read.sales+" sales and "+out.read.purchases+" purchases. Reconciliation updated.");
-        companyGstControl(company,document.querySelector("#vwGstSuite").closest(".page")||document.querySelector("#vwGstSuite").parentElement);
+        companyGstControl(company,parentEl);
       }catch(e){run.disabled=false;document.querySelector("#vwRunStatus").textContent=e.message;toast(e.message,true);}
     };
     const save=document.querySelector("#vwSaveRole");save.onclick=async()=>{
@@ -173,7 +173,7 @@ const GSTWorkplace=(()=>{
       if(!ledger){toast("Choose an imported Tally ledger",true);return;}
       if(!confirm("Apply GST treatment '"+role+"' to ledger '"+ledger+"' for "+company.name+"? A fresh Tally read and 2B match are required."))return;
       save.disabled=true;
-      try{await api(base+"/rules",{body:{ledger_name:ledger,role}});toast("GST mapping saved. Re-read Tally to apply.");await mount(company,period);}
+      try{await api(base+"/rules",{body:{ledger_name:ledger,role}});toast("GST mapping saved. Re-read Tally to apply.");await mount(company,period,parentEl);}
       catch(e){save.disabled=false;toast(e.message,true);}
     };
     const exportBtn=document.querySelector("#vwYearCsv");if(exportBtn)exportBtn.onclick=()=>exportAnnual(yearly);
