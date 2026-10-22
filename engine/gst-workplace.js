@@ -186,10 +186,11 @@ export async function getYearly(D,cid,fy){
 }
 export function gstSuiteRoutes(route,authorize,{refreshTally,reconcile}){
   const auth=async ctx=>{await authorize(ctx.D,ctx.env,ctx.p.cid);};
+  route("GET","/api/companies/:cid/gst-suite/rules",async ctx=>{await auth(ctx);return json(await getRuleEditor(ctx.D,ctx.p.cid));});
   route("GET","/api/companies/:cid/gst-suite/:period",async ctx=>{await auth(ctx);return json(await getMonthInsight(ctx.D,ctx.p.cid,ctx.p.period));});
   route("GET","/api/companies/:cid/gst-suite/year/:fy",async ctx=>{await auth(ctx);return json(await getYearly(ctx.D,ctx.p.cid,ctx.p.fy));});
   route("GET","/api/companies/:cid/gst-suite/suppliers/:fy",async ctx=>{await auth(ctx);return json(await getSuppliers(ctx.D,ctx.p.cid,ctx.p.fy));});
-  route("GET","/api/companies/:cid/gst-suite/rules",async ctx=>{await auth(ctx);return json(await getRuleEditor(ctx.D,ctx.p.cid));});
+
   route("POST","/api/companies/:cid/gst-suite/rules",async ctx=>{await auth(ctx);return json(await setLedgerRule(ctx.D,ctx.p.cid,ctx.body));});
   route("POST","/api/companies/:cid/gst-suite/:period/run",async ctx=>{
     await auth(ctx);
