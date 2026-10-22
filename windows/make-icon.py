@@ -30,11 +30,7 @@ def pixel(x, y):
     if 39 < y < 47 and 45 < x < 211:
         rgb = [32, 68, 83]
     # Two interlocked letters, white VW with orange lower accent.
-    white = max(
-        segment(x, y, 43, 86, 75, 170, 103, 86, 15),
-        segment(x, y, 125, 86, 143, 169, 161, 111, 14),
-        segment(x, y, 161, 111, 179, 169, 211, 86, 14),
-    ) if False else 0
+    white = 0
     # V has two strokes; W has four.
     strokes = [
         (43, 87, 75, 166), (75, 166, 108, 87),
