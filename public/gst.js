@@ -256,6 +256,16 @@ async function viewGst(rid) {
     const html = `<div class="box"><div class="bh"><span class="eyebrow">${esc({ B2B: "Invoice", B2BA: "Amended invoice", CDNR: "Credit / debit note", CDNRA: "Amended note", ECO: "E-commerce invoice", ECOA: "Amended e-commerce invoice", ISD: "ISD credit", IMPG: "Import of goods" }[d.sec] || d.sec)}${d.supprd ? ` · filed for ${esc(/^\d{6}$/.test(d.supprd) ? GP.periodLabel(GP.periodFromRtn(d.supprd)) : d.supprd)}` : ""}</span>${gstChip(st)}</div><div class="bb">
         <div class="big">${esc(d.name || "—")}</div><div class="muted mono" style="font-size:12px">${esc(d.ctin)}${d.pos ? ` · place of supply ${esc(d.pos)}` : ""}</div>
         ${cmpTable(d, b)}
+        ${b?.breakdown ? `<details style="margin-top:12px"><summary style="cursor:pointer">How Tally taxable value was calculated</summary>
+          <div class="kv" style="margin:8px 0">
+            <div><span>Base (${esc({inventory:"stock items",purchase_ledger:"purchase ledger",other_debit_ledgers:"other debit ledgers"}[b.breakdown.source]||b.breakdown.source)})</span><b>${money(b.breakdown.base)}</b></div>
+            <div><span>Purchase ledger total (not added twice)</span><b>${money(b.breakdown.purchase_ledger)}</b></div>
+            <div><span>Separate freight / discount / charges</span><b>${money(b.breakdown.adjustments)}</b></div>
+            <div><span>Correct taxable</span><b>${money(b.breakdown.taxable)}</b></div>
+          </div>
+          ${(b.breakdown.adjustment_lines||[]).map(a=>`<div class="small muted">${esc(a.name)}: ${money(a.amount)} (${esc(a.kind)})</div>`).join("")}
+          ${(b.breakdown.unclassified||[]).length?`<p class="small warn">Unclassified ledger(s) were excluded from the stock-item taxable base. Review GST treatment: ${b.breakdown.unclassified.map(a=>esc(a.name)).join(", ")}</p>`:""}
+          </details>`:""}
         ${b ? `<div class="muted" style="font-size:12.5px;margin-top:8px">Tally: ${esc(b.vtype || "")} <b>${esc(b.number || "")}</b> dated ${fmtDate(b.date)} · ${esc(b.party || "")}${d.method === "manual" ? " · linked by you" : ""}</div>` : ""}
         ${(d.notes || []).length ? `<ul class="notes">${d.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
         ${st === "missing" && d.compare !== false ? `<div class="alert warn" style="margin-top:10px">${d.itc === "N" ? "This invoice is in GSTR-2B but its credit is not available." : `Your supplier filed this invoice but it isn't in Tally. Enter the purchase (ITC ${money(gstTax(d))}) or link it below if it's already there under another number.`}</div>` : ""}
