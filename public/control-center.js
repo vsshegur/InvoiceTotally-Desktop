@@ -291,15 +291,21 @@ async function companyGstControl(c,el){
     }catch(e){toast(e.message,true);input.value="";}
   });
   let pdfItcDetails=s.portal_gstr3b?.itcDetails||null;
+  let pdfPeriodEvidence=s.portal_gstr3b?.periodEvidence||null;
+  let pendingPdfPeriodConfirmation=false;
   const pdfInput=$('[data-gstr3b-pdf]',el);
   if(pdfInput)pdfInput.onchange=async()=>{
     const file=pdfInput.files?.[0];if(!file)return;
     const preview=$('#ccGstr3bPdfPreview',el);
+    pendingPdfPeriodConfirmation=false;
     try{
       preview.textContent="Reading GSTR-3B PDF locally…";
       const {readGstr3bPdf}=await import("/gstr3b-pdf.js");
       const report=await readGstr3bPdf(file,{period,gstin:c.gstin});
       pdfItcDetails=report.itcDetails||null;
+      pendingPdfPeriodConfirmation=!!report.periodConfirmationRequired;
+      pdfPeriodEvidence={return_period:report.period,source:report.periodSource,
+        confirmedByUser:!report.periodConfirmationRequired};
       for(const field of $$('.ccGstNum[data-kind="gstr3b"]',el)){
         const amount=report.summary[field.dataset.head];
         if(Number.isFinite(amount))field.value=String(amount);
@@ -311,17 +317,35 @@ async function companyGstControl(c,el){
         '<div>'+esc(pdfItcDetails?.verified?
           "Table 4(A) − Table 4(B) agrees with Table 4(C).":
           "Table 4(A) / 4(B) gross and reversal details are unavailable or do not agree with 4(C); review manually.")+'</div>'+
+        (report.periodConfirmationRequired?
+          '<div class="alert warn" style="margin:8px 0"><b>Return month was not readable from the PDF text.</b> '+
+          'The month '+esc(report.period)+' came from '+esc(report.periodSource==="filename"?"the filename":"your selected month")+
+          '. Verify the actual filed return month in the PDF before saving.'+
+          '<label style="display:block;margin-top:8px"><input type="checkbox" id="ccConfirmGstr3bPeriod"> '+
+          'I checked this filed GSTR-3B and confirm it belongs to '+esc(report.period)+'.</label></div>':
+          '<div class="good">Return month verified from the PDF text.</div>')+
         '<div>Please verify taxable and all GST-head values against the filed PDF before clicking Save GSTR-3B figures. No external service was contacted.</div></div>';
       toast("GSTR-3B PDF read offline. Verify values and Save.");
-    }catch(error){pdfItcDetails=s.portal_gstr3b?.itcDetails||null;preview.textContent=error.message;toast(error.message,true);}
+    }catch(error){pdfItcDetails=s.portal_gstr3b?.itcDetails||null;
+      pdfPeriodEvidence=s.portal_gstr3b?.periodEvidence||null;
+      pendingPdfPeriodConfirmation=false;
+      preview.textContent=error.message;toast(error.message,true);}
   };
   $$('[data-save]',el).forEach(btn=>btn.onclick=async()=>{
     const kind=btn.dataset.save;
-    const fields=$$('.ccGstNum[data-kind="'+kind+'"]',el);
+    if(kind==="gstr3b"&&pendingPdfPeriodConfirmation){
+      if(!$('#ccConfirmGstr3bPeriod',el)?.checked){
+        toast("Verify the filed GSTR-3B return month and tick the confirmation before saving",true);
+        return;
+      }
+      pdfPeriodEvidence={...pdfPeriodEvidence,confirmedByUser:true};
+    }
+    const fields=$('.ccGstNum[data-kind="'+kind+'"]',el);
     const summary=Object.fromEntries(fields.map(f=>[f.dataset.head,f.value===""?null:Number(f.value)]));
     btn.disabled=true;
     try{await api("/companies/"+c.id+"/gst-control/"+period+"/portal",{body:{kind,summary,
-      ...(kind==="gstr3b"&&pdfItcDetails?{itcDetails:pdfItcDetails}:{})}});
+      ...(kind==="gstr3b"&&pdfItcDetails?{itcDetails:pdfItcDetails}:{}),
+      ...(kind==="gstr3b"&&pdfPeriodEvidence?{periodEvidence:pdfPeriodEvidence}:{})}});
       toast(kind.toUpperCase()+" totals saved");companyGstControl(c,el);}
     catch(e){toast(e.message,true);btn.disabled=false;}
   });
