@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {parseGstr3bPdfPages} from "../public/gstr3b-pdf.js";
+import {parseGstr3bPdfPages,parseGstr3bPdfTask,releaseGstr3bPdf} from "../public/gstr3b-pdf.js";
 import fs from "node:fs";
 
 const GSTIN="27ACKPS3168H1Z6";
@@ -61,4 +61,61 @@ test("GSTR-3B form presents a PDF (not JSON) file selector and requires Save",()
  assert.match(text,/Save GSTR-3B figures/);
  assert.match(text,/\.pdf,application\/pdf/);
  assert.match(text,/kind==="gstr3b"/);
+});
+
+const mockedPdfTask=(rows,{withTaskDestroy=true,withPdfDestroy=false,destroyThrows=false}={})=>{
+  const calls={taskDestroy:0,pdfDestroy:0,pageCleanup:0};
+  const pdf={numPages:1,async getPage(){
+    return {async getTextContent(){return {items:rows.map((str,i)=>({
+      str,transform:[1,0,0,1,16,800-i*14]
+    }))};},cleanup(){calls.pageCleanup++;}};
+  }};
+  if(withPdfDestroy)pdf.destroy=async()=>{calls.pdfDestroy++;};
+  const task={promise:Promise.resolve(pdf)};
+  if(withTaskDestroy)task.destroy=async()=>{
+    calls.taskDestroy++;
+    if(destroyThrows)throw new Error("PDF.js cleanup failed");
+  };
+  return {task,pdf,calls};
+};
+
+test("real GSTR-3B importer lifecycle succeeds when PDF.js document has NO destroy() method",async()=>{
+  const m=mockedPdfTask(pdfRows()[0].rows);
+  assert.equal(m.pdf.destroy,undefined);
+  const parsed=await parseGstr3bPdfTask(m.task,{period:"2026-04",gstin:GSTIN});
+  assert.equal(parsed.summary.taxable,123450.50);
+  assert.equal(parsed.summary.itcCgst,7666);
+  assert.equal(m.calls.taskDestroy,1,"PDF.js loading task is responsible for destruction");
+  assert.equal(m.calls.pdfDestroy,0);
+  assert.equal(m.calls.pageCleanup,1);
+});
+
+test("GSTR-3B PDF lifecycle preserves GST validation error despite failing task cleanup",async()=>{
+  const m=mockedPdfTask(pdfRows()[0].rows,{destroyThrows:true});
+  await assert.rejects(
+    ()=>parseGstr3bPdfTask(m.task,{period:"2026-05",gstin:GSTIN}),
+    /PDF return period 2026-04 does not match the selected month 2026-05/
+  );
+  assert.equal(m.calls.taskDestroy,1);
+});
+
+test("GSTR-3B PDF cleanup supports older document-only destroy and neither method",async()=>{
+  const older=mockedPdfTask(pdfRows()[0].rows,{withTaskDestroy:false,withPdfDestroy:true});
+  const parsed=await parseGstr3bPdfTask(older.task,{period:"2026-04",gstin:GSTIN});
+  assert.equal(parsed.summary.cgst,3085.7);
+  assert.equal(older.calls.pdfDestroy,1);
+  const noDestroy=mockedPdfTask(pdfRows()[0].rows,{withTaskDestroy:false});
+  const again=await parseGstr3bPdfTask(noDestroy.task,{period:"2026-04",gstin:GSTIN});
+  assert.equal(again.period,"2026-04");
+  await releaseGstr3bPdf(null,null);
+});
+
+test("GSTR-3B PDF releases loading task when opening the document fails",async()=>{
+  let closed=0;
+  const task={
+    promise:Promise.reject(new Error("not readable")),
+    destroy:async()=>{closed++;}
+  };
+  await assert.rejects(()=>parseGstr3bPdfTask(task),/not readable/);
+  assert.equal(closed,1);
 });

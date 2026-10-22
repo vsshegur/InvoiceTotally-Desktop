@@ -116,18 +116,28 @@ export function parseGstr3bPdfPages(pages,expected={}){
       itc:{table:"4(C) Net ITC Available",page:net.page,row:net.row}},
     records:2};
 }
-export async function readGstr3bPdf(file,expected={}){
-  if(!file||!(/\.pdf$/i.test(file.name)||file.type==="application/pdf"))
-    throw new Error("Select a GSTR-3B PDF downloaded from the GST portal.");
-  if(file.size>20*1024*1024)throw new Error("Choose a GSTR-3B PDF smaller than 20 MB.");
-  const pdfjs=await import("/vendor/pdfjs/pdf.min.mjs");
-  pdfjs.GlobalWorkerOptions.workerSrc="/vendor/pdfjs/pdf.worker.min.mjs";
-  const bytes=await file.arrayBuffer();
+/** PDF.js owns destroy() on the getDocument() loading task, not necessarily
+ *  on the document it resolves to. Keep cleanup best-effort and never mask a
+ *  GSTIN, period, or table-parsing error with an unrelated cleanup failure. */
+export async function releaseGstr3bPdf(loadingTask,pdf){
+  try{
+    if(typeof loadingTask?.destroy==="function")await loadingTask.destroy();
+    else if(typeof pdf?.destroy==="function")await pdf.destroy();
+    else if(typeof pdf?.cleanup==="function")await pdf.cleanup();
+  }catch{
+    // Cleanup is not part of GST validation; preserve the actual PDF parse result.
+  }
+}
+/** Separate extraction from browser file selection, so the full PDF.js
+ *  lifecycle can be regression-tested with a document lacking destroy(). */
+export async function parseGstr3bPdfTask(loadingTask,expected={}){
   let pdf;
-  try{pdf=await pdfjs.getDocument({data:new Uint8Array(bytes)}).promise;}
-  catch(err){throw new Error(/password/i.test(String(err?.message||""))?
-    "Password-protected PDFs cannot be read. Please export an unlocked filed return.":
-    "PDF could not be opened. Use the filed GSTR-3B PDF from GST portal.");}
+  try{
+    pdf=await loadingTask.promise;
+  }catch(err){
+    await releaseGstr3bPdf(loadingTask,null);
+    throw err;
+  }
   try{
     if(pdf.numPages>30)throw new Error("PDF has too many pages for one GSTR-3B return.");
     const pages=[];
@@ -148,9 +158,30 @@ export async function readGstr3bPdf(file,expected={}){
       lines.sort((a,b)=>b.y-a.y);
       pages.push({rows:lines.map(line=>({page:p,text:line.items.sort((a,b)=>a.x-b.x)
         .map(t=>t.text).join(" ")}))});
+      if(typeof page.cleanup==="function")page.cleanup();
     }
     if(!pages.some(p=>p.rows?.length))
       throw new Error("This PDF contains no selectable text. Scanned images cannot be imported offline; enter values manually.");
     return parseGstr3bPdfPages(pages,expected);
-  }finally{await pdf.destroy();}
+  }finally{
+    await releaseGstr3bPdf(loadingTask,pdf);
+  }
+}
+export async function readGstr3bPdf(file,expected={}){
+  if(!file||!(/\.pdf$/i.test(file.name)||file.type==="application/pdf"))
+    throw new Error("Select a GSTR-3B PDF downloaded from the GST portal.");
+  if(file.size>20*1024*1024)throw new Error("Choose a GSTR-3B PDF smaller than 20 MB.");
+  const pdfjs=await import("/vendor/pdfjs/pdf.min.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc="/vendor/pdfjs/pdf.worker.min.mjs";
+  const bytes=await file.arrayBuffer();
+  const loadingTask=pdfjs.getDocument({data:new Uint8Array(bytes)});
+  try{
+    return await parseGstr3bPdfTask(loadingTask,expected);
+  }catch(err){
+    if(err?.name==="PasswordException"||/password/i.test(String(err?.message||"")))
+      throw new Error("Password-protected PDFs cannot be read. Please export an unlocked filed return.");
+    if(["InvalidPDFException","MissingPDFException","UnknownErrorException"].includes(err?.name))
+      throw new Error("PDF could not be opened. Use the filed GSTR-3B PDF from GST portal.");
+    throw err;
+  }
 }
