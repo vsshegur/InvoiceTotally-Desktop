@@ -39,7 +39,7 @@ func message(text string, flags uintptr) int {
 	u := syscall.NewLazyDLL("user32.dll")
 	p := u.NewProc("MessageBoxW")
 	t, _ := syscall.UTF16PtrFromString(text)
-	h, _ := syscall.UTF16PtrFromString("InvoiceTotally Setup")
+	h, _ := syscall.UTF16PtrFromString("Vipul Workplace Setup")
 	r, _, _ := p.Call(0, uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(h)), flags)
 	return int(r)
 }
@@ -92,7 +92,7 @@ func main() {
 		out, e := os.Create(tmp)
 		if e != nil {
 			rc.Close()
-			fail("Could not install " + f.Name + ": " + e.Error() + "\n\nClose InvoiceTotally and run Setup again.")
+			fail("Could not install " + f.Name + ": " + e.Error() + "\n\nClose Vipul Workplace and run Setup again.")
 		}
 		_, e = io.Copy(out, rc)
 		rc.Close()
@@ -102,7 +102,7 @@ func main() {
 		}
 		_ = os.Remove(dst)
 		if e = os.Rename(tmp, dst); e != nil {
-			fail("Could not replace " + f.Name + ": " + e.Error() + "\n\nClose InvoiceTotally and run Setup again.")
+			fail("Could not replace " + f.Name + ": " + e.Error() + "\n\nClose Vipul Workplace and run Setup again.")
 		}
 	}
 
@@ -111,19 +111,24 @@ func main() {
 	un := filepath.Join(dir, "Uninstall InvoiceTotally.exe")
 	programs := filepath.Join(os.Getenv("APPDATA"), "Microsoft", "Windows", "Start Menu", "Programs")
 	links := [][2]string{
-		{filepath.Join(os.Getenv("USERPROFILE"), "Desktop", "InvoiceTotally.lnk"), exe},
-		{filepath.Join(programs, "InvoiceTotally.lnk"), exe},
+		{filepath.Join(os.Getenv("USERPROFILE"), "Desktop", "Vipul Workplace.lnk"), exe},
+		{filepath.Join(programs, "Vipul Workplace.lnk"), exe},
 	}
 	for _, l := range links {
-		script := fmt.Sprintf(`$ws=New-Object -ComObject WScript.Shell;$s=$ws.CreateShortcut('%s');$s.TargetPath='%s';$s.WorkingDirectory='%s';$s.IconLocation='%s,0';$s.Description='InvoiceTotally — invoices and bank statements into Tally';$s.Save()`,
+		script := fmt.Sprintf(`$ws=New-Object -ComObject WScript.Shell;$s=$ws.CreateShortcut('%s');$s.TargetPath='%s';$s.WorkingDirectory='%s';$s.IconLocation='%s,0';$s.Description='Vipul Workplace — offline accounting and GST workbench';$s.Save()`,
 			psQuote(l[0]), psQuote(l[1]), psQuote(dir), psQuote(ico))
 		_ = hidden("powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script).Run()
 	}
+	// Remove legacy shortcut names, never touch the existing program/data folder.
+	for _, old := range []string{
+		filepath.Join(os.Getenv("USERPROFILE"), "Desktop", "InvoiceTotally.lnk"),
+		filepath.Join(programs, "InvoiceTotally.lnk"),
+	} { _ = os.Remove(old) }
 	// Settings → Apps → Installed apps
 	key := `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\InvoiceTotally`
 	for _, kv := range [][3]string{
-		{"DisplayName", "REG_SZ", "InvoiceTotally"}, {"DisplayVersion", "REG_SZ", strings.TrimSpace(version)},
-		{"Publisher", "REG_SZ", "InvoiceTotally"}, {"DisplayIcon", "REG_SZ", ico}, {"InstallLocation", "REG_SZ", dir},
+		{"DisplayName", "REG_SZ", "Vipul Workplace"}, {"DisplayVersion", "REG_SZ", strings.TrimSpace(version)},
+		{"Publisher", "REG_SZ", "Vipul Workplace"}, {"DisplayIcon", "REG_SZ", ico}, {"InstallLocation", "REG_SZ", dir},
 		{"UninstallString", "REG_SZ", `"` + un + `"`}, {"NoModify", "REG_DWORD", "1"}, {"NoRepair", "REG_DWORD", "1"},
 	} {
 		_ = hidden("reg.exe", "add", key, "/v", kv[0], "/t", kv[1], "/d", kv[2], "/f").Run()
@@ -133,7 +138,7 @@ func main() {
 		return
 	}
 	_ = exec.Command(exe).Start()
-	message("InvoiceTotally "+strings.TrimSpace(version)+" is installed.\n\nOpen it any time from the InvoiceTotally icon on your desktop or in the Start menu. Your data is kept when you update.", 0x40)
+	message("Vipul Workplace "+strings.TrimSpace(version)+" is installed.\n\nOpen it any time from the Vipul Workplace icon on your desktop or in the Start menu. Your data is kept when you update.", 0x40)
 }
 
 func stopRunning() {
