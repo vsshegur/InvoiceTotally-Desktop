@@ -113,6 +113,46 @@ async function companyAudit(c,el){
     setTimeout(()=>URL.revokeObjectURL(url),1500);
   });
 }
+// Display the evidence behind each GSTR-1 comparison, not just one net difference.
+function gstr1Breakup(x){
+  const b=x.breakdown,portal=x.portal||{},tally=x.tally||{};
+  const heads=[["taxable","Taxable value"],["igst","IGST"],["cgst","CGST"],["sgst","SGST"],["cess","Cess"]];
+  const line=(label,amount)=>'<tr><td>'+label+'</td><td class="mono" style="text-align:right">'+CC.amount(amount)+'</td></tr>';
+  const title='<div class="small muted" style="margin:8px 0">Tally voucher '+esc(x.tally_number||"—")+
+    (x.party?' · '+esc(x.party):'')+(x.tally_date?' · '+esc(x.tally_date):'')+
+    (x.portal_date?' · GSTR-1 date '+esc(x.portal_date):'')+'</div>';
+  const base=b?'<b>Taxable calculation from Tally</b><table class="grid"><tbody>'+
+    line(b.base_source==="inventory"?"Stock/item total":"Sales ledger base",b.base)+
+    line("Less: sales discount",-(b.discount||0))+
+    line("Add: freight / transport",b.freight||0)+
+    line("Add: packing / other charges",b.other_charges||0)+
+    line("<b>Calculated taxable value</b>",b.taxable)+
+    line("GST total",(tally.igst||0)+(tally.cgst||0)+(tally.sgst||0)+(tally.cess||0))+
+    line("Round off (outside taxable)",b.round_off||0)+
+    line("<b>Estimated voucher total</b>",b.estimated_invoice_value)+'</tbody></table>':
+    '<p class="muted small">Detailed Tally adjustments are not cached. Read Tally sales again and compare to refresh the breakdown.</p>';
+  const tax='<b>Side-by-side GSTR-1 vs Tally</b><table class="grid"><thead><tr><th>Field</th><th>Tally</th><th>GSTR-1</th><th>Difference</th></tr></thead><tbody>'+
+    heads.map(([key,label])=>'<tr><td>'+label+'</td><td>'+CC.amount(tally[key]??null)+'</td>'+
+      '<td>'+CC.amount(portal[key]??null)+'</td>'+
+      '<td class="'+(Math.abs((tally[key]||0)-(portal[key]||0))>1?'bad':'good')+'">'+
+        (tally[key]===undefined||portal[key]===undefined?'—':CC.amount(tally[key]-portal[key]))+
+      '</td></tr>').join("")+'</tbody></table>';
+  const adjustments=(b?.ledger_lines||[]).length?
+    '<b>Individual Tally adjustment ledgers</b><table class="grid"><thead><tr><th>Ledger</th><th>Classification</th><th>Amount (signed)</th></tr></thead><tbody>'+
+    b.ledger_lines.map(l=>'<tr><td>'+esc(l.name)+'</td><td>'+esc(({
+      discount:"Reduces taxable",freight:"Adds to taxable",other_charge:"Adds to taxable",
+      round_off:"Outside taxable",unclassified:"Check mapping / GST treatment"
+    })[l.kind]||l.kind)+'</td><td>'+CC.amount(l.amount)+'</td></tr>').join("")+'</tbody></table>':"";
+  const differences=(x.differences||[]).length?
+    '<p class="small bad">Fields that differ: '+x.differences.map(d=>esc(d.label)).join(", ")+'</p>':"";
+  return '<details class="small" style="min-width:220px"><summary style="cursor:pointer">View calculation &amp; ledger lines</summary>'+
+    '<div style="min-width:340px;max-width:740px;padding:8px 0">'+title+
+    '<p class="small">'+esc(x.explanation||"")+'</p>'+differences+base+tax+adjustments+
+    ((b?.unclassified||[]).length?'<p class="small bad">Unclassified ledger line(s) require manual review. They were not silently added to taxable value.</p>':"")+
+    '</div></details>';
+}
+const GST_INVOICE_STATUS={matched:"Matched",tax_mismatch:"Amount mismatch",gstin_mismatch:"Buyer GSTIN mismatch",
+  review_unclassified:"Check ledger mapping",missing_in_tally:"Not in Tally",missing_in_gstr1:"Not in GSTR-1"};
 const GST_HEADERS=["taxable","igst","cgst","sgst","cess"];
 const GST_ITC=["itcIgst","itcCgst","itcSgst","itcCess"];
 async function companyGstControl(c,el){
@@ -145,12 +185,14 @@ async function companyGstControl(c,el){
       '</tbody></table></div>';
   };
   const r=s.result||{},b=s.gstr2b,ts=s.tally_sales,tp=s.tally_purchases;
+  const oldSales=Boolean(ts&&ts.calculation_version!==2);
   $('#ccGstControl').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:12px;margin:16px 0">'+
     inputForm("gstr1",GST_HEADERS,s.portal_gstr1)+inputForm("gstr3b",GST_HEADERS.concat(GST_ITC),s.portal_gstr3b)+'</div>'+
+    (oldSales?'<div class="alert warn" style="margin-bottom:12px"><b>Re-read Tally sales to apply the discount/freight correction.</b> The saved sales snapshot uses the older calculation; previous invoice mismatches are hidden until you click “Read Tally sales & purchases”, then “Compare all three returns”.</div>':"")+
     '<div class="card" style="padding:14px;margin-bottom:12px"><b>Available Tally and GSTR-2B evidence</b>'+
     '<div class="kv" style="margin:10px 0">'+
-      '<div><span>Sales taxable value</span><b>'+CC.amount(ts?.taxable)+'</b></div>'+
-      '<div><span>Sales output GST</span><b>'+CC.amount(ts?ts.igst+ts.cgst+ts.sgst+ts.cess:null)+'</b></div>'+
+      '<div><span>Sales taxable value</span><b>'+CC.amount(oldSales?null:ts?.taxable)+'</b></div>'+
+      '<div><span>Sales output GST</span><b>'+CC.amount(oldSales?null:ts?ts.igst+ts.cgst+ts.sgst+ts.cess:null)+'</b></div>'+
       '<div><span>Purchase input GST</span><b>'+CC.amount(tp?tp.igst+tp.cgst+tp.sgst+tp.cess:null)+'</b></div>'+
       '<div><span>GSTR-2B eligible ITC</span><b>'+CC.amount(b?.itc?
         b.itc.igst+b.itc.cgst+b.itc.sgst+b.itc.cess:null)+'</b></div></div>'+
@@ -159,14 +201,31 @@ async function companyGstControl(c,el){
     '<a class="btn" href="#/c/'+c.id+'/gstr2b">Open GSTR-2B</a></div>'+
     ((r.warnings||[]).length?'<div class="alert warn" style="margin:12px 0">'+r.warnings.map(esc).join(" · ")+'</div>':'')+
     '<div style="display:flex;flex-wrap:wrap;gap:12px;margin:16px 0">'+
-      comparison("Tally Sales vs GSTR-1",r.salesToPortal)+comparison("GSTR-1 vs GSTR-3B",r.portalTo3b)+
+      comparison("Tally Sales vs GSTR-1",oldSales?null:r.salesToPortal)+comparison("GSTR-1 vs GSTR-3B",r.portalTo3b)+
       comparison("GSTR-2B ITC vs GSTR-3B",r.itc2bVs3b)+comparison("Tally purchase ITC vs GSTR-2B",r.itcBooksVs2b)+'</div>'+
-    ((r.invoices||[]).length?'<details style="margin-bottom:18px"><summary><b>GSTR-1 B2B invoice-by-invoice differences ('+r.invoices.length+')</b></summary>'+
-      '<div style="overflow:auto;margin-top:10px"><table class="grid"><thead><tr><th>Invoice</th><th>Buyer GSTIN</th><th>Status</th><th>Taxable difference</th><th>Tax difference</th></tr></thead><tbody>'+
-      r.invoices.slice(0,500).map(x=>'<tr><td>'+esc(x.number)+'</td><td class="mono">'+esc(x.gstin||"")+'</td>'+
-        '<td class="'+(x.status==="matched"?"good":"bad")+'">'+esc(x.status.replace(/_/g," "))+'</td>'+
-        '<td>'+CC.amount(x.taxable_difference)+'</td><td>'+CC.amount(x.tax_difference)+'</td></tr>').join('')+
-      '</tbody></table></div></details>':'')+
+    (!oldSales&&(r.invoices||[]).length?(()=>{
+      const invoices=r.invoices||[],mismatches=invoices.filter(x=>x.status!=="matched"),matches=invoices.filter(x=>x.status==="matched");
+      const ordered=[...mismatches,...matches];
+      return '<details style="margin-bottom:18px" open><summary style="cursor:pointer"><b>GSTR-1 B2B invoices checked ('+
+        invoices.length+') — '+matches.length+' matched, '+mismatches.length+' need attention</b></summary>'+
+        '<p class="muted small" style="margin:10px 0">Differences are Tally minus GSTR-1. Voucher-level discounts reduce taxable; taxable freight and charges increase it. Click the breakdown on any invoice for its actual ledger amounts.</p>'+
+        '<div style="overflow:auto;margin-top:10px"><table class="grid"><thead><tr>'+
+        '<th>Invoice / Tally no.</th><th>Buyer GSTIN</th><th>Status &amp; reason</th>'+
+        '<th>Tally taxable</th><th>GSTR-1 taxable</th><th>Taxable difference</th><th>GST difference</th><th>Details</th></tr></thead><tbody>'+
+        ordered.slice(0,500).map(x=>'<tr><td><b>'+esc(x.number)+'</b>'+
+          (x.tally_number&&x.tally_number!==x.number?'<div class="muted small">Tally '+esc(x.tally_number)+'</div>':"")+
+          '</td><td class="mono small">'+esc(x.gstin||"")+'</td>'+
+          '<td class="'+(x.status==="matched"?"good":x.status==="review_unclassified"?"muted":"bad")+'">'+
+          esc(GST_INVOICE_STATUS[x.status]||x.status||"Unknown")+
+          '<div class="small muted" style="max-width:280px">'+esc(x.explanation||"")+'</div></td>'+
+          '<td>'+CC.amount(x.tally?.taxable??null)+'</td>'+
+          '<td>'+CC.amount(x.portal?.taxable??null)+'</td>'+
+          '<td>'+CC.amount(x.taxable_difference)+'</td><td>'+CC.amount(x.tax_difference)+'</td>'+
+          '<td>'+gstr1Breakup(x)+'</td></tr>').join('')+
+        '</tbody></table></div>'+
+        (ordered.length>500?'<p class="muted small">Showing first 500 invoices; totals above include all checked invoices.</p>':"")+
+        '</details>';
+    })():'')+
     '<p class="muted small">GST control is a reconciliation aid, not an official filing or legal ITC determination. Unclassified stock/sales ledgers and unusual journals must be reviewed by your accountant.</p>';
   $$("[data-json]",el).forEach(input=>input.onchange=async()=>{
     const file=input.files?.[0],kind=input.dataset.json;

@@ -38,14 +38,76 @@ const taxHead=name=>{
   if(/\bcess\b/.test(n))return "cess";
   return null;
 };
+// Sales inventory lines are before voucher-level discounts and freight in Tally.
+// A tax ledger / party ledger / round-off must never be added to taxable value.
+const salesLineKind=name=>{
+  const n=normName(name);
+  if(/round[ -]?off|rounding/.test(n))return "round_off";
+  if(/discount|rebate|cash disc|trade disc/.test(n))return "discount";
+  if(/freight|cartage|carriage|transport|shipping|courier|delivery charge|forwarding/.test(n))return "freight";
+  if(/packing|handling|loading|hamali|insurance charge/.test(n))return "other_charge";
+  return null;
+};
+function salesBreakdown(v,lookup){
+  const inventory=r2(+v.inv||0);
+  let salesLedger=0,discount=0,freight=0,otherCharges=0,roundOff=0;
+  const tax={igst:0,cgst:0,sgst:0,cess:0},ledger_lines=[],unclassified=[];
+  for(const [name,raw] of v.e||[]){
+    const amount=+raw||0;
+    if(Math.abs(amount)<0.005)continue;
+    const master=lookup.get(normName(name));
+    const group=normName(master?.primary_group||master?.parent);
+    const head=taxHead(name);
+    if(head&&(/duties|tax/.test(group)||/\bgst\b/.test(name.toLowerCase()))){
+      tax[head]+=amount;continue;
+    }
+    // These are invoice totals / counterparties, not additional taxable supplies.
+    if(normName(name)===normName(v.party)||/sundry debtors|sundry creditors/.test(group))continue;
+    const kind=group==="duties & taxes"?null:salesLineKind(name);
+    if(kind==="round_off"){roundOff+=amount;ledger_lines.push({name,amount:r2(amount),kind});continue;}
+    if(kind==="discount"){discount-=amount;ledger_lines.push({name,amount:r2(amount),kind});continue;}
+    if(kind==="freight"){freight+=amount;ledger_lines.push({name,amount:r2(amount),kind});continue;}
+    if(kind==="other_charge"){otherCharges+=amount;ledger_lines.push({name,amount:r2(amount),kind});continue;}
+    if(group==="sales accounts"){salesLedger+=amount;continue;}
+    // Do not silently treat an unknown expense / ledger as taxable freight.
+    const line={name,amount:r2(amount),kind:"unclassified"};
+    unclassified.push(line);ledger_lines.push(line);
+  }
+  // Inventory amount already reflects per-item discount; only explicit
+  // voucher discount ledgers are applied again. Never add Sales Accounts twice.
+  const hasInventory=Math.abs(inventory)>0.005;
+  const base=hasInventory?inventory:salesLedger;
+  const base_source=hasInventory?"inventory":Math.abs(salesLedger)>0.005?"sales_ledger":"unavailable";
+  const taxable=r2(base-discount+freight+otherCharges);
+  for(const k of taxHeads)tax[k]=r2(tax[k]);
+  const taxTotal=r2(taxAmount(tax));
+  return {taxable,...tax,breakdown:{
+    base:r2(base),base_source,inventory,sales_ledger:r2(salesLedger),
+    discount:r2(discount),freight:r2(freight),other_charges:r2(otherCharges),
+    round_off:r2(roundOff),taxable,estimated_invoice_value:r2(taxable+taxTotal+roundOff),
+    ledger_lines,unclassified
+  }};
+}
+
 export function tallyTotals(vouchers,masters,mode){
   const lookup=new Map(masters.map(x=>[normName(x.name),x]));
-  const total={taxable:0,igst:0,cgst:0,sgst:0,cess:0,unclassified:[],vouchers:0};
+  const total={taxable:0,igst:0,cgst:0,sgst:0,cess:0,unclassified:[],review:[],vouchers:0,discount:0,freight:0,other_charges:0};
   for(const v of vouchers){
     const vt=normName(v.vtype);
     if(mode==="sales"&&!(/sales|credit note/.test(vt)))continue;
     if(mode==="purchases"&&!(/purchase|debit note|credit note/.test(vt)))continue;
     total.vouchers++;
+    if(mode==="sales"){
+      const amounts=salesBreakdown(v,lookup);
+      total.taxable+=amounts.taxable;
+      for(const k of taxHeads)total[k]+=amounts[k];
+      for(const k of ["discount","freight","other_charges"])total[k]+=amounts.breakdown[k];
+      if(amounts.breakdown.base_source==="unavailable")
+        total.unclassified.push({number:v.number,date:v.date,type:v.vtype});
+      if(amounts.breakdown.unclassified.length)
+        total.review.push({number:v.number,ledgers:amounts.breakdown.unclassified});
+      continue;
+    }
     let salesLedger=0;
     for(const [name,raw] of v.e||[]){
       const m=lookup.get(normName(name)),group=normName(m?.primary_group||m?.parent);
@@ -63,7 +125,7 @@ export function tallyTotals(vouchers,masters,mode){
     else if(Math.abs(salesLedger)>0.005)total.taxable+=salesLedger;
     else total.unclassified.push({number:v.number,date:v.date,type:v.vtype});
   }
-  for(const k of heads)total[k]=r2(total[k]);
+  for(const k of [...heads,"discount","freight","other_charges"])total[k]=r2(total[k]);
   return total;
 }
 export function salesRequest(company,from,to){
@@ -88,41 +150,73 @@ const invoiceKey=s=>String(s||"").toUpperCase().replace(/[^A-Z0-9]/g,"");
 const taxAmount=d=>r2((+d.igst||0)+(+d.cgst||0)+(+d.sgst||0)+(+d.cess||0));
 export function compareGstr1Invoices(portal=[],book=[],tol=1){
   const books=book.filter(x=>x.gstin&&x.number);
+  const byNumber=new Map();
+  for(const [index,v] of books.entries()){
+    const key=invoiceKey(v.number);
+    if(!byNumber.has(key))byNumber.set(key,[]);
+    byNumber.get(key).push({...v,index});
+  }
   const consumed=new Set(),result=[];
+  const labels={taxable:"Taxable value",igst:"IGST",cgst:"CGST",sgst:"SGST",cess:"Cess"};
   for(const p of portal){
     const key=invoiceKey(p.num);
     if(!key)continue;
-    const candidates=books.map((v,i)=>({...v,index:i})).filter(v=>invoiceKey(v.number)===key);
-    const exact=candidates.find(v=>v.gstin===p.ctin&&!consumed.has(v.index));
-    const mismatch=candidates.find(v=>!consumed.has(v.index));
-    const hit=exact||mismatch;
-    if(!hit){result.push({number:p.num,gstin:p.ctin,status:"missing_in_tally"});continue;}
+    const candidates=(byNumber.get(key)||[]).filter(v=>!consumed.has(v.index));
+    const hit=candidates.find(v=>v.gstin===p.ctin)||candidates[0];
+    if(!hit){
+      result.push({number:p.num,gstin:p.ctin,status:"missing_in_tally",portal_date:p.dt||"",
+        explanation:"Invoice is in GSTR-1 but no matching Tally sales voucher was found."});
+      continue;
+    }
     consumed.add(hit.index);
-    const status=hit.gstin!==p.ctin?"gstin_mismatch":
-      Math.abs(taxAmount(hit)-taxAmount(p))>tol||Math.abs((+hit.taxable||0)-(+p.taxable||0))>tol?"tax_mismatch":"matched";
+    const differences=heads.filter(k=>Math.abs((+hit[k]||0)-(+p[k]||0))>tol).map(k=>({
+      field:k,label:labels[k],tally:r2(+hit[k]||0),portal:r2(+p[k]||0),
+      difference:r2((+hit[k]||0)-(+p[k]||0))
+    }));
+    const taxableDiff=r2((+hit.taxable||0)-(+p.taxable||0));
+    const taxDiff=r2(taxAmount(hit)-taxAmount(p));
+    const taxHeadDiff=differences.some(d=>d.field!=="taxable");
+    const taxableMismatch=differences.some(d=>d.field==="taxable");
+    const gstinMismatch=hit.gstin!==p.ctin;
+    const unclassified=hit.breakdown?.unclassified||[];
+    const status=gstinMismatch?"gstin_mismatch":
+      differences.length?"tax_mismatch":unclassified.length?"review_unclassified":"matched";
+    let explanation="Tally taxable value and each GST head match GSTR-1.";
+    if(gstinMismatch)explanation="Buyer GSTIN differs between Tally and GSTR-1.";
+    else if(taxableMismatch&&!taxHeadDiff)
+      explanation="GST amounts match, but taxable value differs after invoice-level adjustments.";
+    else if(!taxableMismatch&&taxHeadDiff&&Math.abs(taxDiff)<=tol)
+      explanation="GST total matches but tax is recorded under different GST heads.";
+    else if(taxableMismatch&&taxHeadDiff)
+      explanation="Both taxable value and GST-head amounts differ.";
+    else if(taxHeadDiff)explanation="One or more GST-head amounts differ.";
+    else if(unclassified.length)explanation="Amounts match, but some non-tax ledger lines need classification.";
+    else if(hit.breakdown?.discount||hit.breakdown?.freight||hit.breakdown?.other_charges)
+      explanation="Matched after including discount, freight and other invoice adjustments.";
     result.push({number:p.num,gstin:p.ctin,status,tally_number:hit.number,tally_gstin:hit.gstin,
-      tax_difference:r2(taxAmount(hit)-taxAmount(p)),taxable_difference:r2((+hit.taxable||0)-(+p.taxable||0))});
+      portal_date:p.dt||"",tally_date:hit.date||"",party:hit.party||"",
+      tax_difference:taxDiff,taxable_difference:taxableDiff,differences,explanation,
+      portal:Object.fromEntries(heads.map(k=>[k,r2(+p[k]||0)])),
+      tally:Object.fromEntries(heads.map(k=>[k,r2(+hit[k]||0)])),
+      breakdown:hit.breakdown||null});
   }
   for(const [i,v] of books.entries())if(!consumed.has(i)){
-    result.push({number:v.number,gstin:v.gstin,status:"missing_in_gstr1"});
+    result.push({number:v.number,gstin:v.gstin,status:"missing_in_gstr1",
+      tally_number:v.number,tally_date:v.date||"",party:v.party||"",
+      tally:Object.fromEntries(heads.map(k=>[k,r2(+v[k]||0)])),
+      breakdown:v.breakdown||null,
+      explanation:"Sales voucher exists in Tally but was not found in the imported GSTR-1 B2B invoices."});
   }
   return result.slice(0,3000);
 }
 function salesDocs(vouchers,masters){
-  const byName=new Map(masters.filter(x=>x.kind==="ledger"||!x.kind).map(x=>[String(x.name).toLowerCase(),x]));
+  const byName=new Map(masters.filter(x=>x.kind==="ledger"||!x.kind).map(x=>[normName(x.name),x]));
   return vouchers.filter(v=>/sale|credit note/i.test(v.vtype)).map(v=>{
-    const m=byName.get(String(v.party||"").toLowerCase());
-    const e=Object.fromEntries(taxHeads.map(k=>[k,0]));
-    let taxable=0;
-    for(const [name,raw]of v.e||[]){
-      const head=taxHead(name),ledger=byName.get(String(name).toLowerCase());
-      if(head&&(ledger?.primary_group==="Duties & Taxes"||/gst|tax/i.test(name)))e[head]+=+raw||0;
-      if(String(ledger?.primary_group||ledger?.parent).toLowerCase()==="sales accounts")taxable+=+raw||0;
-    }
-    if(Math.abs(+v.inv||0)>.005)taxable=+v.inv;
+    const partyMaster=byName.get(normName(v.party));
+    const amounts=salesBreakdown(v,byName);
     return {number:String(v.ref||v.number||""),date:v.refdate||v.date,party:v.party,
-      gstin:String(v.gstin||m?.gstin||"").toUpperCase(),taxable:r2(taxable),
-      ...Object.fromEntries(taxHeads.map(k=>[k,r2(e[k])]))};
+      gstin:String(v.gstin||partyMaster?.gstin||"").toUpperCase(),taxable:amounts.taxable,
+      ...Object.fromEntries(taxHeads.map(k=>[k,amounts[k]])),breakdown:amounts.breakdown};
   }).filter(v=>v.number&&v.gstin).slice(0,20000);
 }
 export function compareGst({gstr1,gstr3b,sales,purchases,gstr2b},tol=1){
@@ -142,6 +236,7 @@ export function compareGst({gstr1,gstr3b,sales,purchases,gstr2b},tol=1){
   if(!purchases)warnings.push("Purchases were not successfully read from Tally");
   if(!gstr2b)warnings.push("No GSTR-2B file for this month");
   if(sales?.unclassified?.length)warnings.push(sales.unclassified.length+" outward vouchers lack recognized taxable Sales Accounts/inventory; review mapping");
+  if(sales?.review?.length)warnings.push(sales.review.length+" outward vouchers contain unmapped ledger lines; check their taxable treatment");
   if(purchases?.unclassified?.length)warnings.push(purchases.unclassified.length+" inward vouchers lack recognized taxable Purchase Accounts/inventory; review mapping");
   const invoices=Array.isArray(gstr1?.docs)&&Array.isArray(sales?.docs)?
     compareGstr1Invoices(gstr1.docs,sales.docs,tol):[];
@@ -205,11 +300,12 @@ export async function refreshTally(D,env,cid,period){
   const [rawSales,rawPurchases,masters]=await Promise.all([
     env.TALLY.readOnly(salesRequest(tc,range.from,range.to)),
     env.TALLY.readOnly(T.purchaseGstRequest(tc,range.from,range.to)),
-    D.all("SELECT name,parent,primary_group FROM masters WHERE company_id=? AND kind='ledger' AND pending=0",cid)
+    D.all("SELECT name,parent,primary_group,gstin FROM masters WHERE company_id=? AND kind='ledger' AND pending=0",cid)
   ]);
   if(!masters.length)throw new GstControlError("Import Tally ledgers first");
   const saleVouchers=TL.purchaseGstRows(rawSales);
   const sales=tallyTotals(saleVouchers,masters,"sales");
+  sales.calculation_version=2; // cached evidence must be refreshed after adjustment-logic upgrades
   sales.docs=salesDocs(saleVouchers,masters);
   const purchases=tallyTotals(TL.purchaseGstRows(rawPurchases),masters,"purchases");
   await D.batch([
@@ -221,8 +317,13 @@ export async function refreshTally(D,env,cid,period){
 }
 export async function reconcile(D,cid,period){
   const row=await current(D,cid,period),b2b=await gstr2bTotals(D,cid,period);
-  const result=compareGst({gstr1:row.portal_gstr1,gstr3b:row.portal_gstr3b,sales:row.tally_sales,
+  // Old cached sales amounts were calculated without voucher-level discounts or freight.
+  // Do not present an old false mismatch as a new reconciliation before Tally is re-read.
+  const staleSales=row.tally_sales&&row.tally_sales.calculation_version!==2;
+  const sales=staleSales?{...row.tally_sales,taxable:null,docs:null}:row.tally_sales;
+  const result=compareGst({gstr1:row.portal_gstr1,gstr3b:row.portal_gstr3b,sales,
     purchases:row.tally_purchases,gstr2b:b2b});
+  if(staleSales)result.warnings.unshift("Sales were last read with old discount/freight logic. Click Read Tally sales & purchases, then Compare all three returns.");
   await D.run("UPDATE gst_control SET result=?,reviewed_at=? WHERE company_id=? AND period=?",JSON.stringify(result),now(),cid,period);
   return { ...row, result,gstr2b:b2b };
 }
