@@ -97,11 +97,14 @@ test("GSTR-3B PDF parser reads 4(A), 4(B), 4(C) and flags source inconsistencies
     "4. Eligible ITC",
     "(A) ITC Available (whether in full or part) 100.00 200.00 200.00 0.00",
     "(B) ITC Reversed 20.00 40.00 40.00 0.00",
-    "(C) Net ITC Available (A) - (B) 80.00 160.00 160.00 0.00"
+    "(C) Net ITC Available (A) - (B) 80.00 160.00 160.00 0.00",
+    "(D) Other Details",
+    "(1) ITC reclaimed which was reversed under Table 4(B)(2) 10.00 20.00 20.00 0.00"
   ];
   const good=parseGstr3bPdfPages([{rows:lines}],{gstin:GSTIN,period:"2026-04"});
   assert.equal(good.itcDetails.verified,true);
   assert.equal(good.itcDetails.reversed.cgst,40);
+  assert.equal(good.itcDetails.reclaimed.cgst,20);
   assert.equal(good.summary.itcCgst,160);
   const bad=parseGstr3bPdfPages([{rows:lines.slice(0,-1).concat("(C) Net ITC Available 80.00 170.00 160.00 0.00")}],{gstin:GSTIN,period:"2026-04"});
   assert.equal(bad.itcDetails.verified,false);
