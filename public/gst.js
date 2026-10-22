@@ -143,7 +143,7 @@ const GST_UI = { filter: null, sel: 0, rid: null, q: "" };
 async function gstData(rid, GM) {
   let s = await api(`/gstr2b/${rid}`);
   const ctx = await api(`/gstr2b/${rid}/context`);
-  const books = GM.buildBooks(ctx.books, ctx.ledgers);
+  const books = GM.buildBooks(ctx.books, ctx.ledgers, ctx.rules||[]);
   const opts = { tol: s.tol ?? 1, period: s.period, usedElsewhere: new Set(ctx.elsewhere) };
   const fresh = ctx.books_at && (!s.matched_at || ctx.books_at > s.matched_at || s.docs.some((d) => d.status === "new") || s.summary?.calculation_version !== 2);
   if (fresh) {
