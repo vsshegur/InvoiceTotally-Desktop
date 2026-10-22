@@ -185,12 +185,14 @@ async function companyGstControl(c,el){
       '</tbody></table></div>';
   };
   const r=s.result||{},b=s.gstr2b,ts=s.tally_sales,tp=s.tally_purchases;
+  const oldSales=Boolean(ts&&ts.calculation_version!==2);
   $('#ccGstControl').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:12px;margin:16px 0">'+
     inputForm("gstr1",GST_HEADERS,s.portal_gstr1)+inputForm("gstr3b",GST_HEADERS.concat(GST_ITC),s.portal_gstr3b)+'</div>'+
+    (oldSales?'<div class="alert warn" style="margin-bottom:12px"><b>Re-read Tally sales to apply the discount/freight correction.</b> The saved sales snapshot uses the older calculation; previous invoice mismatches are hidden until you click “Read Tally sales & purchases”, then “Compare all three returns”.</div>':"")+
     '<div class="card" style="padding:14px;margin-bottom:12px"><b>Available Tally and GSTR-2B evidence</b>'+
     '<div class="kv" style="margin:10px 0">'+
-      '<div><span>Sales taxable value</span><b>'+CC.amount(ts?.taxable)+'</b></div>'+
-      '<div><span>Sales output GST</span><b>'+CC.amount(ts?ts.igst+ts.cgst+ts.sgst+ts.cess:null)+'</b></div>'+
+      '<div><span>Sales taxable value</span><b>'+CC.amount(oldSales?null:ts?.taxable)+'</b></div>'+
+      '<div><span>Sales output GST</span><b>'+CC.amount(oldSales?null:ts?ts.igst+ts.cgst+ts.sgst+ts.cess:null)+'</b></div>'+
       '<div><span>Purchase input GST</span><b>'+CC.amount(tp?tp.igst+tp.cgst+tp.sgst+tp.cess:null)+'</b></div>'+
       '<div><span>GSTR-2B eligible ITC</span><b>'+CC.amount(b?.itc?
         b.itc.igst+b.itc.cgst+b.itc.sgst+b.itc.cess:null)+'</b></div></div>'+
@@ -199,9 +201,9 @@ async function companyGstControl(c,el){
     '<a class="btn" href="#/c/'+c.id+'/gstr2b">Open GSTR-2B</a></div>'+
     ((r.warnings||[]).length?'<div class="alert warn" style="margin:12px 0">'+r.warnings.map(esc).join(" · ")+'</div>':'')+
     '<div style="display:flex;flex-wrap:wrap;gap:12px;margin:16px 0">'+
-      comparison("Tally Sales vs GSTR-1",r.salesToPortal)+comparison("GSTR-1 vs GSTR-3B",r.portalTo3b)+
+      comparison("Tally Sales vs GSTR-1",oldSales?null:r.salesToPortal)+comparison("GSTR-1 vs GSTR-3B",r.portalTo3b)+
       comparison("GSTR-2B ITC vs GSTR-3B",r.itc2bVs3b)+comparison("Tally purchase ITC vs GSTR-2B",r.itcBooksVs2b)+'</div>'+
-    ((r.invoices||[]).length?(()=>{
+    (!oldSales&&(r.invoices||[]).length?(()=>{
       const invoices=r.invoices||[],mismatches=invoices.filter(x=>x.status!=="matched"),matches=invoices.filter(x=>x.status==="matched");
       const ordered=[...mismatches,...matches];
       return '<details style="margin-bottom:18px" open><summary style="cursor:pointer"><b>GSTR-1 B2B invoices checked ('+
