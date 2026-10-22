@@ -67,7 +67,9 @@ export function buildBooks(rows, ledgers = []) {
       const group=normLedger(m?.primary_group||m?.parent);
       const kind=adjustmentKind(name);
       if(kind==="round_off"){roundOff+=signed;continue;}
-      if(group==="purchase accounts"){purchaseLedger+=signed;continue;}
+      // A freight / discount ledger can itself be under Purchase Accounts.
+      // Classify it before handling the ordinary purchase allocation.
+      if(!kind&&group==="purchase accounts"){purchaseLedger+=signed;continue;}
       // Explicit voucher-level discount/freight/packing lines are the only extra
       // amounts added to a stock invoice; unknown accounting allocations are not
       // silently added over the inventory value.
