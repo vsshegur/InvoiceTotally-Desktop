@@ -72,7 +72,13 @@ const GSTWorkplace=(()=>{
       '<h4>GSTR-2B bills without a verified link ('+(record.unlinked_total||0)+')</h4>'+
       (miss.length?table(["Supplier","Invoice","GSTIN","Invoice date","GST"],rowsOf(miss,x=>[
         safe(x.name),safe(x.num),safe(x.gstin),safe(x.invoice_date),cur(x.tax)
-      ])):'<p class="muted small">Every eligible document is either linked or there are no eligible documents.</p>');
+      ])):'<p class="muted small">Every eligible document is either linked or there are no eligible documents.</p>')+
+      '<h4>Possible cross-month matches to verify ('+(record.suggested_links?.length||0)+')</h4>'+
+      (record.suggested_links?.length?
+        table(["Supplier","Invoice","Tally voucher","Book date","Action"],rowsOf(record.suggested_links,x=>[
+          safe(x.name),safe(x.invoice),safe(x.voucher),safe(x.date),
+          'Review match in the GSTR-2B panel'
+        ])):'<p class="muted small">No unique GSTIN + invoice-number candidates in cached registers.</p>');
   }
   function duplicateSection(record){
     const ds=record.duplicates||[];
