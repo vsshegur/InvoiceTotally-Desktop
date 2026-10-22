@@ -19,7 +19,7 @@ const ledgers=[
 const book=(mid,number,date,party,gstin,inv,cgst,sgst)=>({
   mid:String(mid),number:String(number),ref:"",refdate:"",date,party,gstin,kind:"inv",vtype:"Purchase",inv,
   e:[["GST PURCHASE ACCOUNT",inv],["Input CGST",-cgst],["Input SGST",-sgst],
-    [party,Math.round((Math.abs(inv)+cgst+sgst)*100)/100]]
+    [party,Math.round(Math.abs(inv)+cgst+sgst)]]
 });
 test("GSTR-2B item vouchers never add the purchase allocation a second time",()=>{
   const vanita=book(149,149,"2026-03-22","Vanita Textile",VANITA,-26017.20,650.43,650.43);
@@ -28,14 +28,14 @@ test("GSTR-2B item vouchers never add the purchase allocation a second time",()=
   assert.equal(a.txval,26017.20);
   assert.equal(b.txval,72279.90);
   assert.equal(a.val,27318);
-  assert.equal(b.val,75893.90);
+  assert.equal(b.val,75894);
   assert.equal(a.breakdown.purchase_ledger,26017.20);
   assert.equal(b.breakdown.inventory,72279.90);
   const docs=[
     {id:"p1",sec:"B2B",ctin:VANITA,name:"Vanita Textile",num:"149",dt:vanita.date,txval:26017.20,
       val:27318,igst:0,cgst:650.43,sgst:650.43,cess:0,compare:true,itc:"Y",note:""},
     {id:"p2",sec:"B2B",ctin:GAYATRI,name:"Gayatri Yarn and Tex",num:"38",dt:gayatri.date,txval:72279.90,
-      val:75893.90,igst:0,cgst:1807,sgst:1807,cess:0,compare:true,itc:"Y",note:""}
+      val:75894,igst:0,cgst:1807,sgst:1807,cess:0,compare:true,itc:"Y",note:""}
   ];
   const matched=M.reconcile(docs,[a,b],{period:"2026-04"});
   assert.deepEqual(docs.map(d=>matched.results.get(d.id).status),["matched","matched"]);
