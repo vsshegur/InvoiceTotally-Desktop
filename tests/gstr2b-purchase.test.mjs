@@ -86,11 +86,14 @@ test("live duplicate detection finds supplier ref even in different Tally month,
  const other=xml.replace(/<REFERENCE>149<\/REFERENCE>/,"<REFERENCE>150</REFERENCE>");
  assert.equal(T.findExistingPurchase(row,T.parseExistingPurchases(other)),null);
  assert.throws(()=>T.parseExistingPurchases("<ERROR>Cannot open company</ERROR>"),/invalid purchase-register/);
+ assert.throws(()=>T.parseExistingPurchases("<RESPONSE><CREATED>0</CREATED></RESPONSE>"),/invalid purchase-register/);
 });
 test("prepare, create purchase ledger, map input taxes, approve, queue, verify and post once",async()=>{
  const {DB,D}=await fixture();
  try{
   const prepared=await G.prepare(D,cid,{return_id:"apr-gst2b"});
+  const SG=await import("../engine/gstr2b.js");
+  await assert.rejects(()=>SG.remove(D,"apr-gst2b"),/purchase vouchers prepared/);
   const again=await G.prepare(D,cid,{return_id:"apr-gst2b"});
   assert.equal(again.id,prepared.id);
   const d=await G.view(D,prepared.id);
