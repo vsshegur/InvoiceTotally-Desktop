@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import worker from "../engine/api.js";
 import {db} from "../engine/db.js";
 import {makeD1} from "../desktop/d1.mjs";
 import * as GST from "../engine/gst-control.js";
@@ -129,4 +130,34 @@ test("document normalisation and financial year remain stable",()=>{
   assert.equal(cleanDocumentKey("INV/00038"),"INV38");
   assert.equal(financeYearMonth("2026-03"),2025);
   assert.equal(financeYearMonth("2026-04"),2026);
+});
+
+test("GST workspace API routes remain authorized and /rules never collides with a month URL",async()=>{
+  const {DB,D}=fixture();
+  try{
+    await setup(D);
+    const env={DB,TALLY:{readOnly:async()=>"<ENVELOPE><COLLECTION></COLLECTION></ENVELOPE>"},
+      TEST_LICENCE:{email:"owner@example.test",admin:true,can_post:true,
+        company_limit:99,ai_options:["gemini_lite"]}};
+    async function request(method,suffix,body){
+      const r=await worker.fetch(new Request("http://127.0.0.1/api/companies/"+COMPANY+"/gst-suite/"+suffix,{
+        method,headers:{"content-type":"application/json"},body:body?JSON.stringify(body):undefined}),env,{});
+      const data=await r.json();
+      assert.equal(r.status,200,method+" "+suffix+": "+JSON.stringify(data));
+      return data;
+    }
+    const rules=await request("GET","rules");
+    assert.equal(rules.ledgers.length,7);
+    const stored=await request("POST","rules",{ledger_name:"SPECIAL DISCOUNT",role:"discount"});
+    assert.equal(stored.ok,true);
+    const month=await request("GET","2026-04");
+    assert.equal(month.period,"2026-04");
+    const year=await request("GET","year/2026");
+    assert.equal(year.months.length,12);
+    const supplier=await request("GET","suppliers/2026");
+    assert.deepEqual(supplier.suppliers,[]);
+    const run=await request("POST","2026-04/run",{});
+    assert.equal(run.ok,true);
+    assert.equal(run.read.sales,0);
+  }finally{DB.close();}
 });
