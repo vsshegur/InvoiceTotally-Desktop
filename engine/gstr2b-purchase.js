@@ -39,7 +39,7 @@ function validNormalDoc(d){
   if(!/^\d{4}-\d{2}-\d{2}$/.test(d.dt||""))return "Supplier invoice date is invalid.";
   if(!(Number(d.txval)>0&&Number(d.val)>0))return "Taxable and invoice amounts must be positive and present in GSTR-2B.";
   try{
-    validatePurchaseValues({...d,date:d.dt,supplier_gstin:d.ctin,
+    validatePurchaseValues({...d,taxable:d.txval,invoice:d.val,date:d.dt,supplier_gstin:d.ctin,
       supplier_invoice:d.num,party_ledger:"Ledger for checking"});
   }catch(e){return e.message;}
   return "";
