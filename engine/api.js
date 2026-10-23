@@ -279,10 +279,29 @@ route("GET", "/api/companies/:cid/jobs", async ({ D, p }) => json(await D.all(
 route("GET", "/api/companies/:cid/batches", async ({ D, p }) => {
   const rows = await D.all("SELECT * FROM batches WHERE company_id=? ORDER BY created_at DESC LIMIT 200", p.cid);
   const counts = await D.all("SELECT batch_id, status, count(*) n FROM invoices WHERE company_id=? GROUP BY batch_id, status", p.cid);
+  const byId=new Map(rows.map(b=>[b.id,b]));
+  // Only scalar date fields are read here, not invoice line/page images.
+  const dateRows=await D.all(`SELECT i.batch_id,
+    json_extract(i.data,'$.date') AS date,
+    json_extract(i.data,'$.handwritten') AS handwritten,
+    json_extract(i.data,'$.date_issue_original') AS date_issue_original,
+    json_extract(i.data,'$.date_verified_value') AS date_verified_value,
+    json_extract(i.data,'$.date_verified_at') AS date_verified_at
+    FROM invoices i JOIN batches b ON b.id=i.batch_id
+    WHERE i.company_id=? AND i.status IN ('review','failed','synced','queued')
+      AND b.id IN (SELECT id FROM batches WHERE company_id=? ORDER BY created_at DESC LIMIT 200)`,p.cid,p.cid);
   for (const b of rows) {
     b.counts = {};
+    b.have_a_look=0;
     for (const c of counts) if (c.batch_id === b.id) b.counts[c.status] = c.n;
     b.invoices = Object.values(b.counts).reduce((a, n) => a + n, 0);
+  }
+  for(const d of dateRows){
+    const batch=byId.get(d.batch_id);
+    if(batch&&invoiceDateReview({...batch,batch_created_at:batch.created_at,
+      data:{date:d.date,handwritten:!!d.handwritten,date_issue_original:d.date_issue_original,
+        date_verified_value:d.date_verified_value,date_verified_at:d.date_verified_at}}).needs_review)
+      batch.have_a_look++;
   }
   return json(rows);
 });
@@ -292,7 +311,7 @@ async function createBatch(D, cid, body, { source, label = "" } = {}) {
   const mode=body.period_mode||"mixed";
   if(!["mixed","month"].includes(mode))throw new HttpError(400,"Choose a specific month/year or regular mixed invoices");
   const period=String(body.expected_period||"");
-  if(mode==="month"&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))
+  if(mode==="month"&&(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)||+period.slice(0,4)<2000||+period.slice(0,4)>2100))
     throw new HttpError(400,"Choose the invoice month and year before uploading");
   const fy=fiscalYearStart(indiaDate());
   if (!files.length) throw new HttpError(400, "Add at least one file");
