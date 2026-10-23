@@ -13,6 +13,7 @@ import * as SC from "./master-assist.js";
 import * as GC from "./gst-control.js";
 import * as DASH from "./dashboard.js";
 import * as AD from "./audit.js";
+import {invoiceDateReview,fiscalYearStart,indiaDate,normalizeInvoiceDate} from "./invoice-period.js";
 
 class HttpError extends Error { constructor(status, msg, code) { super(msg); this.status = status; this.code = code; } }
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store", ...headers } });
@@ -91,7 +92,7 @@ function invoiceSummary(inv) {
     queued: "Queued for Tally", synced: "In Tally", failed: "Failed", error: "Could not read" }[inv.status] || inv.status;
   return { id: inv.id, number: h.number, date: h.date, party_name: h.party_name, party_ledger: inv.party_ledger, lines: inv.lines.length,
     total: h.total != null ? h.total : inv.computed_total, status: inv.status, state, steps: inv.steps, error: inv.sync_error,
-    warnings: h.warnings || [], page_ids: inv.page_ids, rechecked: !!h.rechecked, ai: h.ai || null,
+    warnings: h.warnings || [], date_review:inv.date_review||invoiceDateReview(inv), page_ids: inv.page_ids, rechecked: !!h.rechecked, ai: h.ai || null,
     // every line to a ledger (stationery, packing material…): posted as an accounting voucher, not an item invoice
     as_voucher: inv.lines.length > 0 && inv.lines.every((l) => l.kind === "ledger") };
 }
@@ -288,6 +289,12 @@ route("GET", "/api/companies/:cid/batches", async ({ D, p }) => {
 async function createBatch(D, cid, body, { source, label = "" } = {}) {
   const vt = body.voucher_type === "Sales" ? "Sales" : "Purchase";
   const files = (body.files || []).slice(0, 40);
+  const mode=body.period_mode||"mixed";
+  if(!["mixed","month"].includes(mode))throw new HttpError(400,"Choose a specific month/year or regular mixed invoices");
+  const period=String(body.expected_period||"");
+  if(mode==="month"&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))
+    throw new HttpError(400,"Choose the invoice month and year before uploading");
+  const fy=fiscalYearStart(indiaDate());
   if (!files.length) throw new HttpError(400, "Add at least one file");
   const d = new Date(Date.now() + 5.5 * 3600e3);
   let name = `${vt.toUpperCase()}_${String(d.getUTCDate()).padStart(2, "0")}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${d.getUTCFullYear()}`;
@@ -296,7 +303,7 @@ async function createBatch(D, cid, body, { source, label = "" } = {}) {
   if (n) name += ` (${n + 1})`;
   const id = newId();
   const fileRows = files.map((f, i) => ({ id: newId(), batch_id: id, filename: String(f.filename || "file").slice(0, 200), pages: Math.min(+f.pages || 0, 200), status: "uploading", idx: i }));
-  await D.batch([D.insertStmt("batches", { id, company_id: cid, name, voucher_type: vt, source, stage: "uploading", created_at: now() }),
+  await D.batch([D.insertStmt("batches", { id, company_id: cid, name, voucher_type: vt, source, stage: "uploading", period_mode:mode,expected_period:mode==="month"?period:null,fy_start:fy, created_at: now() }),
     ...fileRows.map((f) => D.insertStmt("files", f))]);
   return { id, name, files: fileRows.map((f) => ({ id: f.id, filename: f.filename })) };
 }
@@ -357,9 +364,15 @@ route("GET", "/api/batches/:bid", async ({ D, p }) => {
   must(b);
   const [invs, company] = await Promise.all([P.loadBatchInvoices(D, p.bid), companyView(D, b.company_id)]);
   const ai_cost_usd = Math.round(invs.reduce((s, i) => s + (i.data.ai?.cost_usd || 0), 0) * 1e4) / 1e4;
-  return json({ ...b, files, pages: pg.n, invoices: invs.map(invoiceSummary), company, ai_cost_usd });
+  return json({ ...b, files, pages: pg.n, invoices: invs.map(invoiceSummary), company, ai_cost_usd,
+    have_a_look:invs.filter(i=>(i.date_review||invoiceDateReview(i)).needs_review).length });
 });
 async function deleteBatch(D, bid) {
+  const b=must(await D.first("SELECT id FROM batches WHERE id=?",bid),"Batch not found (already deleted)");
+  // A job which reached 'sent' might have created a voucher; never lose its identity
+  // while Tally is answering. Pending jobs are cancelled transactionally below.
+  const busy=await D.first("SELECT id FROM jobs WHERE status='sent' AND invoice_id IN (SELECT id FROM invoices WHERE batch_id=?) LIMIT 1",bid);
+  if(busy)throw new HttpError(409,"Tally is currently processing an invoice from this batch. Check its result and try deleting again. Nothing has been deleted.");
   await D.batch([
     D.stmt("DELETE FROM lines WHERE invoice_id IN (SELECT id FROM invoices WHERE batch_id=?)", bid),
     D.stmt("DELETE FROM jobs WHERE status='pending' AND invoice_id IN (SELECT id FROM invoices WHERE batch_id=?)", bid),
@@ -599,6 +612,9 @@ async function invoiceFull(D, iid) {
 }
 route("GET", "/api/invoices/:iid", async ({ D, p }) => json(await invoiceFull(D, p.iid)));
 route("DELETE", "/api/invoices/:iid", async ({ D, p }) => {
+  const inv=must(await D.first("SELECT id FROM invoices WHERE id=?",p.iid),"Invoice not found");
+  if(await D.first("SELECT id FROM jobs WHERE invoice_id=? AND status='sent' LIMIT 1",p.iid))
+    throw new HttpError(409,"This invoice is being processed by Tally. Confirm the result before deleting.");
   await D.batch([D.stmt("DELETE FROM lines WHERE invoice_id=?", p.iid), D.stmt("DELETE FROM jobs WHERE invoice_id=? AND status='pending'", p.iid),
     D.stmt("DELETE FROM invoices WHERE id=?", p.iid)]);
   return json({ ok: true });
@@ -607,6 +623,7 @@ route("PATCH", "/api/invoices/:iid", async ({ D, p, body }) => {
   const inv = must(await P.loadInvoice(D, p.iid));
   if (["queued", "synced"].includes(inv.status)) throw new HttpError(400, "Send it back to review before editing");
   const h = inv.data;
+  const previousDate=P.normDate(h.date);
   let partyChanged = false;
   for (const k of HEADER_FIELDS) if (body.data && k in body.data) {
     let v = body.data[k];
@@ -616,7 +633,16 @@ route("PATCH", "/api/invoices/:iid", async ({ D, p, body }) => {
     if ((k === "party_name" || k === "party_gstin") && v !== h[k]) partyChanged = true;
     h[k] = v;
   }
-  h.warnings = [];
+  if(P.normDate(h.date)!==previousDate){h.date_verified_value=null;h.date_verified_at=null;}
+  if(body.confirm_date===true){
+    if(!normalizeInvoiceDate(h.date))throw new HttpError(400,"Correct the invalid invoice date first.");
+    const check=invoiceDateReview({...inv,data:h});
+    if(check.hard_mismatch)throw new HttpError(400,"This is a month-specific batch for "+
+      check.month+". To post this invoice, correct its date to the selected month or upload it as regular mixed invoices.");
+    h.date_verified_value=P.normDate(h.date);
+    h.date_verified_at=now();
+  }
+  h.warnings = (h.warnings||[]).filter(w=>!/^GSTIN .* fails the checksum/.test(w));
   if (h.party_gstin && !gstinValid(h.party_gstin)) h.warnings.push(`GSTIN ${h.party_gstin} fails the checksum — check for a misread character.`);
   h.edited = true;
   const stmts = [D.updateStmt("invoices", p.iid, { data: JSON.stringify(h), tax_lines: null,
