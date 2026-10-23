@@ -1275,6 +1275,7 @@ async function viewInvoice(iid) {
   const inv = await api(`/invoices/${iid}`);
   const b = inv.batch, c = inv.company;
   const h = inv.data;
+  const dateReview=inv.date_review||inv.steps?.date_review||{};
   const editable = inv.status !== "queued" && inv.status !== "synced";
   const ro = editable ? "" : "readonly";
   const f = (k, label, cls = "") => `<div class="field"><label>${label}</label><input class="in ${cls}" data-h="${k}" value="${esc(h[k] ?? "")}" ${ro}></div>`;
@@ -1303,11 +1304,21 @@ async function viewInvoice(iid) {
     <div class="inv-layout"><div>${pageViewer(inv.pages)}</div><div>
       ${inv.sync_error ? `<div class="alert bad" style="margin-bottom:10px">${esc(inv.sync_error)}</div>` : ""}
       ${(h.warnings || []).map((w) => `<div class="alert warn" style="margin-bottom:6px">⚠ ${esc(w)}</div>`).join("")}
-      ${h.handwritten ? `<div class="alert warn" style="margin-bottom:6px">Handwritten invoice — please double-check every figure.</div>` : ""}
+      ${dateReview.needs_review?`<div class="alert bad" style="margin-bottom:10px">
+        <b>Have a look — invoice DATE needs manual verification.</b>
+        <div class="small">${esc((dateReview.reasons||[]).join("; "))}</div>
+        ${editable?`<p class="small">Compare the date and year with the original image on the left. Edit the date below, then tick "I verified the date" and Save.</p>`:""}
+      </div>`:""}
+      ${dateReview.confirmed?`<div class="alert ok" style="margin-bottom:6px">✓ Invoice date ${esc(h.date||"")} manually verified.</div>`:""}
+      ${h.handwritten ? `<div class="alert warn" style="margin-bottom:6px">Handwritten invoice — please double-check every figure, especially the year.</div>` : ""}
       ${h.rechecked ? `<div class="alert ok" style="margin-bottom:6px">The first reading didn't add up, so it was read a second time${h.ai?.rechecked_by ? ` by ${esc(h.ai.rechecked_by)}` : ""}${(h.warnings || []).length ? " — the notes above are what still needs your eye" : " — everything adds up now"}.</div>` : ""}
       ${h.ai ? `<div class="muted" style="font-size:12.5px;margin-bottom:8px">Read by <b>${esc(h.ai.read_by)}</b>${h.ai.rechecked_by ? ` · checked by <b>${esc(h.ai.rechecked_by)}</b>` : ""}${h.ai.cost_usd ? ` · AI cost ≈ ₹${(h.ai.cost_usd * 88).toFixed(2)}` : ""}${h.ai.skipped ? `<div class="small" title="${esc(h.ai.skipped)}">Skipped first: ${esc(h.ai.skipped.slice(0, 160))}</div>` : ""}</div>` : ""}
       ${editable && !inv.steps.ready && inv.steps.blockers?.length ? `<div class="alert bad" style="margin-bottom:6px"><b>Not ready for Tally yet:</b> ${esc(inv.steps.blockers.join("; "))}.${!inv.steps.total_ok ? " Compare each line amount and the tax figures below with the image, correct them, and save." : ""}</div>` : ""}
       <div class="row">${f("number", "Invoice no.", "mono")}${f("date", "Date (YYYY-MM-DD)", "mono")}</div>
+      ${editable&&(dateReview.needs_review||dateReview.reasons?.length)?`<div class="alert warn" style="margin-bottom:12px">
+        <label><input type="checkbox" id="verifyDate"> <b>I inspected the original invoice and verified its date/year is correct.</b></label>
+        <div class="small muted" style="margin-top:4px">This is mandatory for handwritten or suspicious dates. If the date is outside the selected month, correct it or use the regular mixed-invoice mode in a new batch.</div>
+      </div>`:""}
       <div class="row">${f("party_name", b.voucher_type === "Purchase" ? "Supplier name" : "Customer name")}
         <div class="field"><label>GSTIN ${inv.gstin_valid === true ? '<span class="good">✓ valid</span>' : inv.gstin_valid === false ? '<span class="bad">checksum fails</span>' : ""}</label><input class="in mono" data-h="party_gstin" value="${esc(h.party_gstin || "")}" maxlength="15" ${ro}></div></div>
       <div class="row">${f("party_state", "State")}${f("place_of_supply", "Place of supply")}</div>
@@ -1335,9 +1346,14 @@ async function viewInvoice(iid) {
     const data = {};
     $$("[data-h]").forEach((el) => { const k = el.dataset.h; let v = el.value.trim(); if (["cgst", "sgst", "igst", "cess", "round_off", "total"].includes(k)) v = v === "" ? null : Number(v.replace(/,/g, "")); data[k] = v; });
     const lines = $$("#lines tr").map((tr) => { const o = { id: tr.dataset.line || undefined, kind: tr.dataset.kind }; $$("[data-l]", tr).forEach((el) => o[el.dataset.l] = el.value.trim()); return o; });
-    return { data, lines };
+    return { data, lines, confirm_date:$("#verifyDate")?.checked===true };
   };
-  const save = async () => { await act(() => api(`/invoices/${iid}`, { method: "PATCH", body: collect() }), "Saved — matching re-run"); route(); };
+  const save=async()=>{
+    if(dateReview.needs_review&&!$("#verifyDate")?.checked)
+      return toast("Verify the printed invoice date and tick the confirmation checkbox before saving this flagged invoice.",true);
+    try{await act(()=>api(`/invoices/${iid}`,{method:"PATCH",body:collect()}),"Invoice saved and date verified");route();}
+    catch(e){/* Error is already displayed; remain on invoice for corrections. */}
+  };
   $("#save").onclick = save;
   const ks = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); } };
   document.addEventListener("keydown", ks);
