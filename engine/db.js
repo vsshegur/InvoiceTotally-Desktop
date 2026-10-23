@@ -41,6 +41,10 @@ export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS aliases (
     company_id TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
     PRIMARY KEY (company_id, kind, key))`,
+  `CREATE TABLE IF NOT EXISTS smart_posted_memory (
+    company_id TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL,
+    value TEXT NOT NULL, invoice_id TEXT, at REAL NOT NULL,
+    PRIMARY KEY(company_id,kind,key))`,
   `CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY, company_id TEXT NOT NULL, kind TEXT NOT NULL, invoice_id TEXT, payload TEXT,
     status TEXT DEFAULT 'pending', result TEXT, created_at REAL, updated_at REAL)`,
