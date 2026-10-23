@@ -24,7 +24,7 @@ const amt=row=>round2((Number(row.taxable)||0)+HEADS.reduce((n,k)=>n+(Number(row
 const normName=s=>String(s||"").trim().replace(/\s+/g," ").toUpperCase();
 const creditor=m=>/sundry creditors/i.test(m.primary_group||m.parent||"");
 const isPortalCredit=d=>d.sec==="CDNR"&&d.note==="C";
-const isManualCredit=d=>["ECO","ECOA"].includes(d.sec);
+const isManualCredit=d=>["ECO","ECOA"].includes(d.sec)||(d.sec==="CDNRA"&&d.note==="C");
 async function company(D,cid){return must(await D.first("SELECT * FROM companies WHERE id=?",cid),"Company not found");}
 async function batch(D,id){return must(await D.first("SELECT * FROM gstr2b_purchase_batches WHERE id=?",id),"GSTR-2B purchase batch not found");}
 async function companyBatch(D,id){const b=await batch(D,id);return {batch:b,company:await company(D,b.company_id)};}
