@@ -5,6 +5,8 @@ import {db} from "../engine/db.js";
 import {makeD1} from "../desktop/d1.mjs";
 import * as P from "../engine/pipeline.js";
 import * as M from "../engine/matching.js";
+import * as SC from "../engine/master-assist.js";
+import * as AD from "../engine/audit.js";
 import {normalizeInvoiceDate,invoiceDateReview} from "../engine/invoice-period.js";
 import api from "../engine/api.js";
 
@@ -171,4 +173,34 @@ test("frontend exposes both upload modes and working delete action without undef
   assert.match(js,/\$\$\("\.choice"\)\.forEach/);
   assert.match(js,/api\(\`\/batches\/\$\{bid\}\`,\{method:"DELETE"\}\)/);
   assert.doesNotMatch(js,/DRIVERS\.get\(bid\)/);
+});
+
+test("Smart Matching can backfill verified vouchers previously created in Tally, but never unverified marked-synced invoices",async()=>{
+ const {DB,D}=fixture();
+ try{
+  await start(D);
+  await D.insert("batches",{id:"historic-b",company_id:id,name:"Old receipts",voucher_type:"Purchase",
+    source:"pdf",stage:"review",period_mode:"month",expected_period:"2026-05",fy_start:2026,created_at:1780000000});
+  const iid=await bill(D,"historic-b","2026-05-08",false,"OLD");
+  const inv=await P.loadInvoice(D,iid);
+  await D.batch([D.updateStmt("invoices",iid,{status:"synced",party_ledger:"KANAKRAJ TEXTILES",synced_at:1780000300}),
+    D.updateStmt("lines",inv.lines[0].id,{stock_state:"resolved",stock_item:"COTTON TOWEL",
+      ledger_state:"resolved",ledger:"GST PURCHASE"})]);
+  const job={id:"posted-old-job",invoice_id:iid,kind:"import_voucher",company_id:id,
+    payload:"<ENVELOPE/>",status:"done",created_at:1780000100};
+  await D.insert("jobs",job);
+  await AD.audit(D,job,"created","Created exactly one voucher in Tally","VIJAYALAXMI TEXTILES");
+  const other=await bill(D,"historic-b","2026-05-09",false,"MARKED");
+  await D.update("invoices",other,{status:"synced",party_ledger:"KANAKRAJ TEXTILES"});
+  await D.insert("jobs",{id:"unverified-job",invoice_id:other,kind:"import_voucher",
+    company_id:id,status:"done",created_at:1780000100});
+  const learned=await SC.backfillConfirmedPostings(D,id,50);
+  assert.equal(learned.processed,1);
+  assert.ok(learned.newMappings>=3);
+  assert.equal(learned.has_more,false);
+  assert.equal((await SC.backfillConfirmedPostings(D,id,50)).processed,0);
+  assert.ok((await D.first("SELECT count(*) n FROM smart_posted_memory WHERE company_id=?",id)).n>=3);
+  const found=await M.matchStock(D,id,{description:"COTTON TOWEL"},"KANAKRAJ TEXTILES");
+  assert.equal(found.state,"resolved");
+ }finally{DB.close();}
 });
