@@ -35,20 +35,28 @@ export async function doWork(env, D, { batchId = null } = {}) {
     t, ...sargs, t, t - STALE, TRIES);
   if (f) {
     const b = await D.first("SELECT * FROM batches WHERE id=?", f.batch_id);
+    if(!b)return true; // The batch was deleted while its file was claimed.
     const comp = await getCompany(D, b.company_id);
     try {
       if (f.sheet_text != null) {
         const invs = await readSheet(env, f.sheet_text, comp, b.voucher_type);
-        for (const data of invs) {
-          const id = newId();
-          await D.insert("invoices", { id, batch_id: b.id, company_id: comp.id, page_ids: "[]", status: "reading", created_at: now() });
-          await applyExtraction(D, id, data);
+        for(const data of invs){
+          // A user can delete the batch while the remote AI is reading its sheet.
+          // Atomic EXISTS guard prevents any invoice being recreated afterwards.
+          const id=newId();
+          const inserted=await D.run(
+            "INSERT INTO invoices(id,batch_id,company_id,page_ids,status,created_at) "+
+            "SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM batches WHERE id=?)",
+            id,b.id,comp.id,"[]","reading",now(),b.id);
+          if(!inserted.meta?.changes)break;
+          await applyExtraction(D,id,data);
         }
         await D.log(`Read ${invs.length} invoice(s) from ${f.filename}`, { batch_id: b.id });
       } else {
         const pages = await D.all("SELECT id, thumb_b64 FROM pages WHERE file_id=? ORDER BY idx", f.id);
         const meter = makeMeter(env);
         const groups = await splitPages(env, pages.map((p) => p.thumb_b64), comp, meter);
+        if(!(await D.first("SELECT id FROM batches WHERE id=?",b.id)))return true;
         const base = (await D.first("SELECT count(*) n FROM invoices WHERE batch_id=?", b.id)).n;
         await D.batch(groups.map((g, i) => D.insertStmt("invoices", {
           id: newId(), batch_id: b.id, company_id: comp.id, page_ids: JSON.stringify(g.map((k) => pages[k].id)),
@@ -75,6 +83,7 @@ export async function doWork(env, D, { batchId = null } = {}) {
     t, ...sargs, t, t - STALE, TRIES);
   if (inv) {
     const b = await D.first("SELECT * FROM batches WHERE id=?", inv.batch_id);
+    if(!b)return true; // Invoice deleted while claimed for a read.
     const comp = await getCompany(D, b.company_id);
     try {
       const ids = jload(inv.page_ids, []);
@@ -136,6 +145,7 @@ export { lineRow };
 
 export async function applyExtraction(D, invId, data) {
   const inv = await D.first("SELECT i.*, b.voucher_type,b.period_mode,b.expected_period,b.fy_start,b.created_at AS batch_created_at FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.id=?", invId);
+  if(!inv)return; // Deleted while AI was processing — never restore a removed invoice.
   const vt = inv.voucher_type;
   const party = (vt === "Purchase" ? data.seller : data.buyer) || {};
   const h = {
