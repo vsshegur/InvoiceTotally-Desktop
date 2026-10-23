@@ -444,8 +444,52 @@ export async function pushInvoice(D, invId, force = false) {
     D.stmt("INSERT INTO activity (batch_id, invoice_id, message, at) VALUES (?,?,?,?)", inv.batch_id, invId, "Queued for Tally", t)]);
 }
 
+// Learn only from vouchers Tally explicitly confirmed as CREATED. Never replace
+// a manual alias, and never teach Smart Matching from an AI guess or a queued job.
+export async function confirmedPostingMemory(D,invoiceId){
+  const inv=await loadInvoice(D,invoiceId);
+  if(!inv||!inv.party_ledger)return [];
+  const masters=await D.all("SELECT name,kind,gstin,pending FROM masters WHERE company_id=? AND pending=0",inv.company_id);
+  const master=(kind,name)=>masters.find(m=>m.kind===kind&&m.name===name);
+  const aliases=await D.all("SELECT kind,key,value FROM aliases WHERE company_id=?",inv.company_id);
+  const known=new Map(aliases.map(a=>[a.kind+"|"+a.key,a.value]));
+  const out=[],stamp=now();
+  const remember=(kind,key,value)=>{
+    if(!key||!value)return;
+    const id=kind+"|"+key;
+    // Existing manual/earlier postings always take precedence, including a
+    // conflicting explicit choice in another batch.
+    if(known.has(id))return;
+    known.set(id,value);
+    out.push(D.stmt("INSERT OR IGNORE INTO aliases(company_id,kind,key,value) VALUES (?,?,?,?)",
+      inv.company_id,kind,key,value));
+    out.push(D.stmt("INSERT OR IGNORE INTO smart_posted_memory(company_id,kind,key,value,invoice_id,at) VALUES (?,?,?,?,?,?)",
+      inv.company_id,kind,key,value,invoiceId,stamp));
+  };
+  const h=inv.data,party=master("ledger",inv.party_ledger);
+  if(!party)return [];
+  if(h.party_gstin&&party.gstin&&h.party_gstin.toUpperCase()!==party.gstin.toUpperCase())return [];
+  if(h.party_gstin)remember("party","gstin:"+h.party_gstin.toUpperCase(),party.name);
+  if(h.party_name)remember("party","name:"+M.normParty(h.party_name),party.name);
+  for(const l of inv.lines){
+    if(l.kind==="item"&&l.stock_state==="resolved"&&master("stock_item",l.stock_item)){
+      remember("stock_party",M.stockPartyKey(party.name,l.description),l.stock_item);
+      if(l.ledger_state==="resolved"&&master("ledger",l.ledger))
+        remember("ledger","party_item:"+inv.voucher_type+":"+party.name+":"+l.stock_item,l.ledger);
+    }
+    if(l.kind==="ledger"&&l.ledger_state==="resolved"&&master("ledger",l.ledger))
+      remember("charge",M.norm(l.description),l.ledger);
+  }
+  for(const tax of inv.tax_lines||[]){
+    if(tax.ledger&&master("ledger",tax.ledger))
+      remember("tax",inv.voucher_type+":"+tax.head+":"+(tax.rate??""),tax.ledger);
+  }
+  return out;
+}
+
 export async function jobResult(D, job, ok, response, error) {
   let status = ok ? "done" : "failed";
+  let confirmedCreated=false;
   let note = error || "";
   const t = now();
   const w = [];
@@ -462,8 +506,9 @@ export async function jobResult(D, job, ok, response, error) {
     if (job.invoice_id) w.push(D.updateStmt("bank_lines", job.invoice_id, res.ok ? { status: "synced", synced_at: t, sync_error: null } : { status: "failed", sync_error: note }));
   } else if (job.kind === "import_master" || job.kind === "import_voucher") {
     const res = ok ? T.parseImportResponse(response) : { ok: false, messages: [error || "Tally error"] };
-    status = res.ok ? "done" : "failed";
-    note = res.messages.join("; ") || (res.ok ? "Created" : "Tally rejected it");
+    confirmedCreated=job.kind==="import_voucher"&&res.ok&&res.created===1&&res.altered===0;
+    status=(job.kind==="import_voucher"?confirmedCreated:res.ok)?"done":"failed";
+    note=res.messages.join("; ")||(status==="done"?"Created":"Tally did not confirm one new voucher; check Tally before retrying");
     if (job.kind === "import_master" && res.ok) {
       const m = job.payload.match(/<(LEDGER|STOCKITEM|UNIT) NAME="([^"]+)"/);
       if (m) w.push(D.stmt("UPDATE masters SET pending=0 WHERE company_id=? AND kind=? AND name=?", job.company_id,
@@ -471,11 +516,16 @@ export async function jobResult(D, job, ok, response, error) {
         m[2].replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")));
     }
     if (job.kind === "import_voucher" && job.invoice_id) {
-      w.push(D.updateStmt("invoices", job.invoice_id, res.ok ? { status: "synced", synced_at: t, sync_error: null } : { status: "failed", sync_error: note }));
-      log(res.ok ? "Created in Tally" : `Tally rejected: ${note}`);
+      w.push(D.updateStmt("invoices", job.invoice_id, confirmedCreated ? { status: "synced", synced_at: t, sync_error: null } : { status: "failed", sync_error: note }));
+      log(confirmedCreated ? "Created in Tally" : `Tally did not confirm creation: ${note}`);
     }
   }
   w.push(D.updateStmt("jobs", job.id, { status, result: String(note).slice(0, 2000), updated_at: t }));
+  if(confirmedCreated&&job.invoice_id){
+    try{w.push(...await confirmedPostingMemory(D,job.invoice_id));}
+    catch(e){w.push(D.stmt("INSERT INTO activity(batch_id,invoice_id,message,at) VALUES (?,?,?,?)",
+      null,job.invoice_id,"Smart Matching memory not saved: "+String(e.message).slice(0,300),t));}
+  }
   await D.batch(w);
   if (ok && job.kind === "export_stock") await rematchCompany(D, job.company_id);
 }
