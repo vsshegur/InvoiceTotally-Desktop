@@ -44,7 +44,7 @@ async function companySmartMappings(c,el){
   const rows=data.pending||[];
   el.innerHTML='<div class="card" style="margin-bottom:16px;padding:16px"><h2 style="margin:0 0 6px">Smart ledger &amp; stock matching</h2>'+
     '<p class="muted">Suggested by name, GSTIN, HSN, GST rate and units. Hard conflicts cannot be approved. Every decision is reviewed and remembered only for this company; no master is created or altered in Tally.</p>'+
-    '<div class="muted small">'+data.unresolved+' unresolved entries · '+data.learned+' learned mappings</div>'+
+    '<div class="muted small">'+data.unresolved+' unresolved entries · '+data.learned+' learned mappings · '+(data.posted_learned||0)+' remembered from confirmed Tally posts</div>'+
     '<button class="btn sm" id="ccExportMappings" style="margin-top:9px">Download remembered mappings CSV</button></div>'+
     (rows.length?'<div style="overflow:auto"><table class="grid"><thead><tr><th>Type</th><th>Invoice line / party</th><th>Tally master suggestions</th><th></th></tr></thead><tbody>'+
       rows.map((r,i)=>{
