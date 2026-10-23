@@ -573,7 +573,7 @@ async function companyBatches(c, el) {
     ${rows.map((b) => { const n = b.counts || {}; const done = n.synced || 0;
       return `<tr class="click" data-href="#/b/${b.id}"><td><b>${esc(b.name)}</b></td><td>${esc(b.voucher_type)}</td><td class="muted">${ago(b.created_at)}</td>
       <td class="num">${b.invoices}</td><td>${b.stage !== "review" ? `<span class="${b.stage === "error" ? "bad" : "warn"}">${stageLbl[b.stage]} ${b.stage === "error" ? esc(b.error || "") : ""}</span>` :
-        `<span class="${done === b.invoices && done ? "good" : ""}">${done} of ${b.invoices} in Tally</span>${n.failed ? ` · <span class="bad">${n.failed} failed</span>` : ""}`}</td></tr>`; }).join("")}
+        `<span class="${done === b.invoices && done ? "good" : ""}">${done} of ${b.invoices} in Tally</span>${n.failed ? ` · <span class="bad">${n.failed} failed</span>` : ""}${b.have_a_look?` · <span class="bad" title="Open this batch and choose Have a look to verify dates">⚠ Have a look: ${b.have_a_look}</span>`:""}`}</td></tr>`; }).join("")}
     </tbody></table>` : `<div class="card empty">No invoices yet. Choose one of the two upload options above.</div>`);
   $$("tr[data-href]", el).forEach((tr) => tr.onclick = () => location.hash = tr.dataset.href);
   every(5000, async () => { if (rows.some((b) => b.stage !== "review" && b.stage !== "error") || (!c.masters.ledger && c.pending_jobs)) refresh(); });
