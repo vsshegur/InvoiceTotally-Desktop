@@ -117,7 +117,7 @@ test("prepare, create purchase ledger, map input taxes, approve, queue, verify a
   assert.match(job.payload,/<LEDGER NAME="PURCHASE-GSTR2B"/);
   await P.jobResult(D,job,true,goodResponse);
   assert.equal((await G.view(D,prepared.id)).ledgerPresent,true);
-  await assert.rejects(()=>G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input CGST",round:"Round Off"}),/distinct/);
+  await assert.rejects(()=>G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input CGST",igst:"Input IGST",round:"Round Off"}),/distinct/);
   await G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input SGST",igst:"Input IGST",round:"Round Off"});
   await assert.rejects(()=>G.queue(D,prepared.id,{ids:[p149.id],confirmed:true}),/confirm posting/);
   const posted=await G.queue(D,prepared.id,{ids:[p149.id,p38.id],confirmed:true,confirmedDate:true});
