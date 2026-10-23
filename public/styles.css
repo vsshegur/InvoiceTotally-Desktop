@@ -321,3 +321,17 @@ table.map tr.sel td { background: var(--accent-soft); font-weight: 600; }
 .tag.bad { color: var(--bad); border-color: var(--bad); }
 .banner.info { background: color-mix(in srgb, var(--info) 12%, var(--panel)); }
 .from-party { font-size: 12.5px; color: var(--info); margin: 1px 0 2px; }
+
+/* GSTR-2B review: keep selected-voucher posting and approval controls visible while scrolling. */
+.g2b-sticky {
+  position: sticky;
+  top: 52px;
+  z-index: 14;
+  background: var(--panel);
+  border-color: var(--line-2);
+  box-shadow: 0 5px 18px rgba(0,0,0,.20);
+}
+@media(max-width:700px) {
+  .g2b-sticky { top:52px; padding:10px !important; }
+  .g2b-sticky .btn { white-space:normal; }
+}
