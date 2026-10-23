@@ -316,7 +316,10 @@ async function createBatch(D, cid, body, { source, label = "" } = {}) {
   const fy=fiscalYearStart(indiaDate());
   if (!files.length) throw new HttpError(400, "Add at least one file");
   const d = new Date(Date.now() + 5.5 * 3600e3);
-  let name = `${vt.toUpperCase()}_${String(d.getUTCDate()).padStart(2, "0")}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${d.getUTCFullYear()}`;
+  const uploadDay=`${String(d.getUTCDate()).padStart(2,"0")}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${d.getUTCFullYear()}`;
+  let name=mode==="month"?`${vt.toUpperCase()}_${period}_UPLOAD_${uploadDay}`:
+    mode==="mixed"?`${vt.toUpperCase()}_MIXED_FY${fy}-${String((fy+1)%100).padStart(2,"0")}_UPLOAD_${uploadDay}`:
+    `${vt.toUpperCase()}_${uploadDay}`;
   if (label) name += ` · ${label}`;
   const n = (await D.first("SELECT count(*) n FROM batches WHERE company_id=? AND name LIKE ?", cid, name + "%")).n;
   if (n) name += ` (${n + 1})`;
