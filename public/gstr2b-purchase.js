@@ -49,8 +49,9 @@ async function viewGstr2bPurchaseBatch(id){
   for(const id of G2B_UI.selected)if(!eligibleIds.has(id))G2B_UI.selected.delete(id);
   const stats=Object.entries(d.stats||{}).map(([s,n])=>esc(s)+": "+n).join(" · ");
   const heads=["igst","cgst","sgst","cess"];
-  const used=heads.filter(k=>eligible.some(r=>Math.abs(+r[k]||0)>.004));
-  if(eligible.some(r=>Math.abs(+r.round_off||0)>.004))used.push("round");
+  const mappingRows=rows.filter(x=>["ready","review","failed"].includes(x.status));
+  const used=heads.filter(k=>mappingRows.some(r=>Math.abs(+r[k]||0)>.004));
+  if(mappingRows.some(r=>Math.abs(+r.round_off||0)>.004))used.push("round");
   const ledgerReady=d.ledgerPresent,allMapped=used.every(k=>mapping[k]);
   const selectable=(dataAttr,options,value)=>{
     return '<select class="in" '+dataAttr+' style="max-width:270px;min-width:180px">'+
