@@ -754,8 +754,12 @@ async function viewUpload(cid) {
   let busy = false;
   const upload = async () => {
     if (!st.files.length || busy) return;
-    if(st.period_mode==="month"&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(st.expected_period))
-      return toast("Choose a valid invoice month and year first.",true);
+    if(st.period_mode==="month"){
+      const rawYear=$("#invoiceYear")?.value||"",rawMonth=$("#invoiceMonth")?.value||"";
+      if(!/^\d{4}$/.test(rawYear)||+rawYear<2000||+rawYear>2100||!/^(0[1-9]|1[0-2])$/.test(rawMonth))
+        return toast("Choose a valid invoice month and a year from 2000 to 2100.",true);
+      st.expected_period=rawYear+"-"+rawMonth;
+    }
     busy = true;
     const go = $("#go"), status = $(".bar .status");
     go.disabled = true;
@@ -862,7 +866,7 @@ async function viewBatch(bid) {
     if(!confirm("DELETE "+b.name+" from Vipul Workplace? This removes its invoice files and drafts. Vouchers already in Tally will NOT be deleted.\n\nThis action cannot be undone."))return;
     try{await api(`/batches/${bid}`,{method:"DELETE"});
       toast("Batch deleted. Entries already posted in Tally were not changed.");
-      location.hash=`#/c/${c.id}`;route();
+      location.hash=`#/c/${c.id}`;
     }catch(e){toast("Delete failed: "+e.message,true);}
   };
   $("#retry")?.addEventListener("click", async () => { await act(() => api(`/batches/${bid}/retry`, { body: {} }), "Reading again…"); route(); });
