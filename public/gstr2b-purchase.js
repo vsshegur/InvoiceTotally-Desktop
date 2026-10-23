@@ -198,7 +198,7 @@ async function viewGstr2bPurchaseBatch(id){
   $$("[data-mark-credit]").forEach(btn=>btn.onclick=()=>{
     const r=rows.find(x=>x.id===btn.dataset.markCredit);
     if(!r)return;
-    const amended=["ECOA","CDNRA"].includes(r.source_section);
+    const amended=["ECOA","CDNRA","B2BA"].includes(r.source_section);
     const message="Supplier credit-note verification:\n\n"+r.supplier_name+" — "+r.supplier_invoice+
       "\nValue "+g2bMoney(r.invoice)+" · date "+r.date+
       "\n\nConfirm that you have checked the ORIGINAL supplier-issued credit note and that this is a genuine reduction in purchases/ITC. "+
