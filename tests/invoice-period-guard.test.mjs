@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {db} from "../engine/db.js";
 import {makeD1} from "../desktop/d1.mjs";
 import * as P from "../engine/pipeline.js";
@@ -70,6 +71,9 @@ test("monthly and mixed upload mode validate date, preserve initial AI warning, 
   const invId=await bill(D,resp.data.id,"2020-05-14",true);
   const before=(await call("GET","/batches/"+resp.data.id)).data;
   assert.equal(before.have_a_look,1);
+  const overview=await call("GET","/companies/"+id+"/batches");
+  assert.equal(overview.status,200);
+  assert.equal(overview.data.find(b=>b.id===resp.data.id).have_a_look,1);
   assert.equal(before.invoices[0].date_review.hard_mismatch,true);
   assert.ok(before.invoices[0].steps.blockers.some(x=>/2026-05/.test(x)));
   const blocked=await call("PATCH","/invoices/"+invId,{data:{date:"2020-05-14"},confirm_date:true});
@@ -155,4 +159,16 @@ test("Smart Matching learns verified Tally-posted mapping once, without changing
   const existing=await D.first("SELECT value FROM aliases WHERE company_id=? AND kind='party' AND key=?",id,"gstin:"+seller);
   assert.equal(existing.value,"KANAKRAJ TEXTILES");
  }finally{DB.close();}
+});
+
+test("frontend exposes both upload modes and working delete action without undefined DRIVERS",()=>{
+  const js=fs.readFileSync(new URL("../public/app.js",import.meta.url),"utf8");
+  assert.match(js,/Specific month and year/);
+  assert.match(js,/Regular mixed invoices/);
+  assert.match(js,/Have a look/);
+  assert.match(js,/invoiceMonth/);
+  assert.match(js,/invoiceYear/);
+  assert.match(js,/\$\$\("\.choice"\)\.forEach/);
+  assert.match(js,/api\(\`\/batches\/\$\{bid\}\`,\{method:"DELETE"\}\)/);
+  assert.doesNotMatch(js,/DRIVERS\.get\(bid\)/);
 });
