@@ -101,8 +101,9 @@ test("prepare, create purchase ledger, map input taxes, approve, queue, verify a
   assert.equal(d.fixedPurchaseLedger,"PURCHASE-GSTR2B");
   assert.equal(d.ledgerPresent,false);
   assert.equal(d.rows.length,7);
-  assert.equal(d.rows.filter(r=>r.status==="ready").length,2);
-  assert.equal(d.rows.filter(r=>r.status==="blocked").length,5);
+  assert.equal(d.rows.filter(r=>r.status==="ready").length,3);
+  assert.equal(d.rows.find(r=>r.supplier_invoice==="CN-12").vtype,"Debit Note");
+  assert.equal(d.rows.filter(r=>r.status==="blocked").length,4);
   const p149=d.rows.find(r=>r.supplier_invoice==="149");
   assert.equal(p149.round_off,-0.06);
   assert.equal(p149.date,"2026-03-22");
@@ -117,7 +118,7 @@ test("prepare, create purchase ledger, map input taxes, approve, queue, verify a
   await P.jobResult(D,job,true,goodResponse);
   assert.equal((await G.view(D,prepared.id)).ledgerPresent,true);
   await assert.rejects(()=>G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input CGST",round:"Round Off"}),/distinct/);
-  await G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input SGST",round:"Round Off"});
+  await G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input SGST",igst:"Input IGST",round:"Round Off"});
   await assert.rejects(()=>G.queue(D,prepared.id,{ids:[p149.id],confirmed:true}),/confirm posting/);
   const posted=await G.queue(D,prepared.id,{ids:[p149.id,p38.id],confirmed:true,confirmedDate:true});
   assert.equal(posted.queued,2);
@@ -180,4 +181,8 @@ test("Invoices offers two upload choices and GSTR-2B parser is reused, not repla
  const frontend=fs.readFileSync(new URL("../public/gstr2b-purchase.js",import.meta.url),"utf8");
  assert.doesNotThrow(()=>new vm.Script(frontend,{filename:"gstr2b-purchase.js"}),"Purchase UI script must parse before the app boots");
  assert.match(frontend,/PURCHASE-GSTR2B/);
+  assert.match(frontend,/data-post-one/);
+  assert.match(frontend,/data-mark-credit/);
+  assert.match(frontend,/data-create-supplier/);
+  assert.match(frontend,/g2b-sticky/);
 });
