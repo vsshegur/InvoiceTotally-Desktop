@@ -735,7 +735,7 @@ async function viewUpload(cid) {
         <div class="files">${st.files.map((f, i) => `<div><span>${esc(f.name)}</span><span class="muted">${(f.size / 1024).toFixed(0)} KB <a href="#" data-rm="${i}">✕</a></span></div>`).join("")}</div>` : ""}</div>
     </div>`;
     wireTop(c);
-    $(".choice").forEach((el) => el.onclick = () => { st[el.dataset.k] = el.dataset.v; render(); });
+    $$(".choice").forEach((el) => el.onclick = () => { st[el.dataset.k] = el.dataset.v; render(); });
     const periodSave=()=>{const year=Number($("#invoiceYear")?.value),month=$("#invoiceMonth")?.value;
       if(Number.isInteger(year)&&year>=2000&&year<=2100&&month)st.expected_period=year+"-"+month;};
     $("#invoiceMonth")?.addEventListener("change",periodSave);
