@@ -161,6 +161,32 @@ def purchases_gst(frm, to):
         out.append(f"<VOUCHER><MASTERID>{mid}</MASTERID><DATE>{d}</DATE><VOUCHERNUMBER>{vno}</VOUCHERNUMBER><VOUCHERTYPENAME>{vt}</VOUCHERTYPENAME>"
                    f"<ITKIND>{kind}</ITKIND><REFERENCE>{esc(ref)}</REFERENCE><REFERENCEDATE>{refd}</REFERENCEDATE><PARTYLEDGERNAME>{esc(party)}</PARTYLEDGERNAME>"
                    f"<PARTYGSTIN>{gstin}</PARTYGSTIN><ISCANCELLED>No</ISCANCELLED><ISOPTIONAL>No</ISOPTIONAL>{e}{iv}</VOUCHER>")
+    # Newly created GSTR-2B Purchase / Debit Note vouchers must be visible to the
+    # next read-only duplicate guard, not just the initial static fixtures.
+    for i, content in enumerate(VOUCHERS, 10000):
+        try:
+            voucher = ET.fromstring(re.sub(r"&#4;", "", content)).find(".//VOUCHER")
+        except ET.ParseError:
+            continue
+        if voucher is None or voucher.findtext("VOUCHERTYPENAME") not in ("Purchase", "Debit Note"):
+            continue
+        if "GSTR-2B" not in (voucher.findtext("NARRATION") or ""):
+            continue
+        date = voucher.findtext("DATE") or ""
+        if not (frm <= date <= to):
+            continue
+        entries = voucher.findall("ALLLEDGERENTRIES.LIST") + voucher.findall("LEDGERENTRIES.LIST")
+        ledgers = "".join(
+            f"<ALLLEDGERENTRIES.LIST><LEDGERNAME>{esc(le.findtext('LEDGERNAME') or '')}</LEDGERNAME>"
+            f"<AMOUNT>{esc(le.findtext('AMOUNT') or '0')}</AMOUNT></ALLLEDGERENTRIES.LIST>" for le in entries)
+        out.append(f"<VOUCHER><MASTERID>{i}</MASTERID><DATE>{date}</DATE>"
+                   f"<VOUCHERNUMBER>{esc(voucher.findtext('VOUCHERNUMBER') or '')}</VOUCHERNUMBER>"
+                   f"<VOUCHERTYPENAME>{esc(voucher.findtext('VOUCHERTYPENAME') or '')}</VOUCHERTYPENAME>"
+                   f"<ITKIND>{'dn' if voucher.findtext('VOUCHERTYPENAME') == 'Debit Note' else 'inv'}</ITKIND>"
+                   f"<REFERENCE>{esc(voucher.findtext('REFERENCE') or '')}</REFERENCE>"
+                   f"<PARTYLEDGERNAME>{esc(voucher.findtext('PARTYLEDGERNAME') or '')}</PARTYLEDGERNAME>"
+                   f"<PARTYGSTIN>{esc(voucher.findtext('PARTYGSTIN') or '')}</PARTYGSTIN>"
+                   f"{ledgers}</VOUCHER>")
     return f"<ENVELOPE><BODY><DATA><COLLECTION>{''.join(out)}</COLLECTION></DATA></BODY></ENVELOPE>"
 
 
@@ -200,7 +226,7 @@ def do_import(xml):
     ledgers = {l[0] for l in LEDGERS} | CREATED["LEDGER"]
     items = {s[0] for s in STOCK} | CREATED["STOCKITEM"]
     total = 0.0
-    for le in v.findall("LEDGERENTRIES.LIST"):
+    for le in v.findall("LEDGERENTRIES.LIST") + v.findall("ALLLEDGERENTRIES.LIST"):
         n = le.findtext("LEDGERNAME")
         if n not in ledgers:
             return result(errors=1, msg=f"Ledger '{n}' does not exist!")
@@ -215,7 +241,7 @@ def do_import(xml):
         total += float(ie.findtext("AMOUNT"))
     if abs(total) > 0.001:
         return result(errors=1, msg=f"Voucher totals do not match! Dr/Cr difference {total:.2f}")
-    for le in v.findall("LEDGERENTRIES.LIST"):
+    for le in v.findall("LEDGERENTRIES.LIST") + v.findall("ALLLEDGERENTRIES.LIST"):
         al = le.findall("BILLALLOCATIONS.LIST")
         if al and abs(sum(float(a.findtext("AMOUNT")) for a in al) - float(le.findtext("AMOUNT"))) > 0.001:
             return result(errors=1, msg="Bill allocations do not match the ledger amount")

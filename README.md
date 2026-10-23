@@ -88,6 +88,46 @@ Every transaction is posted to the **suspense ledger** you choose — money in a
 Suspense to the right ledger in Tally. A transaction already posted from an earlier statement is marked
 *Posted earlier* and not posted again. Scanned or photographed statements can't be read (that would need AI).
 
+## GSTR-2B review update (v3.7.1)
+
+**Posting a ready document:** on the GSTR-2B purchase review page, click
+**Post Purchase** or **Post Debit Note** beside an eligible row, review the
+confirmation and send it to Tally. For bulk posting, tick the ready rows,
+verify both review checkboxes in the sticky posting bar, and click **Post N
+selected to Tally**. A row marked **ready** is not yet posted; **synced** means
+Tally confirmed creation. Previously selected checkboxes and confirmations
+remain selected while refreshing the screen.
+
+**Missing supplier GSTIN in Tally masters:** this means the imported
+creditor ledger is absent or does not have the GSTR-2B supplier's GSTIN.
+For a completely new supplier, click **Create supplier in Tally** beside that
+row (explicit approval required). The app queues a ledger under Sundry
+Creditors using the supplier name and GSTIN from the return. When Tally
+confirms creation, refresh the page: unresolved review rows auto-match by
+GSTIN. If a ledger with that name already exists but lacks the correct
+GSTIN, update the **existing** ledger in Tally and click **Import masters**.
+The app must not create a duplicate with the same name.
+
+**Supplier credit notes:** original GSTR-2B CDNR credit notes become **Debit
+Notes** in the buyer's books: debit supplier, credit `PURCHASE-GSTR2B`,
+credit/reverse mapped Input GST, and balance Round Off. For e-commerce
+(ECO/ECOA) and amended credit-note documents (CDNRA), use **Record as Debit
+Note** only when the original supplier-issued credit note confirms that
+the entry is a real credit, not a normal invoice or merely an amendment.
+Amended documents require an additional explicit confirmation. The specific
+Flipkart document `FKCKA27000482834` can be reviewed/classified **without
+re-uploading** a previously prepared batch. Other e-commerce or amended
+documents stay blocked until explicitly verified. No stock movements are
+created.
+
+**Important:** Debit Note may need enabling in the target TallyPrime company.
+No automatic bill-wise allocation to an original supplier invoice is made
+because GSTR-2B does not contain a verified original bill reference for every
+credit. Verify original-document treatment, GST reversal, supplier balance and
+reference allocation in Tally, particularly across earlier tax years. Each
+post is checked against Tally live to stop duplicate creates; uncertain
+outcomes require a fresh recheck.
+
 ## GSTR-2B invoices → Tally Purchases (v3.7.0)
 
 Open a company's **Invoices** tab. It now has **1. Upload Invoices** (the original PDF/photo/Excel flow)

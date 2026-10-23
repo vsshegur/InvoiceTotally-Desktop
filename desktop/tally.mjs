@@ -180,7 +180,7 @@ function tallyError(s) {
 }
 
 // ------------------------------------------------------------------ posting safety
-const POSTABLE = new Set(["Purchase", "Sales", "Credit Note", "Receipt", "Payment", "Contra"]);
+const POSTABLE = new Set(["Purchase", "Debit Note", "Sales", "Credit Note", "Receipt", "Payment", "Contra"]);
 const FORBIDDEN_TAGS = new Set(["TDL", "TDLMESSAGE", "OBJECT", "SYSTEM", "COLLECTION", "REPORT", "FORM", "FUNCTION", "ACTION",
   "GUID", "REMOTEID", "MASTERID", "ALTERID", "VCHKEY", "OLDNAME", "REMOTEALTGUID"]);
 
@@ -221,7 +221,7 @@ export function validatePosting(xml, tallyCompany) {
   if (obj.name === "VOUCHER") {
     if (report !== "Vouchers") throw new TallyError("vouchers must use the Vouchers report");
     const vt = (obj.attr.VCHTYPE || "").trim();
-    if (!POSTABLE.has(vt) || child(obj, "VOUCHERTYPENAME") !== vt) throw new TallyError(`only Purchase, Sales, Credit Note, Receipt, Payment and Contra vouchers can be posted (got "${vt}")`);
+    if (!POSTABLE.has(vt) || child(obj, "VOUCHERTYPENAME") !== vt) throw new TallyError(`only Purchase, Debit Note, Sales, Credit Note, Receipt, Payment and Contra vouchers can be posted (got "${vt}")`);
     return `${vt} voucher`;
   }
   if (["LEDGER", "STOCKITEM", "UNIT"].includes(obj.name)) {

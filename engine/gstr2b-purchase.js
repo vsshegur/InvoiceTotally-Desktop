@@ -21,15 +21,23 @@ const src=doc=>sourceKey(cleanGstin(doc.ctin),doc.num,doc.dt);
 const safeError=s=>String(s||"").slice(0,1700);
 const approvedStates=new Set(["ready","failed"]);
 const amt=row=>round2((Number(row.taxable)||0)+HEADS.reduce((n,k)=>n+(Number(row[k])||0),0));
+const normName=s=>String(s||"").trim().replace(/\s+/g," ").toUpperCase();
+const creditor=m=>/sundry creditors/i.test(m.primary_group||m.parent||"");
+const isPortalCredit=d=>d.sec==="CDNR"&&d.note==="C";
+const isManualCredit=d=>["ECO","ECOA","B2BA"].includes(d.sec)||(d.sec==="CDNRA"&&d.note==="C");
 async function company(D,cid){return must(await D.first("SELECT * FROM companies WHERE id=?",cid),"Company not found");}
 async function batch(D,id){return must(await D.first("SELECT * FROM gstr2b_purchase_batches WHERE id=?",id),"GSTR-2B purchase batch not found");}
 async function companyBatch(D,id){const b=await batch(D,id);return {batch:b,company:await company(D,b.company_id)};}
 function matchedCandidates(ledgers,gstin){
-  return ledgers.filter(x=>x.kind==="ledger"&&!x.pending&&eq(x.gstin,gstin)&&x.gstin&&/sundry creditors/i.test(x.primary_group||x.parent||""));
+  return ledgers.filter(x=>x.kind==="ledger"&&!x.pending&&eq(x.gstin,gstin)&&x.gstin&&creditor(x));
 }
-function validNormalDoc(d){
-  if(d.sec!=="B2B")return "Only original B2B invoices are supported. Amendments, e-commerce sections, notes, imports and ISD require separate review.";
-  if(d.note)return "Credit and debit notes cannot be posted as ordinary Purchase vouchers.";
+function validNormalDoc(d,type="Purchase",creditVerified=false){
+  if(type==="Purchase" && d.sec!=="B2B")
+    return "Only original B2B invoices can be booked as Purchase. Supplier credit notes require a Debit Note; amendments/ECO documents need explicit source verification.";
+  if(type==="Debit Note" && !(isPortalCredit(d)||(isManualCredit(d)&&creditVerified)))
+    return "Debit Note is allowed only for a portal supplier credit note (CDNR/C) or a manually verified ECO supplier credit document.";
+  if(!["Purchase","Debit Note"].includes(type))return "Unsupported voucher type.";
+  if(type==="Purchase"&&d.note)return "Supplier notes cannot be booked as ordinary Purchases.";
   if(d.rev)return "Reverse-charge purchase: separate RCM review is required.";
   if(d.itc==="N")return "ITC is marked unavailable in this return; review the invoice and tax treatment.";
   if(d.compare===0||d.status==="ignored"||d.status==="accepted")return "Document is excluded/ignored in GSTR-2B reconciliation.";
@@ -59,7 +67,8 @@ export async function prepare(D,cid,input){
   const b={id:newId(),company_id:cid,return_id:rid,period:g.period,mapping:"{}",created_at:now()};
   const rows=[],seen=new Set(),notImported=[];
   for(const [seq,d] of docs.entries()){
-    const key=src(d),reason=validNormalDoc(d);
+    const key=src(d),vtype=isPortalCredit(d)?"Debit Note":"Purchase";
+    const reason=validNormalDoc(d,vtype,isPortalCredit(d));
     if(!key||seen.has(key)){notImported.push({invoice:d.num,reason:"Duplicate invoice within the GSTR-2B document"});continue;}
     seen.add(key);
     const existing=await D.first("SELECT id,status FROM gstr2b_purchase_vouchers WHERE company_id=? AND source_key=?",cid,key);
@@ -75,6 +84,7 @@ export async function prepare(D,cid,input){
       id:newId(),batch_id:b.id,company_id:cid,doc_id:d.id,source_key:key,seq,
       date:d.dt||null,period:g.period,supplier_name:d.name||"",supplier_gstin:d.ctin||"",
       supplier_invoice:d.num||"",voucher_number:makeVoucherNumber(g.period,key),
+      vtype,credit_verified:isPortalCredit(d)?1:0,
       party_ledger:party,taxable:round2(d.txval),invoice:round2(d.val),
       igst:round2(d.igst),cgst:round2(d.cgst),sgst:round2(d.sgst),cess:round2(d.cess),
       round_off:round2(Number(d.val)-amt({taxable:d.txval,igst:d.igst,cgst:d.cgst,sgst:d.sgst,cess:d.cess})),
@@ -96,9 +106,33 @@ export async function list(D,cid){
 export async function view(D,id){
   const {batch:b,company:c}=await companyBatch(D,id);
   const [rows,masters,returnInfo]=await D.many([
-    ["SELECT * FROM gstr2b_purchase_vouchers WHERE batch_id=? ORDER BY seq",id],
+    ["SELECT v.*,d.sec source_section,d.note source_note,d.typ source_type,d.onum original_invoice,d.odt original_date,d.itc source_itc,d.rev source_reverse,d.status source_status,d.mid source_mid,d.compare source_compare FROM gstr2b_purchase_vouchers v JOIN gst_docs d ON d.id=v.doc_id WHERE v.batch_id=? ORDER BY v.seq",id],
     ["SELECT name,parent,primary_group,gstin,pending FROM masters WHERE company_id=? AND kind='ledger' ORDER BY name",b.company_id],
     ["SELECT id,period,filename,kind FROM gst_returns WHERE id=?",b.return_id]]);
+  // Existing v3.7.0 batches must remain usable: resolve supplier ledgers after
+  // Import Masters and recognize unposted portal credit notes on refresh.
+  for(const r of rows){
+    if(!["review","blocked"].includes(r.status))continue;
+    const doc={sec:r.source_section,note:r.source_note,itc:r.source_itc,rev:r.source_reverse,
+      status:r.source_status,mid:r.source_mid,compare:r.source_compare,ctin:r.supplier_gstin,
+      num:r.supplier_invoice,dt:r.date,txval:r.taxable,val:r.invoice,
+      igst:r.igst,cgst:r.cgst,sgst:r.sgst,cess:r.cess};
+    const automaticCredit=isPortalCredit(doc)&&r.status==="blocked"&&r.vtype==="Purchase";
+    const type=automaticCredit?"Debit Note":r.vtype;
+    const verified=automaticCredit?1:r.credit_verified;
+    if(validNormalDoc(doc,type,!!verified))continue;
+    const matches=matchedCandidates(masters.map(m=>({...m,kind:"ledger"})),r.supplier_gstin);
+    const party=r.party_ledger|| (matches.length===1?matches[0].name:null);
+    const newStatus=party?"ready":"review";
+    if(r.status!==newStatus||r.party_ledger!==party||automaticCredit){
+      await D.update("gstr2b_purchase_vouchers",r.id,{
+        vtype:type,credit_verified:verified,party_ledger:party,status:newStatus,
+        error:party?null:"Supplier ledger not yet matched by GSTIN. Import or create the correct creditor master."
+      });
+      Object.assign(r,{vtype:type,credit_verified:verified,party_ledger:party,status:newStatus,
+        error:party?null:"Supplier ledger not yet matched by GSTIN. Import or create the correct creditor master."});
+    }
+  }
   const mapping=jload(b.mapping,{});
   const purchaseMasters=masters.filter(x=>eq(x.name,PURCHASE_LEDGER));
   const ledgerPresent=purchaseMasters.some(x=>!x.pending&&(/purchase accounts/i.test(x.primary_group||x.parent||"")));
@@ -106,11 +140,26 @@ export async function view(D,id){
   const supplierOptions={};
   for(const r of rows)if(r.supplier_gstin&&!supplierOptions[r.supplier_gstin])
     supplierOptions[r.supplier_gstin]=matchedCandidates(masters.map(x=>({...x,kind:"ledger"})),r.supplier_gstin).map(x=>x.name);
+  const supplierIssues={};
+  for(const r of rows.filter(r=>r.status==="review"&&!r.party_ledger)){
+    const similarlyNamed=masters.filter(x=>creditor(x)&&normName(x.name)===normName(r.supplier_name));
+    const pending=similarlyNamed.find(x=>x.pending);
+    const found=similarlyNamed.find(x=>!x.pending);
+    supplierIssues[r.id]=pending?
+      {code:"pending",message:"Supplier ledger creation pending in Tally. Refresh after it completes.",canCreate:false}:
+      found?
+      {code:"existing",message:found.gstin?
+        "A supplier ledger with this name exists but has a DIFFERENT GSTIN ("+found.gstin+"). Correct it in Tally and Import Masters.":
+        "A supplier ledger with this name exists but its GSTIN is blank. Add "+r.supplier_gstin+" to the existing Tally ledger, then Import Masters.",
+        canCreate:false}:
+      {code:"missing",message:"No supplier creditor with GSTIN "+r.supplier_gstin+
+        " was found. You can create it in Tally or update/import an existing supplier master.",canCreate:true};
+  }
   const stats={};
   for(const r of rows)stats[r.status]=(stats[r.status]||0)+1;
   return {id:b.id,company:{id:c.id,name:c.name,gstin:c.gstin,tally_company:tallyCompany(c)},return:returnInfo[0]||{},
     period:b.period,mapping,rows,masters:masters.filter(x=>!x.pending),ledgerPresent,ledgerPending,
-    fixedPurchaseLedger:PURCHASE_LEDGER,supplierOptions,stats};
+    fixedPurchaseLedger:PURCHASE_LEDGER,supplierOptions,supplierIssues,stats};
 }
 export async function createPurchaseLedger(D,id){
   const {batch:b}=await companyBatch(D,id);
@@ -124,8 +173,8 @@ export async function createPurchaseLedger(D,id){
 }
 export async function saveMapping(D,id,input){
   const {batch:b}=await companyBatch(D,id);
-  const stuck=await D.first("SELECT id FROM gstr2b_purchase_vouchers WHERE batch_id=? AND status IN ('queued','synced','uncertain') LIMIT 1",id);
-  if(stuck)throw new Purchase2bError("Ledger mappings are locked while vouchers are queued or posted. Finish/recheck those first.");
+  const stuck=await D.first("SELECT id FROM gstr2b_purchase_vouchers WHERE batch_id=? AND status IN ('queued','uncertain') LIMIT 1",id);
+  if(stuck)throw new Purchase2bError("Ledger mappings are locked while a posting is queued or uncertain; complete/recheck those first.");
   const masters=await D.all("SELECT name,parent,primary_group FROM masters WHERE company_id=? AND kind='ledger' AND pending=0",b.company_id);
   const lookup=new Map(masters.map(x=>[x.name.toLowerCase(),x]));
   const rows=await D.all("SELECT igst,cgst,sgst,cess,round_off FROM gstr2b_purchase_vouchers WHERE batch_id=? AND status IN ('ready','review','failed')",id);
@@ -146,6 +195,46 @@ export async function saveMapping(D,id,input){
     throw new Purchase2bError("GST and round-off ledgers must be distinct from each other and PURCHASE-GSTR2B");
   await D.run("UPDATE gstr2b_purchase_batches SET mapping=? WHERE id=?",JSON.stringify(mapping),id);
   return {ok:true,mapping};
+}
+export async function createSupplier(D,id,input){
+  const {batch:b}=await companyBatch(D,id);
+  const r=must(await D.first("SELECT * FROM gstr2b_purchase_vouchers WHERE batch_id=? AND id=?",id,input.id),"Supplier document not found");
+  if(r.status!=="review"||r.party_ledger)throw new Purchase2bError("Only unmatched invoices can create a supplier ledger");
+  const d=must(await D.first("SELECT * FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,b.return_id),"Original GSTR-2B document not found");
+  if(validNormalDoc(d,r.vtype,!!r.credit_verified))
+    throw new Purchase2bError("This document is not eligible for supplier ledger creation");
+  if(!gstinValid(r.supplier_gstin))throw new Purchase2bError("The source supplier GSTIN is not valid");
+  const name=String(r.supplier_name||"").trim().slice(0,200);
+  if(!name||/[<>\r\n]/.test(name))throw new Purchase2bError("Supplier name is invalid; correct it in Tally instead");
+  const existing=await D.all("SELECT name,gstin,pending FROM masters WHERE company_id=? AND kind='ledger' AND LOWER(name)=LOWER(?)",b.company_id,name);
+  if(existing.length)throw new Purchase2bError("A ledger with this name already exists or is pending. Correct its GSTIN in Tally, then Import Masters. No duplicate ledger was created.");
+  await P.createMaster(D,b.company_id,"ledger",name,{parent:"Sundry Creditors",gstin:r.supplier_gstin});
+  await D.log("Queued supplier ledger "+name+" ("+r.supplier_gstin+") for GSTR-2B; requires Tally confirmation",{invoice_id:r.id});
+  return {ok:true,queued:true,ledger:name,gstin:r.supplier_gstin};
+}
+export async function setVoucherType(D,id,input){
+  const {batch:b}=await companyBatch(D,id);
+  const r=must(await D.first("SELECT * FROM gstr2b_purchase_vouchers WHERE batch_id=? AND id=?",id,input.id),"Voucher not found");
+  if(!["ready","review","blocked","failed"].includes(r.status))
+    throw new Purchase2bError("Cannot change voucher type once queued, posted, duplicated or uncertain");
+  const d=must(await D.first("SELECT * FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,b.return_id),"Original GSTR-2B document not found");
+  const type=String(input.vtype||"");
+  const manual=isManualCredit(d)&&type==="Debit Note";
+  if(manual&&(!input.confirmCredit || (["ECOA","CDNRA","B2BA"].includes(d.sec)&&!input.confirmAmendment)))
+    throw new Purchase2bError("Confirm the supplier document is genuinely a credit note"+
+      (["ECOA","CDNRA"].includes(d.sec)?" and review the amendment history":"")+".");
+  const verified=manual||isPortalCredit(d)&&type==="Debit Note";
+  const reason=validNormalDoc(d,type,verified);
+  if(reason)throw new Purchase2bError(reason);
+  const party=await D.first("SELECT name,gstin,parent,primary_group FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND LOWER(name)=LOWER(?)",b.company_id,r.party_ledger||"");
+  const matched=party&&eq(party.gstin,r.supplier_gstin)&&creditor(party);
+  const nextStatus=matched?"ready":"review";
+  await D.update("gstr2b_purchase_vouchers",r.id,{vtype:type,credit_verified:verified?1:0,
+    status:nextStatus,party_ledger:matched?party.name:null,
+    error:matched?null:"Supplier GSTIN not matched to an existing Tally creditor."});
+  await D.log("Classified GSTR-2B "+r.supplier_invoice+" ("+d.sec+") as "+type+
+    (manual?" after explicit supplier credit confirmation":" from source note"),{invoice_id:r.id});
+  return {ok:true,vtype:type,status:nextStatus};
 }
 export async function setParty(D,id,input){
   const {batch:b}=await companyBatch(D,id);
@@ -179,9 +268,10 @@ export async function queue(D,id,input){
   const stmts=[];
   for(const r of rows){
     if(!approvedStates.has(r.status))throw new Purchase2bError(r.supplier_invoice+" is not ready to post ("+r.status+")");
-    const doc=await D.first("SELECT mid,status,sec,itc,rev FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,b.return_id);
-    if(!doc||doc.mid||doc.status==="matched"||doc.itc==="N"||doc.rev||doc.sec!=="B2B")
-      throw new Purchase2bError(r.supplier_invoice+" is now matched, excluded, or changed; refresh your GSTR-2B evidence.");
+    const doc=await D.first("SELECT mid,status,sec,note,itc,rev,compare,txval,val,igst,cgst,sgst,cess FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,b.return_id);
+    if(!doc||validNormalDoc({...doc,ctin:r.supplier_gstin,num:r.supplier_invoice,dt:r.date,
+      txval:r.taxable,val:r.invoice,igst:r.igst,cgst:r.cgst,sgst:r.sgst,cess:r.cess},r.vtype,!!r.credit_verified))
+      throw new Purchase2bError(r.supplier_invoice+" is matched, unsupported, or its source classification changed; refresh GSTR-2B evidence.");
     const supplier=await D.first("SELECT name,gstin FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND LOWER(name)=LOWER(?)",b.company_id,r.party_ledger);
     if(!supplier||!eq(supplier.gstin,r.supplier_gstin))
       throw new Purchase2bError(r.supplier_invoice+" supplier GSTIN no longer matches Tally ledger; correct mapping.");
@@ -202,9 +292,10 @@ export async function beforePosting(D,job,tallyCompanyName,readOnly){
   const r=must(await D.first("SELECT * FROM gstr2b_purchase_vouchers WHERE id=?",job.invoice_id),"GSTR-2B purchase not found");
   if(r.status!=="queued")throw new Purchase2bError("Invoice was not queued");
   const batchRow=await batch(D,r.batch_id);
-  const doc=await D.first("SELECT mid,status FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,batchRow.return_id);
-  if(!doc||doc.mid||doc.status==="matched")
-    return {duplicate:true,message:"GSTR-2B is already linked to a Tally voucher; purchase posting blocked"};
+  const doc=await D.first("SELECT mid,status,sec,note,itc,rev,compare,txval,val,igst,cgst,sgst,cess FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,batchRow.return_id);
+  if(!doc||validNormalDoc({...doc,ctin:r.supplier_gstin,num:r.supplier_invoice,dt:r.date,
+     txval:r.taxable,val:r.invoice,igst:r.igst,cgst:r.cgst,sgst:r.sgst,cess:r.cess},r.vtype,!!r.credit_verified))
+    return {duplicate:true,message:"GSTR-2B source is matched or no longer eligible for "+r.vtype+"; posting blocked"};
   const existing=parseExistingPurchases(await readOnly(existingGstr2bRequest(tallyCompanyName,r.date)));
   const found=findExistingPurchase(r,existing);
   return found?{duplicate:true,message:found.reason+" ("+found.number+", "+found.date+")"}:{duplicate:false};
@@ -257,6 +348,10 @@ export function purchase2bRoutes(route,{authorizeCompany,requirePosting}){
     await authorizedBatch(D,env,p.id);await requirePosting(env);return json(await createPurchaseLedger(D,p.id));});
   route("POST","/api/gstr2b-purchases/:id/mapping",async({D,env,p,body})=>{
     await authorizedBatch(D,env,p.id);return json(await saveMapping(D,p.id,body));});
+  route("POST","/api/gstr2b-purchases/:id/type",async({D,env,p,body})=>{
+    await authorizedBatch(D,env,p.id);return json(await setVoucherType(D,p.id,body));});
+  route("POST","/api/gstr2b-purchases/:id/create-supplier",async({D,env,p,body})=>{
+    await authorizedBatch(D,env,p.id);await requirePosting(env);return json(await createSupplier(D,p.id,body));});
   route("POST","/api/gstr2b-purchases/:id/party",async({D,env,p,body})=>{
     await authorizedBatch(D,env,p.id);return json(await setParty(D,p.id,body));});
   route("POST","/api/gstr2b-purchases/:id/post",async({D,env,p,body})=>{

@@ -45,10 +45,13 @@ export function validatePurchaseValues(row){
   return round;
 }
 export function purchaseVoucherXml(company,row,mapping){
+  const type=row.vtype||"Purchase";
+  if(!["Purchase","Debit Note"].includes(type))throw new Error("Unsupported GSTR-2B voucher type");
+  const direction=type==="Debit Note"?-1:1;
   const r={...row,round_off:validatePurchaseValues(row)};
-  const party=r.party_ledger,lines=[ledger(party,+r.invoice,true,r.supplier_invoice),
-    ledger(PURCHASE_LEDGER,-r.taxable)];
-  let total=round2(r.invoice-r.taxable);
+  const party=r.party_ledger,lines=[ledger(party,direction*r.invoice,true,r.supplier_invoice),
+    ledger(PURCHASE_LEDGER,-direction*r.taxable)];
+  let total=round2(direction*(r.invoice-r.taxable));
   for(const head of HEADS){
     const tax=round2(r[head]);
     if(tax===0)continue;
@@ -56,21 +59,21 @@ export function purchaseVoucherXml(company,row,mapping){
     if(!mapped)throw new Error("Choose the Input "+head.toUpperCase()+" ledger before posting");
     if(mapped.toUpperCase()===PURCHASE_LEDGER||mapped.toLowerCase()===party.toLowerCase())
       throw new Error("Tax ledgers must be separate from purchase and supplier ledgers");
-    lines.push(ledger(mapped,-tax));total=round2(total-tax);
+    lines.push(ledger(mapped,-direction*tax));total=round2(total-direction*tax);
   }
   if(Math.abs(r.round_off)>0.004){
     if(!mapping.round)throw new Error("Choose the Round Off ledger before posting");
-    lines.push(ledger(mapping.round,-r.round_off));
-    total=round2(total-r.round_off);
+    lines.push(ledger(mapping.round,-direction*r.round_off));
+    total=round2(total-direction*r.round_off);
   }
-  if(Math.abs(total)>0.01)throw new Error("Purchase voucher does not balance to zero");
+  if(Math.abs(total)>0.01)throw new Error(type+" voucher does not balance to zero");
   const d=formatDate(r.date);
-  const narration="Created from GSTR-2B "+String(r.period||"")+"; supplier GSTIN "+r.supplier_gstin+
-    "; supplier invoice "+r.supplier_invoice+" dated "+r.date+
+  const narration="Created "+type+" from GSTR-2B "+String(r.period||"")+"; supplier GSTIN "+r.supplier_gstin+
+    "; supplier "+(direction<0?"credit note ":"invoice ")+r.supplier_invoice+" dated "+r.date+
     ". Stock items, purchase classification and invoice-specific freight/discount are not in GSTR-2B; verify supplier invoice.";
-  const xml='<VOUCHER VCHTYPE="Purchase" ACTION="Create" OBJVIEW="Accounting Voucher View">'+
+  const xml='<VOUCHER VCHTYPE="'+type+'" ACTION="Create" OBJVIEW="Accounting Voucher View">'+
     "<DATE>"+d+"</DATE><VCHSTATUSDATE>"+d+"</VCHSTATUSDATE>"+
-    "<VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME><VOUCHERNUMBER>"+esc(r.voucher_number)+"</VOUCHERNUMBER>"+
+    "<VOUCHERTYPENAME>"+type+"</VOUCHERTYPENAME><VOUCHERNUMBER>"+esc(r.voucher_number)+"</VOUCHERNUMBER>"+
     "<REFERENCE>"+esc(r.supplier_invoice)+"</REFERENCE><REFERENCEDATE>"+d+"</REFERENCEDATE>"+
     "<PARTYLEDGERNAME>"+esc(party)+"</PARTYLEDGERNAME><PARTYNAME>"+esc(party)+"</PARTYNAME>"+
     "<PARTYGSTIN>"+esc(r.supplier_gstin)+"</PARTYGSTIN>"+
@@ -91,14 +94,17 @@ export function existingGstr2bRequest(company,invoiceDate){
   return purchaseGstRequest(company,(y-1)+"-04-01",(y+2)+"-03-31");
 }
 export function findExistingPurchase(row,rows){
+  const kind=row.vtype==="Debit Note"?"dn":"inv";
   const invoice=invoiceKey(row.supplier_invoice);
   const gstin=String(row.supplier_gstin||"").toUpperCase();
   const party=String(row.party_ledger||"").trim().toUpperCase();
   const number=String(row.voucher_number||"").trim().toUpperCase();
   for(const entry of rows){
-    if(entry.kind!=="inv"&&!/purchase/i.test(entry.vtype||""))continue;
+    // Search both purchases and debit notes by generated voucher ID. A matching
+    // source reference is matched within the intended voucher type.
     if(number&&String(entry.number||"").trim().toUpperCase()===number)
-      return {...entry,reason:"The generated GSTR-2B voucher number is already in Tally"};
+      return {...entry,reason:"Generated GSTR-2B voucher number already exists in Tally"};
+    if(entry.kind!==kind && !new RegExp(kind==="dn"?"debit note":"purchase","i").test(entry.vtype||""))continue;
     const sameParty=(entry.gstin&&entry.gstin.toUpperCase()===gstin)||
       (entry.party&&entry.party.trim().toUpperCase()===party);
     if(!sameParty)continue;
