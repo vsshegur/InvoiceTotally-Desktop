@@ -124,6 +124,14 @@ decisions take priority and are never silently overwritten. Rejected, merely
 queued or draft invoices do not teach Smart Matching. The Smart Matching tab
 shows how many mappings were learned from confirmed Tally postings.
 
+To reuse mappings from invoices **already posted in older versions**, open
+**Smart Matching → Learn from earlier Tally-posted invoices**. The action
+reads local receipts and posting-audit entries in batches of up to 100.
+Only vouchers whose posting audit confirms **created in Tally** qualify.
+It does not modify Tally or learn from invoices merely marked as synced.
+Click again if more earlier invoices remain; existing manual mappings are
+always preserved.
+
 ## GSTR-2B review update (v3.7.1)
 
 **Posting a ready document:** on the GSTR-2B purchase review page, click
