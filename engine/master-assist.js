@@ -59,7 +59,8 @@ export async function suggestions(D,cid){
     pending.push({kind:l.kind==="item"?"stock":"charge",invoice_id:l.invoice_id,line_id:l.id,
       description:l.description,context:ctx,candidates:hits.map(h=>({...h,conflicts:hardConflict(l.kind==="item"?"stock":"charge",ctx,h)}))});
   }
-  return {pending,learned:aliases.length,unresolved:pending.length};
+  const [posted]=await D.all("SELECT count(*) n FROM smart_posted_memory WHERE company_id=?",cid);
+  return {pending,learned:aliases.length,posted_learned:posted?.n||0,unresolved:pending.length};
 }
 export async function learn(D,cid,body){
   const kind=String(body.kind||""),name=clean(body.master),invoiceId=clean(body.invoice_id),lineId=clean(body.line_id);
