@@ -79,7 +79,7 @@ async function viewGstr2bPurchaseBatch(id){
         (issue?'<p class="muted small" style="max-width:250px;margin:5px 0">'+esc(issue.message)+'</p>':'')+
         (issue?.canCreate?'<button class="btn sm" data-create-supplier="'+esc(r.id)+'">+ Create supplier in Tally</button>':'');
     const taxes=heads.filter(k=>+r[k]).map(k=>k.toUpperCase()+": "+g2bMoney(r[k])).join(" · ");
-    const signed=(val)=>g2bMoney(type==="Debit Note"?-val:val);
+    const signed=(val)=>g2bMoney(type==="Debit Note"?val:-val);
     const breakdown='<details><summary class="small" style="cursor:pointer">See journal entry</summary>'+
       '<div class="small" style="min-width:200px;padding:8px 0">'+
       '<div>'+esc(type)+' · '+esc(r.voucher_number)+'</div>'+
