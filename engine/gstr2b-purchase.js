@@ -220,7 +220,7 @@ export async function setVoucherType(D,id,input){
   const d=must(await D.first("SELECT * FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,b.return_id),"Original GSTR-2B document not found");
   const type=String(input.vtype||"");
   const manual=isManualCredit(d)&&type==="Debit Note";
-  if(manual&&(!input.confirmCredit || (d.sec==="ECOA"&&!input.confirmAmendment)))
+  if(manual&&(!input.confirmCredit || (["ECOA","CDNRA"].includes(d.sec)&&!input.confirmAmendment)))
     throw new Purchase2bError("Confirm the supplier document is genuinely a credit note"+
       (d.sec==="ECOA"?" and review the amendment history":"")+".");
   const verified=manual||isPortalCredit(d)&&type==="Debit Note";
