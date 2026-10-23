@@ -1353,10 +1353,10 @@ async function viewInvoice(iid) {
     return { data, lines, confirm_date:$("#verifyDate")?.checked===true };
   };
   const save=async()=>{
-    if(dateReview.needs_review&&!$("#verifyDate")?.checked)
-      return toast("Verify the printed invoice date and tick the confirmation checkbox before saving this flagged invoice.",true);
-    try{await act(()=>api(`/invoices/${iid}`,{method:"PATCH",body:collect()}),"Invoice saved and date verified");route();}
-    catch(e){/* Error is already displayed; remain on invoice for corrections. */}
+    try{await act(()=>api(`/invoices/${iid}`,{method:"PATCH",body:collect()}),
+      $("#verifyDate")?.checked?"Invoice saved and date verified":"Changes saved; suspicious dates remain in Have a look until verified");
+      route();
+    }catch(e){/* Error is already displayed; remain on invoice for corrections. */}
   };
   $("#save").onclick = save;
   const ks = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); } };
