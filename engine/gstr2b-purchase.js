@@ -222,7 +222,7 @@ export async function setVoucherType(D,id,input){
   const manual=isManualCredit(d)&&type==="Debit Note";
   if(manual&&(!input.confirmCredit || (["ECOA","CDNRA"].includes(d.sec)&&!input.confirmAmendment)))
     throw new Purchase2bError("Confirm the supplier document is genuinely a credit note"+
-      (d.sec==="ECOA"?" and review the amendment history":"")+".");
+      (["ECOA","CDNRA"].includes(d.sec)?" and review the amendment history":"")+".");
   const verified=manual||isPortalCredit(d)&&type==="Debit Note";
   const reason=validNormalDoc(d,type,verified);
   if(reason)throw new Purchase2bError(reason);
