@@ -96,7 +96,7 @@ export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS gstr2b_purchase_vouchers (
     id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, company_id TEXT NOT NULL, doc_id TEXT NOT NULL,
     source_key TEXT NOT NULL, seq INTEGER, date TEXT, period TEXT, supplier_name TEXT, supplier_gstin TEXT,
-    supplier_invoice TEXT, voucher_number TEXT, party_ledger TEXT, vtype TEXT NOT NULL DEFAULT 'Purchase',
+    supplier_invoice TEXT, voucher_number TEXT, party_ledger TEXT, vtype TEXT NOT NULL DEFAULT 'Purchase', credit_verified INTEGER NOT NULL DEFAULT 0,
     taxable REAL, invoice REAL, igst REAL, cgst REAL, sgst REAL, cess REAL, round_off REAL,
     status TEXT NOT NULL, error TEXT, posted_at REAL,
     UNIQUE(company_id,source_key))`,
@@ -134,6 +134,7 @@ export const MIGRATIONS = [
   "ALTER TABLE bank_statements ADD COLUMN suspense_ledger TEXT",
   "ALTER TABLE companies ADD COLUMN owner_email TEXT",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN vtype TEXT NOT NULL DEFAULT 'Purchase'",
+  "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN credit_verified INTEGER NOT NULL DEFAULT 0",
   "CREATE INDEX IF NOT EXISTS ix_bank_key ON bank_lines(company_id, key)",
   "CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs(status, created_at)",
 ];
