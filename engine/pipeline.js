@@ -5,6 +5,7 @@ import * as M from "./matching.js";
 import * as T from "./tally.js";
 import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
 import { parseAmount } from "./num.js";
+import {normalizeInvoiceDate,invoiceDateReview} from "./invoice-period.js";
 
 const STALE = 240; // seconds before a claimed unit is considered abandoned
 const TRIES = 4;   // a file or invoice is tried this many times, then shown as failed with the reason (never endless)
@@ -134,7 +135,7 @@ function lineRow(invoiceId, idx, kind, l) {
 export { lineRow };
 
 export async function applyExtraction(D, invId, data) {
-  const inv = await D.first("SELECT i.*, b.voucher_type FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.id=?", invId);
+  const inv = await D.first("SELECT i.*, b.voucher_type,b.period_mode,b.expected_period,b.fy_start,b.created_at AS batch_created_at FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.id=?", invId);
   const vt = inv.voucher_type;
   const party = (vt === "Purchase" ? data.seller : data.buyer) || {};
   const h = {
@@ -146,7 +147,15 @@ export async function applyExtraction(D, invId, data) {
     rechecked: !!data._rechecked, warnings: [...(data.warnings || []), ...(data._issues || [])], narration: "",
     ai: data._ai || null,
   };
+  // Sticky evidence of an AI-misread date remains until manually verified.
+  // Re-reading never silently clears a previous date warning.
   const prev = jload(inv.data, {});
+  const initialReview=invoiceDateReview({...inv,data:h});
+  if(initialReview.reasons.length)h.date_issue_original=
+    prev.date_issue_original||initialReview.reasons[0];
+  else if(prev.date_issue_original)h.date_issue_original=prev.date_issue_original;
+  h.date_verified_at=null;
+  h.date_verified_value=null;
   if (h.ai && prev.ai_split_cost) h.ai.cost_usd = Math.round((h.ai.cost_usd + prev.ai_split_cost) * 1e5) / 1e5;
   const dup = await findDuplicate(D, inv.company_id, invId, h.number, h.party_gstin, h.party_name);
   if (dup) h.warnings.push(`Possible duplicate: invoice ${h.number} from this party is already ${dup.status === "synced" ? "in Tally" : "uploaded"} (batch ${dup.batch_name}).`);
@@ -213,13 +222,14 @@ export async function autoMatch(D, invId, onlyUnresolved = false) {
 
 export async function loadInvoice(D, invId) {
   const [[inv], lines] = await D.many([
-    ["SELECT i.*, b.voucher_type FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.id=?", invId],
+    ["SELECT i.*, b.voucher_type,b.period_mode,b.expected_period,b.fy_start,b.created_at AS batch_created_at FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.id=?", invId],
     ["SELECT * FROM lines WHERE invoice_id=? ORDER BY idx", invId]]);
   if (!inv) return null;
   inv.data = jload(inv.data, {});
   inv.page_ids = jload(inv.page_ids, []);
   inv.tax_lines = jload(inv.tax_lines, null);
   inv.lines = lines;
+  inv.date_review=invoiceDateReview(inv);
   inv.steps = stepStatus(inv);
   inv.computed_total = computedTotal(inv);
   return inv;
@@ -228,7 +238,7 @@ export async function loadInvoice(D, invId) {
 /** Load all invoices of a batch with 2 queries (cheap). */
 export async function loadBatchInvoices(D, batchId, statuses = null) {
   let [invs, lines] = await D.many([
-    ["SELECT i.*, b.voucher_type FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.batch_id=? ORDER BY i.seq, i.created_at", batchId],
+    ["SELECT i.*, b.voucher_type,b.period_mode,b.expected_period,b.fy_start,b.created_at AS batch_created_at FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.batch_id=? ORDER BY i.seq, i.created_at", batchId],
     ["SELECT l.* FROM lines l JOIN invoices i ON i.id=l.invoice_id WHERE i.batch_id=? ORDER BY l.idx", batchId]]);
   if (statuses) invs = invs.filter((i) => statuses.includes(i.status));
   const by = {};
@@ -238,6 +248,7 @@ export async function loadBatchInvoices(D, batchId, statuses = null) {
     inv.page_ids = jload(inv.page_ids, []);
     inv.tax_lines = jload(inv.tax_lines, null);
     inv.lines = by[inv.id] || [];
+    inv.date_review=invoiceDateReview(inv);
     inv.steps = stepStatus(inv);
     inv.computed_total = computedTotal(inv);
   }
@@ -260,7 +271,8 @@ export function stepStatus(inv) {
   const h = inv.data || {};
   const computed = computedTotal(inv);
   const totalOk = h.total == null || Math.abs(computed - h.total) <= 1;
-  const dateOk = !!normDate(h.date);
+  const dateReview=invoiceDateReview(inv);
+  const dateOk = !!dateReview.date&&!dateReview.needs_review&&!dateReview.hard_mismatch;
   const blockers = [];
   if (!party) blockers.push("pick the party ledger");
   if (!stock) blockers.push("map every line to a stock item");
@@ -268,21 +280,14 @@ export function stepStatus(inv) {
   if (!tax) blockers.push(inv.tax_lines ? "map every tax head to a ledger" : "calculate tax");
   if (!lines.length) blockers.push("add at least one line");
   if (!h.number) blockers.push("invoice number is missing");
-  if (!dateOk) blockers.push(`date '${h.date || ""}' isn't valid`);
+  if (!dateReview.date) blockers.push(`date '${h.date || ""}' isn't valid`);
+  for(const reason of dateReview.needs_review||dateReview.hard_mismatch ? dateReview.reasons : [])blockers.push(reason);
   if (!totalOk) blockers.push(`lines + taxes = ₹${computed.toFixed(2)} but the invoice total is ₹${(+h.total).toFixed(2)}`);
-  return { party, stock, ledger, tax, total_ok: totalOk, date_ok: dateOk, blockers, ready: blockers.length === 0 };
+  return { party, stock, ledger, tax, total_ok: totalOk, date_ok: dateOk,date_review:dateReview, blockers, ready: blockers.length === 0 };
 }
 
-/** Accept YYYY-MM-DD (optionally with a time), DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, and 2-digit years. */
-export function normDate(d) {
-  const s = String(d || "").trim();
-  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (!m && (m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/))) m = [m[0], m[3].length === 2 ? "20" + m[3] : m[3], m[2], m[1]];
-  if (!m) return null;
-  const [y, mo, da] = [+m[1], +m[2], +m[3]];
-  if (mo < 1 || mo > 12 || da < 1 || da > 31 || y < 2000 || y > 2100) return null;
-  return `${y}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`;
-}
+/** Strict date normalization also rejects impossible calendar days (e.g. 31 April). */
+export const normDate=normalizeInvoiceDate;
 
 // ======================================================================= tax
 export async function calculateTax(D, invId) {
