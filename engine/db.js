@@ -18,7 +18,7 @@ export const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS ix_masters_gstin ON masters(company_id, gstin)`,
   `CREATE TABLE IF NOT EXISTS batches (
     id TEXT PRIMARY KEY, company_id TEXT NOT NULL, name TEXT, voucher_type TEXT, source TEXT,
-    stage TEXT, error TEXT, created_at REAL)`,
+    stage TEXT, error TEXT, created_at REAL, period_mode TEXT DEFAULT 'legacy', expected_period TEXT, fy_start INTEGER)`,
   `CREATE TABLE IF NOT EXISTS files (
     id TEXT PRIMARY KEY, batch_id TEXT NOT NULL, filename TEXT, pages INTEGER DEFAULT 0,
     status TEXT DEFAULT 'uploading', sheet_text TEXT, claimed_at REAL, error TEXT, idx INTEGER)`,
@@ -41,6 +41,10 @@ export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS aliases (
     company_id TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
     PRIMARY KEY (company_id, kind, key))`,
+  `CREATE TABLE IF NOT EXISTS smart_posted_memory (
+    company_id TEXT NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL,
+    value TEXT NOT NULL, invoice_id TEXT, at REAL NOT NULL,
+    PRIMARY KEY(company_id,kind,key))`,
   `CREATE TABLE IF NOT EXISTS jobs (
     id TEXT PRIMARY KEY, company_id TEXT NOT NULL, kind TEXT NOT NULL, invoice_id TEXT, payload TEXT,
     status TEXT DEFAULT 'pending', result TEXT, created_at REAL, updated_at REAL)`,
@@ -133,6 +137,9 @@ export const MIGRATIONS = [
   "ALTER TABLE files ADD COLUMN note TEXT",
   "ALTER TABLE bank_statements ADD COLUMN suspense_ledger TEXT",
   "ALTER TABLE companies ADD COLUMN owner_email TEXT",
+  "ALTER TABLE batches ADD COLUMN period_mode TEXT DEFAULT 'legacy'",
+  "ALTER TABLE batches ADD COLUMN expected_period TEXT",
+  "ALTER TABLE batches ADD COLUMN fy_start INTEGER",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN vtype TEXT NOT NULL DEFAULT 'Purchase'",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN credit_verified INTEGER NOT NULL DEFAULT 0",
   "CREATE INDEX IF NOT EXISTS ix_bank_key ON bank_lines(company_id, key)",

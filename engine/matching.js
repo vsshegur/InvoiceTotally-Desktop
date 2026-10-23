@@ -156,7 +156,7 @@ export async function matchValueLedger(D, cid, vt, line, partyLedger, settings =
     for (const l of pool) { const s = similarity(line.description, l.name); if (s > bs) { bs = s; best = l.name; } }
     return bs >= 60 ? { ledger: best, state: "proposed" } : { ledger: null, state: "suspense" };
   }
-  for (const key of [line.stock_item && `item:${vt}:${line.stock_item}`, partyLedger && `party:${vt}:${partyLedger}`]) {
+  for (const key of [partyLedger && line.stock_item && `party_item:${vt}:${partyLedger}:${line.stock_item}`, line.stock_item && `item:${vt}:${line.stock_item}`, partyLedger && `party:${vt}:${partyLedger}`]) {
     const v = await aliasGet(D, cid, "ledger", key);
     if (v && (await exists(D, cid, "ledger", v))) return { ledger: v, state: "resolved" };
   }

@@ -5,6 +5,7 @@ import * as M from "./matching.js";
 import * as T from "./tally.js";
 import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
 import { parseAmount } from "./num.js";
+import {normalizeInvoiceDate,invoiceDateReview} from "./invoice-period.js";
 
 const STALE = 240; // seconds before a claimed unit is considered abandoned
 const TRIES = 4;   // a file or invoice is tried this many times, then shown as failed with the reason (never endless)
@@ -34,20 +35,28 @@ export async function doWork(env, D, { batchId = null } = {}) {
     t, ...sargs, t, t - STALE, TRIES);
   if (f) {
     const b = await D.first("SELECT * FROM batches WHERE id=?", f.batch_id);
+    if(!b)return true; // The batch was deleted while its file was claimed.
     const comp = await getCompany(D, b.company_id);
     try {
       if (f.sheet_text != null) {
         const invs = await readSheet(env, f.sheet_text, comp, b.voucher_type);
-        for (const data of invs) {
-          const id = newId();
-          await D.insert("invoices", { id, batch_id: b.id, company_id: comp.id, page_ids: "[]", status: "reading", created_at: now() });
-          await applyExtraction(D, id, data);
+        for(const data of invs){
+          // A user can delete the batch while the remote AI is reading its sheet.
+          // Atomic EXISTS guard prevents any invoice being recreated afterwards.
+          const id=newId();
+          const inserted=await D.run(
+            "INSERT INTO invoices(id,batch_id,company_id,page_ids,status,created_at) "+
+            "SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM batches WHERE id=?)",
+            id,b.id,comp.id,"[]","reading",now(),b.id);
+          if(!inserted.meta?.changes)break;
+          await applyExtraction(D,id,data);
         }
         await D.log(`Read ${invs.length} invoice(s) from ${f.filename}`, { batch_id: b.id });
       } else {
         const pages = await D.all("SELECT id, thumb_b64 FROM pages WHERE file_id=? ORDER BY idx", f.id);
         const meter = makeMeter(env);
         const groups = await splitPages(env, pages.map((p) => p.thumb_b64), comp, meter);
+        if(!(await D.first("SELECT id FROM batches WHERE id=?",b.id)))return true;
         const base = (await D.first("SELECT count(*) n FROM invoices WHERE batch_id=?", b.id)).n;
         await D.batch(groups.map((g, i) => D.insertStmt("invoices", {
           id: newId(), batch_id: b.id, company_id: comp.id, page_ids: JSON.stringify(g.map((k) => pages[k].id)),
@@ -74,6 +83,7 @@ export async function doWork(env, D, { batchId = null } = {}) {
     t, ...sargs, t, t - STALE, TRIES);
   if (inv) {
     const b = await D.first("SELECT * FROM batches WHERE id=?", inv.batch_id);
+    if(!b)return true; // Invoice deleted while claimed for a read.
     const comp = await getCompany(D, b.company_id);
     try {
       const ids = jload(inv.page_ids, []);
@@ -134,7 +144,8 @@ function lineRow(invoiceId, idx, kind, l) {
 export { lineRow };
 
 export async function applyExtraction(D, invId, data) {
-  const inv = await D.first("SELECT i.*, b.voucher_type FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.id=?", invId);
+  const inv = await D.first("SELECT i.*, b.voucher_type,b.period_mode,b.expected_period,b.fy_start,b.created_at AS batch_created_at FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.id=?", invId);
+  if(!inv)return; // Deleted while AI was processing — never restore a removed invoice.
   const vt = inv.voucher_type;
   const party = (vt === "Purchase" ? data.seller : data.buyer) || {};
   const h = {
@@ -146,7 +157,15 @@ export async function applyExtraction(D, invId, data) {
     rechecked: !!data._rechecked, warnings: [...(data.warnings || []), ...(data._issues || [])], narration: "",
     ai: data._ai || null,
   };
+  // Sticky evidence of an AI-misread date remains until manually verified.
+  // Re-reading never silently clears a previous date warning.
   const prev = jload(inv.data, {});
+  const initialReview=invoiceDateReview({...inv,data:h});
+  if(initialReview.reasons.length)h.date_issue_original=
+    prev.date_issue_original||initialReview.reasons[0];
+  else if(prev.date_issue_original)h.date_issue_original=prev.date_issue_original;
+  h.date_verified_at=null;
+  h.date_verified_value=null;
   if (h.ai && prev.ai_split_cost) h.ai.cost_usd = Math.round((h.ai.cost_usd + prev.ai_split_cost) * 1e5) / 1e5;
   const dup = await findDuplicate(D, inv.company_id, invId, h.number, h.party_gstin, h.party_name);
   if (dup) h.warnings.push(`Possible duplicate: invoice ${h.number} from this party is already ${dup.status === "synced" ? "in Tally" : "uploaded"} (batch ${dup.batch_name}).`);
@@ -213,13 +232,14 @@ export async function autoMatch(D, invId, onlyUnresolved = false) {
 
 export async function loadInvoice(D, invId) {
   const [[inv], lines] = await D.many([
-    ["SELECT i.*, b.voucher_type FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.id=?", invId],
+    ["SELECT i.*, b.voucher_type,b.period_mode,b.expected_period,b.fy_start,b.created_at AS batch_created_at FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.id=?", invId],
     ["SELECT * FROM lines WHERE invoice_id=? ORDER BY idx", invId]]);
   if (!inv) return null;
   inv.data = jload(inv.data, {});
   inv.page_ids = jload(inv.page_ids, []);
   inv.tax_lines = jload(inv.tax_lines, null);
   inv.lines = lines;
+  inv.date_review=invoiceDateReview(inv);
   inv.steps = stepStatus(inv);
   inv.computed_total = computedTotal(inv);
   return inv;
@@ -228,7 +248,7 @@ export async function loadInvoice(D, invId) {
 /** Load all invoices of a batch with 2 queries (cheap). */
 export async function loadBatchInvoices(D, batchId, statuses = null) {
   let [invs, lines] = await D.many([
-    ["SELECT i.*, b.voucher_type FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.batch_id=? ORDER BY i.seq, i.created_at", batchId],
+    ["SELECT i.*, b.voucher_type,b.period_mode,b.expected_period,b.fy_start,b.created_at AS batch_created_at FROM invoices i JOIN batches b ON b.id=i.batch_id WHERE i.batch_id=? ORDER BY i.seq, i.created_at", batchId],
     ["SELECT l.* FROM lines l JOIN invoices i ON i.id=l.invoice_id WHERE i.batch_id=? ORDER BY l.idx", batchId]]);
   if (statuses) invs = invs.filter((i) => statuses.includes(i.status));
   const by = {};
@@ -238,6 +258,7 @@ export async function loadBatchInvoices(D, batchId, statuses = null) {
     inv.page_ids = jload(inv.page_ids, []);
     inv.tax_lines = jload(inv.tax_lines, null);
     inv.lines = by[inv.id] || [];
+    inv.date_review=invoiceDateReview(inv);
     inv.steps = stepStatus(inv);
     inv.computed_total = computedTotal(inv);
   }
@@ -260,7 +281,8 @@ export function stepStatus(inv) {
   const h = inv.data || {};
   const computed = computedTotal(inv);
   const totalOk = h.total == null || Math.abs(computed - h.total) <= 1;
-  const dateOk = !!normDate(h.date);
+  const dateReview=invoiceDateReview(inv);
+  const dateOk = !!dateReview.date&&!dateReview.needs_review&&!dateReview.hard_mismatch;
   const blockers = [];
   if (!party) blockers.push("pick the party ledger");
   if (!stock) blockers.push("map every line to a stock item");
@@ -268,21 +290,14 @@ export function stepStatus(inv) {
   if (!tax) blockers.push(inv.tax_lines ? "map every tax head to a ledger" : "calculate tax");
   if (!lines.length) blockers.push("add at least one line");
   if (!h.number) blockers.push("invoice number is missing");
-  if (!dateOk) blockers.push(`date '${h.date || ""}' isn't valid`);
+  if (!dateReview.date) blockers.push(`date '${h.date || ""}' isn't valid`);
+  for(const reason of dateReview.needs_review||dateReview.hard_mismatch ? dateReview.reasons : [])blockers.push(reason);
   if (!totalOk) blockers.push(`lines + taxes = ₹${computed.toFixed(2)} but the invoice total is ₹${(+h.total).toFixed(2)}`);
-  return { party, stock, ledger, tax, total_ok: totalOk, date_ok: dateOk, blockers, ready: blockers.length === 0 };
+  return { party, stock, ledger, tax, total_ok: totalOk, date_ok: dateOk,date_review:dateReview, blockers, ready: blockers.length === 0 };
 }
 
-/** Accept YYYY-MM-DD (optionally with a time), DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY, and 2-digit years. */
-export function normDate(d) {
-  const s = String(d || "").trim();
-  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (!m && (m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$/))) m = [m[0], m[3].length === 2 ? "20" + m[3] : m[3], m[2], m[1]];
-  if (!m) return null;
-  const [y, mo, da] = [+m[1], +m[2], +m[3]];
-  if (mo < 1 || mo > 12 || da < 1 || da > 31 || y < 2000 || y > 2100) return null;
-  return `${y}-${String(mo).padStart(2, "0")}-${String(da).padStart(2, "0")}`;
-}
+/** Strict date normalization also rejects impossible calendar days (e.g. 31 April). */
+export const normDate=normalizeInvoiceDate;
 
 // ======================================================================= tax
 export async function calculateTax(D, invId) {
@@ -439,8 +454,52 @@ export async function pushInvoice(D, invId, force = false) {
     D.stmt("INSERT INTO activity (batch_id, invoice_id, message, at) VALUES (?,?,?,?)", inv.batch_id, invId, "Queued for Tally", t)]);
 }
 
+// Learn only from vouchers Tally explicitly confirmed as CREATED. Never replace
+// a manual alias, and never teach Smart Matching from an AI guess or a queued job.
+export async function confirmedPostingMemory(D,invoiceId){
+  const inv=await loadInvoice(D,invoiceId);
+  if(!inv||!inv.party_ledger)return [];
+  const masters=await D.all("SELECT name,kind,gstin,pending FROM masters WHERE company_id=? AND pending=0",inv.company_id);
+  const master=(kind,name)=>masters.find(m=>m.kind===kind&&m.name===name);
+  const aliases=await D.all("SELECT kind,key,value FROM aliases WHERE company_id=?",inv.company_id);
+  const known=new Map(aliases.map(a=>[a.kind+"|"+a.key,a.value]));
+  const out=[],stamp=now();
+  const remember=(kind,key,value)=>{
+    if(!key||!value)return;
+    const id=kind+"|"+key;
+    // Existing manual/earlier postings always take precedence, including a
+    // conflicting explicit choice in another batch.
+    if(known.has(id))return;
+    known.set(id,value);
+    out.push(D.stmt("INSERT OR IGNORE INTO aliases(company_id,kind,key,value) VALUES (?,?,?,?)",
+      inv.company_id,kind,key,value));
+    out.push(D.stmt("INSERT OR IGNORE INTO smart_posted_memory(company_id,kind,key,value,invoice_id,at) VALUES (?,?,?,?,?,?)",
+      inv.company_id,kind,key,value,invoiceId,stamp));
+  };
+  const h=inv.data,party=master("ledger",inv.party_ledger);
+  if(!party)return [];
+  if(h.party_gstin&&party.gstin&&h.party_gstin.toUpperCase()!==party.gstin.toUpperCase())return [];
+  if(h.party_gstin)remember("party","gstin:"+h.party_gstin.toUpperCase(),party.name);
+  if(h.party_name)remember("party","name:"+M.normParty(h.party_name),party.name);
+  for(const l of inv.lines){
+    if(l.kind==="item"&&l.stock_state==="resolved"&&master("stock_item",l.stock_item)){
+      remember("stock_party",M.stockPartyKey(party.name,l.description),l.stock_item);
+      if(l.ledger_state==="resolved"&&master("ledger",l.ledger))
+        remember("ledger","party_item:"+inv.voucher_type+":"+party.name+":"+l.stock_item,l.ledger);
+    }
+    if(l.kind==="ledger"&&l.ledger_state==="resolved"&&master("ledger",l.ledger))
+      remember("charge",M.norm(l.description),l.ledger);
+  }
+  for(const tax of inv.tax_lines||[]){
+    if(tax.ledger&&master("ledger",tax.ledger))
+      remember("tax",inv.voucher_type+":"+tax.head+":"+(tax.rate??""),tax.ledger);
+  }
+  return out;
+}
+
 export async function jobResult(D, job, ok, response, error) {
   let status = ok ? "done" : "failed";
+  let confirmedCreated=false;
   let note = error || "";
   const t = now();
   const w = [];
@@ -457,8 +516,9 @@ export async function jobResult(D, job, ok, response, error) {
     if (job.invoice_id) w.push(D.updateStmt("bank_lines", job.invoice_id, res.ok ? { status: "synced", synced_at: t, sync_error: null } : { status: "failed", sync_error: note }));
   } else if (job.kind === "import_master" || job.kind === "import_voucher") {
     const res = ok ? T.parseImportResponse(response) : { ok: false, messages: [error || "Tally error"] };
-    status = res.ok ? "done" : "failed";
-    note = res.messages.join("; ") || (res.ok ? "Created" : "Tally rejected it");
+    confirmedCreated=job.kind==="import_voucher"&&res.ok&&res.created===1&&res.altered===0;
+    status=(job.kind==="import_voucher"?confirmedCreated:res.ok)?"done":"failed";
+    note=res.messages.join("; ")||(status==="done"?"Created":"Tally did not confirm one new voucher; check Tally before retrying");
     if (job.kind === "import_master" && res.ok) {
       const m = job.payload.match(/<(LEDGER|STOCKITEM|UNIT) NAME="([^"]+)"/);
       if (m) w.push(D.stmt("UPDATE masters SET pending=0 WHERE company_id=? AND kind=? AND name=?", job.company_id,
@@ -466,11 +526,16 @@ export async function jobResult(D, job, ok, response, error) {
         m[2].replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")));
     }
     if (job.kind === "import_voucher" && job.invoice_id) {
-      w.push(D.updateStmt("invoices", job.invoice_id, res.ok ? { status: "synced", synced_at: t, sync_error: null } : { status: "failed", sync_error: note }));
-      log(res.ok ? "Created in Tally" : `Tally rejected: ${note}`);
+      w.push(D.updateStmt("invoices", job.invoice_id, confirmedCreated ? { status: "synced", synced_at: t, sync_error: null } : { status: "failed", sync_error: note }));
+      log(confirmedCreated ? "Created in Tally" : `Tally did not confirm creation: ${note}`);
     }
   }
   w.push(D.updateStmt("jobs", job.id, { status, result: String(note).slice(0, 2000), updated_at: t }));
+  if(confirmedCreated&&job.invoice_id){
+    try{w.push(...await confirmedPostingMemory(D,job.invoice_id));}
+    catch(e){w.push(D.stmt("INSERT INTO activity(batch_id,invoice_id,message,at) VALUES (?,?,?,?)",
+      null,job.invoice_id,"Smart Matching memory not saved: "+String(e.message).slice(0,300),t));}
+  }
   await D.batch(w);
   if (ok && job.kind === "export_stock") await rematchCompany(D, job.company_id);
 }

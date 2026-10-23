@@ -208,6 +208,7 @@ const routes = [
   [/^#\/c\/(\w+)\/gstr2b\/upload$/, (cid) => viewGstUpload(cid)],
   [/^#\/g\/(\w+)$/, (rid) => viewGst(rid)],
   [/^#\/c\/(\w+)\/upload$/, viewUpload],
+  [/^#\/b\/(\w+)\/dates$/, viewBatchDateReview],
   [/^#\/b\/(\w+)$/, viewBatch],
   [/^#\/b\/(\w+)\/review\/(party|stock|ledger|tax|sync)$/, viewReview],
   [/^#\/i\/(\w+)$/, viewInvoice],
@@ -572,7 +573,7 @@ async function companyBatches(c, el) {
     ${rows.map((b) => { const n = b.counts || {}; const done = n.synced || 0;
       return `<tr class="click" data-href="#/b/${b.id}"><td><b>${esc(b.name)}</b></td><td>${esc(b.voucher_type)}</td><td class="muted">${ago(b.created_at)}</td>
       <td class="num">${b.invoices}</td><td>${b.stage !== "review" ? `<span class="${b.stage === "error" ? "bad" : "warn"}">${stageLbl[b.stage]} ${b.stage === "error" ? esc(b.error || "") : ""}</span>` :
-        `<span class="${done === b.invoices && done ? "good" : ""}">${done} of ${b.invoices} in Tally</span>${n.failed ? ` · <span class="bad">${n.failed} failed</span>` : ""}`}</td></tr>`; }).join("")}
+        `<span class="${done === b.invoices && done ? "good" : ""}">${done} of ${b.invoices} in Tally</span>${n.failed ? ` · <span class="bad">${n.failed} failed</span>` : ""}${b.have_a_look?` · <span class="bad" title="Open this batch and choose Have a look to verify dates">⚠ Have a look: ${b.have_a_look}</span>`:""}`}</td></tr>`; }).join("")}
     </tbody></table>` : `<div class="card empty">No invoices yet. Choose one of the two upload options above.</div>`);
   $$("tr[data-href]", el).forEach((tr) => tr.onclick = () => location.hash = tr.dataset.href);
   every(5000, async () => { if (rows.some((b) => b.stage !== "review" && b.stage !== "error") || (!c.masters.ledger && c.pending_jobs)) refresh(); });
@@ -697,7 +698,9 @@ async function companySettings(c, el) {
 // ---------------------------------------------------------------------------
 async function viewUpload(cid) {
   const c = await api(`/companies/${cid}`);
-  const st = { type: null, source: null, files: [] };
+  const today=new Date();
+  const st={type:null,source:null,files:[],period_mode:"month",
+    expected_period:today.getFullYear()+"-"+String(today.getMonth()+1).padStart(2,"0")};
   const render = () => {
     const step = !st.type ? 1 : !st.source ? 2 : 3;
     const ch = (key, val, title, sub) => `<div class="choice ${st[key] === val ? "on" : ""}" data-k="${key}" data-v="${val}"><div><div><b>${title}</b></div><div class="sub">${sub}</div></div>${st[key] === val ? "✓" : ""}</div>`;
@@ -710,7 +713,22 @@ async function viewUpload(cid) {
       ${step > 2 ? done(2, "Where do they come from?", st.source === "pdf" ? "PDFs or photos" : "Excel / CSV", "source") : `<div class="wstep ${step === 2 ? "active" : ""}"><div class="head"><span class="n">2</span><b>Where do they come from?</b></div>${step === 2 ? `<div class="choices">
         ${ch("source", "pdf", "PDFs or photos", "Scanned, photographed, Tally-printed or handwritten — split and read for you · PDF, PNG, JPEG")}
         ${ch("source", "excel", "Excel or CSV register", "Any sheet of invoices — its columns are understood automatically · .xlsx or .csv")}</div>` : ""}</div>`}
-      <div class="wstep ${step === 3 ? "active" : ""}"><div class="head"><span class="n">3</span><b>The files</b></div>${step === 3 ? `
+      <div class="wstep ${step === 3 ? "active" : ""}"><div class="head"><span class="n">3</span><b>Invoice period and files</b></div>${step === 3 ? `
+        <div class="eyebrow" style="margin:10px 0">How should these invoice dates be checked?</div>
+        <div class="choices">
+          ${ch("period_mode","month","Specific month and year",
+            "Strict: invoices from another month go to Have a look until corrected.")}
+          ${ch("period_mode","mixed","Regular mixed invoices",
+            "Different months allowed; dates outside the upload financial year require manual confirmation.")}
+        </div>
+        ${st.period_mode==="month" ? `<div class="row" style="max-width:450px;margin:12px 0">
+          <div class="field"><label>Invoice month</label><select id="invoiceMonth" class="in">
+           ${MONTHS.map((m,i)=>`<option value="${String(i+1).padStart(2,"0")}" ${st.expected_period.slice(5)===String(i+1).padStart(2,"0")?"selected":""}>${m}</option>`).join("")}
+          </select></div>
+          <div class="field"><label>Invoice year</label><input id="invoiceYear" class="in mono" type="number" min="2000" max="2100" value="${esc(st.expected_period.slice(0,4))}"></div></div>`:
+          `<div class="alert warn" style="margin:10px 0">Regular upload: invoices outside the financial year containing the upload date go into Have a look. Dates are never silently changed.</div>`}
+        <div class="eyebrow" style="margin:12px 0">Choose invoice files</div>
+
         <label class="drop" id="drop"><input type="file" id="fi" multiple hidden accept="${st.source === "pdf" ? ".pdf,.png,.jpg,.jpeg,.webp,.bmp,image/*" : ".xlsx,.xlsm,.csv"}">
           <div style="font-size:15px;color:var(--text)">Drop files here or click to choose</div>
           <div>${st.source === "pdf" ? "One PDF can hold many invoices — they're split automatically." : "One row per item line; rows sharing an invoice number become one invoice."}</div></label>
@@ -718,6 +736,10 @@ async function viewUpload(cid) {
     </div>`;
     wireTop(c);
     $$(".choice").forEach((el) => el.onclick = () => { st[el.dataset.k] = el.dataset.v; render(); });
+    const periodSave=()=>{const year=Number($("#invoiceYear")?.value),month=$("#invoiceMonth")?.value;
+      if(Number.isInteger(year)&&year>=2000&&year<=2100&&month)st.expected_period=year+"-"+month;};
+    $("#invoiceMonth")?.addEventListener("change",periodSave);
+    $("#invoiceYear")?.addEventListener("change",periodSave);
     $$("[data-reset]").forEach((b) => b.onclick = () => { if (b.dataset.reset === "type") { st.type = null; } st.source = null; st.files = []; render(); });
     $$("[data-rm]").forEach((a) => a.onclick = (e) => { e.preventDefault(); st.files.splice(+a.dataset.rm, 1); render(); });
     const drop = $("#drop");
@@ -732,6 +754,12 @@ async function viewUpload(cid) {
   let busy = false;
   const upload = async () => {
     if (!st.files.length || busy) return;
+    if(st.period_mode==="month"){
+      const rawYear=$("#invoiceYear")?.value||"",rawMonth=$("#invoiceMonth")?.value||"";
+      if(!/^\d{4}$/.test(rawYear)||+rawYear<2000||+rawYear>2100||!/^(0[1-9]|1[0-2])$/.test(rawMonth))
+        return toast("Choose a valid invoice month and a year from 2000 to 2100.",true);
+      st.expected_period=rawYear+"-"+rawMonth;
+    }
     busy = true;
     const go = $("#go"), status = $(".bar .status");
     go.disabled = true;
@@ -745,6 +773,7 @@ async function viewUpload(cid) {
         else prepared.push({ f, pages: await Ingest.pages(f, (i, tot) => say(`Preparing ${f.name} — page ${i} of ${tot} (file ${n + 1} of ${st.files.length})`)) });
       }
       batch = await api(`/companies/${cid}/batches`, { body: { voucher_type: st.type, source: st.source,
+        period_mode:st.period_mode,expected_period:st.period_mode==="month"?st.expected_period:null,
         files: prepared.map((x) => ({ filename: x.f.name, pages: x.pages?.length || 0 })) } });
       const totalPages = prepared.reduce((a, x) => a + (x.pages?.length || 0), 0);
       let sent = 0;
@@ -803,22 +832,27 @@ async function viewBatch(bid) {
   const reviewable = b.invoices.filter((i) => i.status === "review" || i.status === "failed").length;
   const rechecked = b.invoices.filter((i) => i.rechecked).length;
   app().innerHTML = topBar([[c.name, `#/c/${c.id}`], [b.name]], c) + `<div class="bar">
-      <span class="status">${b.stage === "review" ? `${b.invoices.length} invoice(s) read — ${reviewable ? "ready to review" : "all done"}${rechecked ? ` · ${rechecked} double-checked by a second read` : ""}${b.ai_cost_usd ? ` · AI cost ≈ ₹${(b.ai_cost_usd * 88).toFixed(2)}` : ""}` : b.stage === "error" ? "Something went wrong" : "Working…"}</span><div class="spacer"></div>
+      <span class="status">${b.period_mode==="month" ? "Month "+esc(b.expected_period)+" · " : b.period_mode==="mixed"?"Regular mixed invoices · ":""}${b.stage === "review" ? `${b.invoices.length} invoice(s) read — ${reviewable ? "ready to review" : "all done"}${rechecked ? ` · ${rechecked} double-checked by a second read` : ""}${b.ai_cost_usd ? ` · AI cost ≈ ₹${(b.ai_cost_usd * 88).toFixed(2)}` : ""}` : b.stage === "error" ? "Something went wrong" : "Working…"}</span><div class="spacer"></div>
       <button class="btn" id="refresh">⟳ Refresh <kbd>Alt+R</kbd></button><a class="btn" href="#/c/${c.id}">Back <kbd>Esc</kbd></a>
-      <button class="btn danger" id="del" title="Delete batch">🗑</button>
+      <button class="btn danger" id="del" title="Delete this batch from Vipul Workplace">🗑 Delete batch</button>
       ${!working && (b.invoices.some((i) => i.status === "error") || failedFiles.length) ? `<button class="btn" id="retry">↻ Retry failed</button>` : ""}
       ${b.stage === "review" && reviewable ? `<a class="btn primary" href="#/b/${bid}/review/party">Bulk review <kbd>R</kbd></a>` : ""}</div>
     <div class="pipe">${b.source === "excel"
       ? stepRow(0, "Read the sheet", `${b.invoices.length} invoice(s)`, "Reading the sheet", filesDone, b.files.length) + stepRow(1, "Match to your Tally masters", `${read} matched`, "Matching", read, b.invoices.length)
       : stepRow(0, "Find each invoice", `${b.files.length} file(s) · ${b.pages} page(s) · ${b.invoices.length} invoice(s)`, "Finding where each invoice starts", filesDone, b.files.length) +
         stepRow(1, "Read each invoice", `${read} read`, "Reading your invoices", read, b.invoices.length)}</div>
+    ${b.have_a_look ? `<div style="padding:12px 16px"><div class="alert warn">
+      <b>Have a look: ${b.have_a_look} invoice date(s) need checking.</b>
+      Handwritten or suspiciously old dates must be verified against the original images before Tally posting.
+      <a class="btn sm" style="margin-left:8px" href="#/b/${bid}/dates">Have a look (${b.have_a_look}) →</a>
+    </div></div>` : ""}
     ${b.stage === "error" ? `<div class="page"><div class="alert bad">${esc(b.error)}</div></div>` : ""}
     ${b.files.filter((f) => f.note && (f.status === "ready" || f.status === "working")).map((f) => `<div style="padding:8px 16px 0"><div class="alert warn">
       <b>${esc(f.filename)}</b>: ${esc(f.note)} <span class="muted">(try ${f.attempts || 1} of 4 — it tries again by itself in a moment)</span></div></div>`).join("")}
     ${failedFiles.map((f) => `<div style="padding:8px 16px 0"><div class="alert bad">${esc(f.filename)}: ${esc(f.error || "failed")}</div></div>`).join("")}
     ${b.invoices.length ? `<div style="padding:14px 16px 4px" class="eyebrow">${b.invoices.length} invoice${b.invoices.length > 1 ? "s" : ""}</div>
     <table class="grid"><thead><tr><th>Invoice</th><th>Date</th><th>Party</th><th class="num">Lines</th><th class="num">Total</th><th>State</th></tr></thead><tbody>
-    ${b.invoices.map((i) => `<tr class="click" data-href="#/i/${i.id}"><td><b>${esc(i.number || "—")}</b>${i.warnings.length ? ` <span class="warn" title="${esc(i.warnings.join("\n"))}">⚠</span>` : ""}</td>
+    ${b.invoices.map((i) => `<tr class="click" data-href="#/i/${i.id}"><td><b>${esc(i.number || "—")}</b>${i.warnings.length ? ` <span class="warn" title="${esc(i.warnings.join("\n"))}">⚠</span>` : ""}${i.date_review?.needs_review?` <span class="bad" title="${esc(i.date_review.reasons.join("\n"))}">⚠ Have a look</span>`:""}</td>
       <td class="mono">${fmtDate(i.date)}</td><td>${esc(i.party_name || "—")}${i.party_ledger ? ` <span class="faint">→</span> <span class="muted">${esc(i.party_ledger)}</span>` : ""}</td>
       <td class="num">${i.lines || ""}</td><td class="num">${["pending", "reading"].includes(i.status) ? "" : money(i.total)}</td>
       <td class="${i.status === "synced" ? "good" : i.status === "failed" || i.status === "error" ? "bad" : ""}">${["pending", "reading"].includes(i.status) ? '<span class="spin" style="display:inline-block;vertical-align:-2px"></span> ' : ""}${esc(i.state)}${i.error ? `<div class="muted" style="font-size:12px">${esc(i.error)}</div>` : ""}</td></tr>`).join("")}
@@ -828,11 +862,37 @@ async function viewBatch(bid) {
   $("#refresh").onclick = route; keymap["Alt+r"] = route;
   keymap.Escape = () => location.hash = `#/c/${c.id}`;
   keymap.r = () => b.stage === "review" && (location.hash = `#/b/${bid}/review/party`);
-  $("#del").onclick = async () => { if (confirm("Delete this batch and its invoices? (Vouchers already in Tally stay there.)")) { DRIVERS.get(bid) && (DRIVERS.get(bid).stop = true); await api(`/batches/${bid}`, { method: "DELETE" }); location.hash = `#/c/${c.id}`; } };
+  $("#del").onclick=async()=>{
+    if(!confirm("DELETE "+b.name+" from Vipul Workplace? This removes its invoice files and drafts. Vouchers already in Tally will NOT be deleted.\n\nThis action cannot be undone."))return;
+    try{await api(`/batches/${bid}`,{method:"DELETE"});
+      toast("Batch deleted. Entries already posted in Tally were not changed.");
+      location.hash=`#/c/${c.id}`;
+    }catch(e){toast("Delete failed: "+e.message,true);}
+  };
   $("#retry")?.addEventListener("click", async () => { await act(() => api(`/batches/${bid}/retry`, { body: {} }), "Reading again…"); route(); });
   if (working) every(2500, refresh);
 }
 
+// Mandatory date-check queue for new and legacy uploads.
+async function viewBatchDateReview(bid){
+  const {b,c}=await loadBatchCtx(bid);
+  const flagged=b.invoices.filter(i=>i.date_review?.needs_review);
+  app().innerHTML=topBar([[c.name,`#/c/${c.id}`],[b.name,`#/b/${bid}`],["Have a look"]],c)+
+    `<div class="bar"><span class="status">${flagged.length} invoice(s) to check</span><div class="spacer"></div>
+      <a class="btn" href="#/b/${bid}">Back to batch</a><button class="btn" id="dateRefresh">Refresh</button></div>
+    <div class="page wide"><h1>Have a look — verify invoice dates</h1>
+      <p class="muted">The AI date is never automatically changed. Compare with the original invoice, correct errors and verify the printed date. Specific-month uploads require dates within the selected month.</p>
+      ${!flagged.length?'<div class="alert ok">All invoice dates passed review or were confirmed.</div>':
+      '<table class="grid"><thead><tr><th>Invoice</th><th>AI date</th><th>Reason to check</th><th>Action</th></tr></thead><tbody>'+
+      flagged.map(i=>'<tr><td><b>'+esc(i.number||"No number")+'</b><div class="small muted">'+esc(i.party_name||"")+'</div></td>'+
+        '<td class="mono bad">'+esc(i.date||"Missing")+'</td>'+
+        '<td class="warn">'+esc((i.date_review?.reasons||[]).join("; "))+'</td>'+
+        '<td><a class="btn sm primary" href="#/i/'+i.id+'">View invoice & verify date →</a></td></tr>').join("")+
+        '</tbody></table>'}
+      </div>`;
+  wireTop(c);
+  $("#dateRefresh").onclick=route;
+}
 // ---------------------------------------------------------------------------
 // review (Party → Stock → Ledger → Tax → Sync)
 // ---------------------------------------------------------------------------
@@ -1219,6 +1279,7 @@ async function viewInvoice(iid) {
   const inv = await api(`/invoices/${iid}`);
   const b = inv.batch, c = inv.company;
   const h = inv.data;
+  const dateReview=inv.date_review||inv.steps?.date_review||{};
   const editable = inv.status !== "queued" && inv.status !== "synced";
   const ro = editable ? "" : "readonly";
   const f = (k, label, cls = "") => `<div class="field"><label>${label}</label><input class="in ${cls}" data-h="${k}" value="${esc(h[k] ?? "")}" ${ro}></div>`;
@@ -1247,11 +1308,21 @@ async function viewInvoice(iid) {
     <div class="inv-layout"><div>${pageViewer(inv.pages)}</div><div>
       ${inv.sync_error ? `<div class="alert bad" style="margin-bottom:10px">${esc(inv.sync_error)}</div>` : ""}
       ${(h.warnings || []).map((w) => `<div class="alert warn" style="margin-bottom:6px">⚠ ${esc(w)}</div>`).join("")}
-      ${h.handwritten ? `<div class="alert warn" style="margin-bottom:6px">Handwritten invoice — please double-check every figure.</div>` : ""}
+      ${dateReview.needs_review?`<div class="alert bad" style="margin-bottom:10px">
+        <b>Have a look — invoice DATE needs manual verification.</b>
+        <div class="small">${esc((dateReview.reasons||[]).join("; "))}</div>
+        ${editable?`<p class="small">Compare the date and year with the original image on the left. Edit the date below, then tick "I verified the date" and Save.</p>`:""}
+      </div>`:""}
+      ${dateReview.confirmed?`<div class="alert ok" style="margin-bottom:6px">✓ Invoice date ${esc(h.date||"")} manually verified.</div>`:""}
+      ${h.handwritten ? `<div class="alert warn" style="margin-bottom:6px">Handwritten invoice — please double-check every figure, especially the year.</div>` : ""}
       ${h.rechecked ? `<div class="alert ok" style="margin-bottom:6px">The first reading didn't add up, so it was read a second time${h.ai?.rechecked_by ? ` by ${esc(h.ai.rechecked_by)}` : ""}${(h.warnings || []).length ? " — the notes above are what still needs your eye" : " — everything adds up now"}.</div>` : ""}
       ${h.ai ? `<div class="muted" style="font-size:12.5px;margin-bottom:8px">Read by <b>${esc(h.ai.read_by)}</b>${h.ai.rechecked_by ? ` · checked by <b>${esc(h.ai.rechecked_by)}</b>` : ""}${h.ai.cost_usd ? ` · AI cost ≈ ₹${(h.ai.cost_usd * 88).toFixed(2)}` : ""}${h.ai.skipped ? `<div class="small" title="${esc(h.ai.skipped)}">Skipped first: ${esc(h.ai.skipped.slice(0, 160))}</div>` : ""}</div>` : ""}
       ${editable && !inv.steps.ready && inv.steps.blockers?.length ? `<div class="alert bad" style="margin-bottom:6px"><b>Not ready for Tally yet:</b> ${esc(inv.steps.blockers.join("; "))}.${!inv.steps.total_ok ? " Compare each line amount and the tax figures below with the image, correct them, and save." : ""}</div>` : ""}
       <div class="row">${f("number", "Invoice no.", "mono")}${f("date", "Date (YYYY-MM-DD)", "mono")}</div>
+      ${editable&&(dateReview.needs_review||dateReview.reasons?.length)?`<div class="alert warn" style="margin-bottom:12px">
+        <label><input type="checkbox" id="verifyDate"> <b>I inspected the original invoice and verified its date/year is correct.</b></label>
+        <div class="small muted" style="margin-top:4px">This is mandatory for handwritten or suspicious dates. If the date is outside the selected month, correct it or use the regular mixed-invoice mode in a new batch.</div>
+      </div>`:""}
       <div class="row">${f("party_name", b.voucher_type === "Purchase" ? "Supplier name" : "Customer name")}
         <div class="field"><label>GSTIN ${inv.gstin_valid === true ? '<span class="good">✓ valid</span>' : inv.gstin_valid === false ? '<span class="bad">checksum fails</span>' : ""}</label><input class="in mono" data-h="party_gstin" value="${esc(h.party_gstin || "")}" maxlength="15" ${ro}></div></div>
       <div class="row">${f("party_state", "State")}${f("place_of_supply", "Place of supply")}</div>
@@ -1279,9 +1350,14 @@ async function viewInvoice(iid) {
     const data = {};
     $$("[data-h]").forEach((el) => { const k = el.dataset.h; let v = el.value.trim(); if (["cgst", "sgst", "igst", "cess", "round_off", "total"].includes(k)) v = v === "" ? null : Number(v.replace(/,/g, "")); data[k] = v; });
     const lines = $$("#lines tr").map((tr) => { const o = { id: tr.dataset.line || undefined, kind: tr.dataset.kind }; $$("[data-l]", tr).forEach((el) => o[el.dataset.l] = el.value.trim()); return o; });
-    return { data, lines };
+    return { data, lines, confirm_date:$("#verifyDate")?.checked===true };
   };
-  const save = async () => { await act(() => api(`/invoices/${iid}`, { method: "PATCH", body: collect() }), "Saved — matching re-run"); route(); };
+  const save=async()=>{
+    try{await act(()=>api(`/invoices/${iid}`,{method:"PATCH",body:collect()}),
+      $("#verifyDate")?.checked?"Invoice saved and date verified":"Changes saved; suspicious dates remain in Have a look until verified");
+      route();
+    }catch(e){/* Error is already displayed; remain on invoice for corrections. */}
+  };
   $("#save").onclick = save;
   const ks = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === "s") { e.preventDefault(); save(); } };
   document.addEventListener("keydown", ks);

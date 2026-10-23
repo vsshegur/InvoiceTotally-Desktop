@@ -88,6 +88,50 @@ Every transaction is posted to the **suspense ledger** you choose — money in a
 Suspense to the right ledger in Tally. A transaction already posted from an earlier statement is marked
 *Posted earlier* and not posted again. Scanned or photographed statements can't be read (that would need AI).
 
+## Invoice upload date checks, deletion and Smart Matching (v3.7.2)
+
+**Upload Invoices** now asks whether you want a **specific month and year**
+(defaults to the current month; select e.g. May 2026) or **Regular mixed
+invoices**. In monthly mode, invoices recognized by AI with a different
+month/year are moved into **Have a look** and cannot be queued to Tally until
+the date is corrected to the selected month. Regular uploads allow invoices
+from different months within the financial year of the upload (April–March).
+Outside-FY dates, future-dated invoices and handwritten invoices require a
+manual date verification.
+
+The app **does not replace** an AI-extracted date automatically. Example:
+a handwritten May 2026 invoice misread as May 2020 is shown in **Have a
+look**. Open the original image, correct the date and tick **I inspected
+the original invoice and verified its date/year**, then Save. Until this
+confirmation, the invoice is blocked from Tally posting even if the party,
+stock and tax mappings are otherwise complete. A deliberate historic
+invoice in *Regular mixed invoices* can be posted after explicit manual
+confirmation. Date checks also apply retrospectively to older invoice batches;
+their original upload date determines the financial-year window.
+
+**Delete batch** now works from the batch page. Local draft invoices,
+pages and files are removed after confirmation; **previously created Tally
+vouchers are never modified**. If a voucher is actively being sent to Tally,
+deletion is refused until the result is known. The posting audit trail remains
+available. Previously-used AI reading credits are not refunded by deletion.
+
+**Smart Matching** now remembers the confirmed supplier, per-supplier
+stock-item, per-supplier/item account ledger, charges, and GST tax-ledger
+mappings whenever Tally confirms that a newly created purchase/sales voucher
+was saved. These remembered mappings help match future invoices with the same
+supplier and item; they are scoped per company. Earlier manual matching
+decisions take priority and are never silently overwritten. Rejected, merely
+queued or draft invoices do not teach Smart Matching. The Smart Matching tab
+shows how many mappings were learned from confirmed Tally postings.
+
+To reuse mappings from invoices **already posted in older versions**, open
+**Smart Matching → Learn from earlier Tally-posted invoices**. The action
+reads local receipts and posting-audit entries in batches of up to 100.
+Only vouchers whose posting audit confirms **created in Tally** qualify.
+It does not modify Tally or learn from invoices merely marked as synced.
+Click again if more earlier invoices remain; existing manual mappings are
+always preserved.
+
 ## GSTR-2B review update (v3.7.1)
 
 **Posting a ready document:** on the GSTR-2B purchase review page, click

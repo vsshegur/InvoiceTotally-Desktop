@@ -59,7 +59,8 @@ export async function suggestions(D,cid){
     pending.push({kind:l.kind==="item"?"stock":"charge",invoice_id:l.invoice_id,line_id:l.id,
       description:l.description,context:ctx,candidates:hits.map(h=>({...h,conflicts:hardConflict(l.kind==="item"?"stock":"charge",ctx,h)}))});
   }
-  return {pending,learned:aliases.length,unresolved:pending.length};
+  const [posted]=await D.all("SELECT count(*) n FROM smart_posted_memory WHERE company_id=?",cid);
+  return {pending,learned:aliases.length,posted_learned:posted?.n||0,unresolved:pending.length};
 }
 export async function learn(D,cid,body){
   const kind=String(body.kind||""),name=clean(body.master),invoiceId=clean(body.invoice_id),lineId=clean(body.line_id);
@@ -96,9 +97,37 @@ export async function learn(D,cid,body){
   await P.autoMatch(D,invoiceId,true);
   return {ok:true,remembered:target.name};
 }
+/** Backfill learned mappings from earlier vouchers confirmed created in Tally.
+ * Only local SQLite memory is changed, never Tally books. */
+export async function backfillConfirmedPostings(D,cid,limit=100){
+  const key="smart_posting_backfill_v1:"+cid,cap=Math.min(150,Math.max(1,+limit||100));
+  const state=jload((await D.first("SELECT value FROM app_config WHERE key=?",key))?.value,{});
+  if(state.finished)return {processed:0,newMappings:0,has_more:false,finished:true};
+  const at=Number(state.at||0),lastId=String(state.id||"");
+  const items=await D.all(
+    "SELECT i.id,COALESCE(i.created_at,0) created_at FROM invoices i "+
+    "WHERE i.company_id=? AND i.status='synced' AND "+
+    "EXISTS (SELECT 1 FROM jobs j JOIN posting_audit a ON a.job_id=j.id AND a.phase='created' "+
+    "WHERE j.invoice_id=i.id AND j.company_id=? AND j.kind='import_voucher' AND j.status='done') "+
+    "AND (COALESCE(i.created_at,0)>? OR (COALESCE(i.created_at,0)=? AND i.id>?)) "+
+    "ORDER BY COALESCE(i.created_at,0),i.id LIMIT ?",cid,cid,at,at,lastId,cap+1);
+  const work=items.slice(0,cap);
+  let newMappings=0;
+  for(const item of work){
+    const stmts=await P.confirmedPostingMemory(D,item.id);
+    if(stmts.length){await D.batch(stmts);newMappings+=Math.floor(stmts.length/2);}
+  }
+  const last=work.at(-1),hasMore=items.length>cap;
+  await D.run("INSERT OR REPLACE INTO app_config(key,value,updated_at) VALUES (?,?,?)",
+    key,JSON.stringify({at:last?.created_at??at,id:last?.id??lastId,finished:!hasMore}),now());
+  return {processed:work.length,newMappings,has_more:hasMore,finished:!hasMore};
+}
+
 export function smartRoutes(route,authorize){
   route("GET","/api/companies/:cid/smart-maps",async ({D,env,p})=>{await authorize(D,env,p.cid);return out(await suggestions(D,p.cid));});
   route("POST","/api/companies/:cid/smart-maps/learn",async ({D,env,p,body})=>{await authorize(D,env,p.cid);return out(await learn(D,p.cid,body));});
+  route("POST","/api/companies/:cid/smart-maps/backfill",async({D,env,p})=>{
+    await authorize(D,env,p.cid);return out(await backfillConfirmedPostings(D,p.cid));});
   route("GET","/api/companies/:cid/smart-maps/export",async ({D,env,p})=>{
     await authorize(D,env,p.cid);
     return out({mappings:await D.all("SELECT kind,key,value FROM aliases WHERE company_id=? ORDER BY kind,key",p.cid)});
