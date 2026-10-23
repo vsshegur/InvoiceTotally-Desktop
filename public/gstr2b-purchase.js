@@ -88,7 +88,7 @@ async function viewGstr2bPurchaseBatch(id){
       '<div>Input GST '+(type==="Debit Note"?"reversed / credited":"debited")+': '+esc(taxes||"Nil")+'</div>'+
       '<div>Signed round off in voucher: '+signed(r.round_off)+'</div>'+
       '</div></details>';
-    const canClassify=(["ECO","ECOA"].includes(r.source_section)||(r.source_section==="CDNRA"&&r.source_note==="C"))&&type!=="Debit Note"&&
+    const canClassify=(["ECO","ECOA","B2BA"].includes(r.source_section)||(r.source_section==="CDNRA"&&r.source_note==="C"))&&type!=="Debit Note"&&
       ["blocked","review","ready","failed"].includes(r.status);
     const post='<button class="btn sm primary" data-post-one="'+esc(r.id)+'">Post '+esc(type)+'</button>';
     const change=canClassify?'<button class="btn sm" data-mark-credit="'+esc(r.id)+'">Record as Debit Note</button>':'';
