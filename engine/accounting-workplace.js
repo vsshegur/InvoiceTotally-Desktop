@@ -49,7 +49,7 @@ export async function beforeBankPosting(D,job,read){
     // Hold same-date/same-amount records for review rather than risking duplicate Tally books.
     return dayGap===0 || (!!ref && ref.length>=6 && source.includes(ref));
   });
-  if(same.length)return {blocked:true,reason:"Possible existing Tally bank entry on this date for the same amount. Compare before posting: "+same.map(y=>y.number||y.id).slice(0,5).join(", ")};
+  if(same.length)return {blocked:true,reason:"Possible existing Tally bank entry within seven days for the same amount/reference. Compare before posting: "+same.map(y=>y.number||y.id).slice(0,5).join(", ")};
   return {blocked:false};
 }
 
@@ -99,7 +99,7 @@ export async function resolveUncertainBank(D,env,sid,body){
   const c=await company(D,st.company_id),read=ensureTally(env);
   // All checks must pass before modifying any row.
   for(const x of rows){
-    const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,x.date,x.date));
+    const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,addDays(x.date,-7),addDays(x.date,7)));
     const prior=bankVouchers(xml,st.bank_ledger).filter(y=>
       Math.abs(y.signed-r2((x.credit||0)-(x.debit||0)))<=0.01&&
       Math.abs((Date.parse(y.date+"T00:00:00Z")-Date.parse(x.date+"T00:00:00Z"))/86400000)<=7);
