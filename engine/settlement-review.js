@@ -83,8 +83,8 @@ export function matchSettlementBanks(report,bankRows){
   return report.groups.map(g=>{
     if(!g.date)return {...g,match:"needs_date",bank_candidates:[]};
     const choices=bankRows.filter(b=>{
-      const delta=day(g.date)-day(b.date);
-      return delta!==null&&Math.abs(delta)<=10&&Math.abs(r2(b.credit)-g.payout)<=1 && b.credit>0;
+      const a=day(g.date),bb=day(b.date);
+      return a!==null&&bb!==null&&Math.abs(a-bb)<=10&&Math.abs(r2(b.credit)-g.payout)<=1 && b.credit>0;
     });
     const exact=choices.filter(b=>String(b.narration+" "+b.ref).toUpperCase().includes(g.id.toUpperCase()));
     const match=exact.length===1?"reference_confirmed":exact.length>1?"ambiguous":
