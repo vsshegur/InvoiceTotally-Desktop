@@ -147,6 +147,7 @@ function topBar(crumbs = [], company = null) {
   const right = ME?.signed_in ? `<span class="pill" id="tallyPill" title="${esc(ME?.tally?.detail || "")}"><span class="dot ${st[0]}"></span>${esc(st[1])}</span>
       ${company ? `<button class="btn sm" id="importMasters" title="Read ledgers, groups, units and stock items from Tally (Alt+M)" aria-label="Import masters">⟳<span class="lbl"> Import masters</span> <kbd>Alt+M</kbd></button>` : ""}
       ${creditsChip()}
+      <a class="btn sm ghost" href="#/actions" title="Open the combined accounting work queue">Action Center</a>
       <a class="btn sm ghost" href="#/account" title="Your account and this PC's settings" aria-label="Account and settings">⚙</a>` : "";
   return `<header class="top">
     <a class="logo" href="#/"><span class="mark">VW</span>Vipul Workplace</a>
@@ -194,6 +195,7 @@ const routes = [
   [/^#\/?$/, viewCompanies],
   [/^#\/account$/, viewAccount],
   [/^#\/dashboard$/, () => viewDashboard()],
+  [/^#\/actions$/, viewGlobalActionCenter],
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "batches")],
