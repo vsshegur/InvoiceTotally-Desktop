@@ -131,6 +131,15 @@ async function viewBankReconciliation(sid){
     '<p class="muted small">Ledger options show the first 200 masters. Use search for other masters.</p></div>';
   wireTop(c);
   $("#recheck").onclick=()=>route();
+  $("[data-release]").forEach(bt=>bt.onclick=async()=>{
+    const phrase=prompt("Open the correct company in Tally and verify this bank voucher was NOT created. Type CHECKED IN TALLY to explicitly release it:");
+    if(phrase!=="CHECKED IN TALLY"){toast("Manual verification not confirmed",true);return;}
+    try{
+      await act(()=>api("/bank/"+sid+"/resolve-uncertain",{body:{ids:[bt.dataset.release],confirmed:true,verification:phrase}}),"Entry released for a new review");
+      route();
+    }catch(e){toast(e.message,true);}
+  });
+
   $("#ledgerSearch").oninput=debounce(async()=>{
     const q=$("#ledgerSearch").value.trim();
     const x=await api("/companies/"+c.id+"/masters?kind=ledger&q="+encodeURIComponent(q),{quiet:true});
