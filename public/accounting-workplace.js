@@ -125,7 +125,7 @@ async function viewBankReconciliation(sid){
       return '<tr><td><input type="radio" name="bankPick" value="'+esc(l.id)+'" '+
         (["ready","failed"].includes(l.status)?"":"disabled")+'></td><td>'+fmtDate(l.date)+'</td>'+
         '<td class="small"><b>'+esc(l.ref)+'</b> '+esc(l.narration)+'</td><td class="num">'+
-        AW_MONEY(l.credit?l.credit:-l.debit)+'</td><td>'+esc(status)+'<div class="muted small">'+esc(m.reason||"")+'</div></td>'+
+        AW_MONEY(l.credit?l.credit:-l.debit)+'</td><td>'+esc(status)+'<div class="muted small">'+esc(m.reason||"")+'</div>'+(l.status==="uncertain"?'<button class="btn sm" data-release="'+esc(l.id)+'">Manually verify absent</button>':'')+'</td>'+
         '<td>'+esc(l.ledger||"")+(l.method==="manual"?" <span class=good>Reviewed</span>":"")+'</td></tr>';
     }).join("")+'</tbody></table>':'<p>No rows.</p>')+
     '<p class="muted small">Ledger options show the first 200 masters. Use search for other masters.</p></div>';
