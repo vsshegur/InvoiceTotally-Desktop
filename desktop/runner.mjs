@@ -5,6 +5,7 @@ import * as GS from "../engine/gstr2b.js";
 import * as EC from "../engine/ecommerce.js";
 import * as G2BP from "../engine/gstr2b-purchase.js";
 import * as AD from "../engine/audit.js";
+import * as AW from "../engine/accounting-workplace.js";
 import * as T from "../engine/tally.js";
 import * as DUP from "../engine/duplicate-check.js";
 import { now } from "../engine/db.js";
@@ -98,6 +99,22 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
       else await P.jobResult(D,job,false,"",message);
       return;
     }
+    if (job.kind === "import_bank") {
+      // Do not reuse invoice duplicate logic: Tally bank-side ledger amounts use opposite signs.
+      let check;
+      try { check = await AW.beforeBankPosting(D,job,xml=>TL.exportData(xml)); }
+      catch(e) {
+        if(e.down||e.timeout){state.at=0;await requeue(job,"Waiting for live Tally bank verification");return;}
+        const msg="Bank duplicate verification failed; nothing sent: "+e.message;
+        await AD.audit(D,job,"not_sent",msg,tc).catch(err=>log("Audit error: "+err.message));
+        await P.jobResult(D,job,false,"",msg);return;
+      }
+      if(check.blocked){
+        await AD.audit(D,job,"duplicate_blocked",check.reason,tc);
+        await AW.blockBankJob(D,job,check.reason);
+        return;
+      }
+    }
     if (job.kind === "import_ecommerce") {
       let check;
       try { check = await EC.beforePosting(D, job, tc, (xml) => TL.exportData(xml)); }
@@ -157,6 +174,14 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
     let res;
     try { res = await TL.post(job.payload, tc); }
     catch (e) {
+      if(job.kind==="import_bank"){
+        // A network reset after transmission might still have saved the voucher.
+        // Fail closed rather than automatically resending an uncertain payment.
+        const msg="Check in Tally before retrying — posting outcome uncertain: "+e.message;
+        await AD.audit(D,job,"uncertain",msg,tc).catch(err=>log("Audit error: "+err.message));
+        await P.jobResult(D,job,false,"",msg);
+        return;
+      }
       if (job.kind === "import_gstr2b_purchase") {
         const message="Check Tally before retrying — posting result unknown: "+e.message;
         await AD.audit(D,job,"uncertain",message,tc).catch(err=>log("Audit failure: "+err.message));
