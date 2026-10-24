@@ -1,4 +1,4 @@
-// Local-only, read-only accounting integrations and explicit source linking.
+// Local-first bank, settlement and inter-company read-only accounting integrations.
 import * as T from "./tally.js";
 import * as R from "./accounting-reconcile.js";
 import {newId,now,jload} from "./db.js";
@@ -8,7 +8,6 @@ const json=x=>new Response(JSON.stringify(x),{headers:{"content-type":"applicati
 const bad=(message,status=400)=>{const e=new Error(message);e.status=status;throw e;};
 const norm=x=>R.normRef(x);
 const r2=x=>Math.round(Number(x||0)*100)/100;
-const date=()=>indiaDate();
 const validPeriod=x=>/^\d{4}-\d{2}-\d{2}$/.test(String(x||""));
 const addDays=(d,delta)=>{
   const value=Date.parse(String(d||"")+"T00:00:00Z");
