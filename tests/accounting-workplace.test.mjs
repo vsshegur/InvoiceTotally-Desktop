@@ -64,3 +64,24 @@ test("reciprocal company voucher matching is source-linked and read-only",async(
  const result=await W.intercompanyReview(D,"a","b");
  assert.equal(result.links.length,1);
 });
+
+test("live inter-company reading uses reciprocal Tally ledgers, reference and opposite amounts",async()=>{
+  for(const [cid,name] of [["a","Vijayalaxmi Textiles"],["b","Vipul Textiles"]])
+    await D.insert("masters",{company_id:cid,kind:"ledger",name,uname:name.toUpperCase(),primary_group:"Sundry Creditors",pending:0});
+  function voucher(ledger,sign,reference){
+    return '<ENVELOPE><BODY><COLLECTION><VOUCHER><DATE>20261010</DATE>'+
+      '<VOUCHERNUMBER>'+(sign>0?"A-1":"P-1")+'</VOUCHERNUMBER>'+
+      '<REFERENCE>'+reference+'</REFERENCE><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>'+
+      '<ALLLEDGERENTRIES.LIST><LEDGERNAME>'+ledger+'</LEDGERNAME><AMOUNT>'+sign+'</AMOUNT></ALLLEDGERENTRIES.LIST>'+
+      '</VOUCHER></COLLECTION></BODY></ENVELOPE>';
+  }
+  const reply={TALLY:{readOnly:async request=>
+    request.includes("<SVCURRENTCOMPANY>Vipul Textiles</SVCURRENTCOMPANY>")?
+      voucher("Vijayalaxmi Textiles",1180,"A-1"):voucher("Vipul Textiles",-1180,"A-1"),
+      state:{companies:["Vipul Textiles","Vijayalaxmi Textiles"]}}};
+  const r=await W.liveIntercompany(D,reply,"a","b",{period:"2026-10",
+    ledger_a:"Vijayalaxmi Textiles",ledger_b:"Vipul Textiles"});
+  assert.equal(r.links.length,1);
+  assert.equal(r.rows_a,1);
+  assert.equal(r.rows_b,1);
+});
