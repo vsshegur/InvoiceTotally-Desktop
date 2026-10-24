@@ -307,3 +307,28 @@ async function companySettlements(c,el){
       '</tbody></table></div>';
   });
 }
+
+// Combined inbox across every company owned by the currently signed-in user.
+async function viewGlobalActionCenter(){
+  const companies=await api("/companies");
+  const all=await Promise.all(companies.map(async c=>{
+    try{return {company:c,review:await api("/companies/"+c.id+"/action-center")};}
+    catch(e){return {company:c,error:e.message};}
+  }));
+  const items=all.flatMap(x=>(x.review?.items||[]).map(item=>({...item,
+    company:x.company.name,companyId:x.company.id})));
+  const total=items.length;
+  app().innerHTML=topBar([["Accounting Action Center"]])+
+    '<div class="page wide"><div class="bar"><h1>Accounting Action Center</h1><div class="spacer"></div>'+
+    '<button class="btn" id="reloadGlobal">Refresh</button></div>'+
+    '<p class="muted">Combined exceptions from your local Tally companies. This is not a reconciliation-complete certificate; refresh each source before closing accounts.</p>'+
+    '<div class="card"><b>'+total+' items to review</b> across '+companies.length+' accessible companies</div>'+
+    (all.some(x=>x.error)?'<div class="alert warn">'+all.filter(x=>x.error).map(x=>esc(x.company.name)+': '+esc(x.error)).join('; ')+'</div>':'')+
+    (items.length?'<table class="grid"><thead><tr><th>Company</th><th>Area</th><th>Issue</th><th>Description</th><th></th></tr></thead><tbody>'+
+      items.slice(0,600).map(x=>'<tr><td>'+esc(x.company)+'</td><td>'+esc(x.kind)+'</td><td>'+esc(x.label)+'</td>'+
+      '<td class="small">'+esc(x.description)+'</td><td><a class="btn sm" href="'+esc(x.link)+'">Review</a></td></tr>').join("")+
+      '</tbody></table>':'<div class="card empty">No locally recorded exceptions for your accessible companies.</div>')+
+    '</div>';
+  wireTop();
+  $("#reloadGlobal").onclick=()=>route();
+}
