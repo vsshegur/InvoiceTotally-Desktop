@@ -32,7 +32,7 @@ test("removed features have no newly created database tables",()=>{
   assert.deepEqual(names,[]);
 });
 
-test("dashboard snapshots classify bank, outstanding and tax account balances correctly",async()=>{
+test("dashboard snapshots classify bank, party and tax account balances correctly",async()=>{
   const xml="<ENVELOPE><COLLECTION>"+
     '<LEDGER NAME="HDFC Bank"><PARENT>Bank Accounts</PARENT><CLOSINGBALANCE>-12000.00</CLOSINGBALANCE></LEDGER>'+
     '<LEDGER NAME="ABCABC"><PARENT>Sundry Debtors</PARENT><CLOSINGBALANCE>-8000.00</CLOSINGBALANCE></LEDGER>'+
