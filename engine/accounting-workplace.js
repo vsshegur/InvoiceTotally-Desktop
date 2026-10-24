@@ -200,6 +200,36 @@ export async function intercompanyReview(D,aId,bId){
     ...R.matchInterCompany(x,y),scope:"Only cached GST voucher records and exact reciprocal party identities are considered; refresh Tally GST registers before relying on this report."};
 }
 
+
+export async function liveIntercompany(D,env,cid,other,body){
+  if(cid===other)bad("Choose different companies");
+  const [a,b]=await Promise.all([company(D,cid),company(D,other)]);
+  const period=String(body.period||"");
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))bad("Choose a valid month");
+  const ledgerA=String(body.ledger_a||"").trim(),ledgerB=String(body.ledger_b||"").trim();
+  if(!ledgerA||!ledgerB)bad("Choose the reciprocal inter-company ledger in each Tally company");
+  for(const [c,name] of [[a,ledgerA],[b,ledgerB]]){
+    const known=await D.first("SELECT id FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND UPPER(name)=UPPER(?)",c.id,name);
+    if(!known)bad("Inter-company ledger "+name+" does not exist in the imported masters for "+c.name);
+  }
+  const yy=Number(period.slice(0,4)),mm=Number(period.slice(5,7));
+  const from=period+"-01",to=new Date(Date.UTC(yy,mm,0)).toISOString().slice(0,10);
+  const names=env.TALLY?.state?.companies||[];
+  if(names.length && (!names.some(n=>norm(n)===norm(tallyName(a))) || !names.some(n=>norm(n)===norm(tallyName(b)))))
+    bad("Both target companies must be open in Tally for the live comparison",409);
+  const read=ensureTally(env);
+  const one=await read(T.bankEntriesRequest(tallyName(a),ledgerA,from,to));
+  const two=await read(T.bankEntriesRequest(tallyName(b),ledgerB,from,to));
+  const translate=(xml,ledger)=>R.bankVouchers(xml,ledger).map(v=>({
+    id:v.id,number:v.number,reference:v.reference||v.number,date:v.date,
+    amount:Math.abs(v.signed),signed:v.signed,party:v.party,type:v.type
+  }));
+  const x=translate(one,ledgerA),y=translate(two,ledgerB);
+  return {company_a:a.name,company_b:b.name,ledger_a:ledgerA,ledger_b:ledgerB,
+    period,rows_a:x.length,rows_b:y.length,...R.matchInterCompany(x,y),
+    scope:"Fresh read-only ledger vouchers for the chosen month. Equal amounts must have opposite ledger signs and a matching invoice/reference. No entries or bank reconciliation dates are changed."};
+}
+
 async function actionCenter(D,cid){
   const [invoices,bank,ec,purchase,gst,failedJobs]=await D.many([
     ["SELECT id,batch_id,status,substr(sync_error,1,220) error FROM invoices WHERE company_id=? AND status IN ('failed','review') ORDER BY created_at DESC LIMIT 80",cid],
@@ -254,6 +284,10 @@ export function accountingRoutes(route,authorize){
   route("GET","/api/companies/:cid/intercompany/:other",async ctx=>{
     await auth(ctx,ctx.p.cid);await auth(ctx,ctx.p.other);
     return json(await intercompanyReview(ctx.D,ctx.p.cid,ctx.p.other));
+  });
+  route("POST","/api/companies/:cid/intercompany/:other/refresh",async ctx=>{
+    await auth(ctx,ctx.p.cid);await auth(ctx,ctx.p.other);
+    return json(await liveIntercompany(ctx.D,ctx.env,ctx.p.cid,ctx.p.other,ctx.body));
   });
   route("GET","/api/companies/:cid/action-center",async ctx=>{
     await auth(ctx,ctx.p.cid);return json(await actionCenter(ctx.D,ctx.p.cid));
