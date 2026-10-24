@@ -125,6 +125,18 @@ export const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS ix_gst_control_company ON gst_control(company_id, period)`,
   `CREATE TABLE IF NOT EXISTS gst_ledger_rules (company_id TEXT NOT NULL, ledger_name TEXT NOT NULL, role TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(company_id,ledger_name))`,
   `CREATE INDEX IF NOT EXISTS ix_gst_ledger_rules_company ON gst_ledger_rules(company_id)`,
+
+  `CREATE TABLE IF NOT EXISTS gst_invoice_links (
+    company_id TEXT NOT NULL,doc_id TEXT NOT NULL,invoice_id TEXT NOT NULL,confirmed_at REAL NOT NULL,
+    PRIMARY KEY(company_id,doc_id),UNIQUE(company_id,invoice_id))`,
+  `CREATE TABLE IF NOT EXISTS bank_rules (
+    company_id TEXT NOT NULL,bank_ledger TEXT NOT NULL,key TEXT NOT NULL,ledger TEXT NOT NULL,approved_at REAL NOT NULL,
+    PRIMARY KEY(company_id,bank_ledger,key))`,
+  `CREATE TABLE IF NOT EXISTS settlement_batches (
+    id TEXT PRIMARY KEY,company_id TEXT NOT NULL,platform TEXT NOT NULL,period TEXT NOT NULL,
+    source_name TEXT,source_hash TEXT,summary TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'review',
+    created_at REAL NOT NULL,UNIQUE(company_id,platform,source_hash))`,
+  `CREATE INDEX IF NOT EXISTS ix_settlement_company ON settlement_batches(company_id,period)`,
   `CREATE TABLE IF NOT EXISTS activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id TEXT, invoice_id TEXT, message TEXT, at REAL)`,
   `CREATE INDEX IF NOT EXISTS ix_activity ON activity(batch_id, invoice_id)`,
