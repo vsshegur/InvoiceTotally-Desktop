@@ -156,22 +156,10 @@ export async function assignLedger(D,sid,body){
   if(lines.length!==ids.length || lines.some(l=>!["ready","failed"].includes(l.status)))
     throw new BankError(409,"Only ready or safely failed statement rows can be assigned. Refresh and check selections.");
   const party=/^(sundry creditors|sundry debtors)$/i.test(String(master.primary_group||master.parent||"").trim());
-  const allocations=new Map();
-  if(party){
-    if(ids.length!==1)throw new BankError(400,"Assign bill-wise party receipts or payments individually");
-    const x=lines[0],ref=String(body.bill_ref||"").trim(),amount=r2(x.credit||x.debit);
-    if(ref){
-      const side=x.credit>0?"receivable":"payable";
-      const bill=await D.first("SELECT name,party,amount,fetched_at FROM tally_bills WHERE company_id=? AND side=? AND UPPER(party)=UPPER(?) AND name=?",st.company_id,side,master.name,ref);
-      if(!bill)throw new BankError(400,"The selected party bill was not found in the Tally outstanding snapshot. Refresh it first.");
-      if(now()-Number(bill.fetched_at||0)>7200)throw new BankError(409,"Bill snapshot is older than two hours. Refresh outstandings and verify the bill.");
-      allocations.set(x.id,JSON.stringify([{name:bill.name,amount:Math.min(amount,Math.abs(Number(bill.amount)))}]));
-    }else if(body.on_account===true){
-      allocations.set(x.id,"[]");
-    }else throw new BankError(400,"Party ledger requires a verified bill allocation or explicit On Account confirmation");
-  }
-  const statements=lines.map(l=>D.stmt("UPDATE bank_lines SET ledger=?,method='manual',confidence=100,bills=?,note=? WHERE id=?",
-    master.name,allocations.get(l.id)||"[]",party?(body.bill_ref?"Bill "+body.bill_ref:"Approved On Account"):"Reviewed ledger mapping",l.id));
+  if(party&&body.on_account!==true)throw new BankError(400,
+    "A party ledger requires explicit On Account confirmation; automatic bill allocation is not available.");
+  const statements=lines.map(l=>D.stmt("UPDATE bank_lines SET ledger=?,method='manual',confidence=100,bills='[]',note=? WHERE id=?",
+    master.name,party?"Explicit On Account approval":"Reviewed ledger mapping",l.id));
   if(body.remember===true){
     for(const l of lines){
       const key=narrationKey(l.narration);
