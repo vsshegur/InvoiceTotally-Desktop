@@ -65,22 +65,48 @@ async function companyAccounting(c,el,tab){
   }
   if(tab==="intercompany"){
     const companies=(await api("/companies")).filter(x=>x.id!==c.id);
-    el.innerHTML='<h2>Inter-Company Reconciliation</h2>'+AW_NOTICE+
-      '<p>Compare two company purchase/sales vouchers already read for GST reconciliation. Only exact reciprocal party identities and matching invoice references are considered.</p>'+
-      '<div class="card"><label>Compare '+esc(c.name)+' against </label> '+
-      '<select id="partner" class="in" style="max-width:300px"><option value="">Choose another company</option>'+
-      companies.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join("")+'</select> '+
-      '<button class="btn primary" id="compare">Compare cached vouchers</button></div><div id="interResult"></div>';
+    el.innerHTML='<h2>Live Inter-Company Ledger Reconciliation</h2>'+AW_NOTICE+
+      '<p>Open <b>both</b> companies in Tally. Choose the reciprocal party or current-account ledger in each firm, then compare all vouchers for one month.</p>'+
+      '<div class="card"><div style="display:flex;flex-wrap:wrap;gap:12px;align-items:end">'+
+      '<label>Other company <select id="partner" class="in" style="max-width:300px"><option value="">Choose company</option>'+
+      companies.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join("")+'</select></label>'+
+      '<label>Month <input type="month" class="in" id="interMonth"></label>'+
+      '<label>In '+esc(c.name)+': other company ledger <input class="in" id="interLedgerA" list="interListA" placeholder="Find exact Tally ledger"><datalist id="interListA"></datalist></label>'+
+      '<label>In other company: '+esc(c.name)+' ledger <input class="in" id="interLedgerB" list="interListB" placeholder="Find exact Tally ledger"><datalist id="interListB"></datalist></label>'+
+      '<button class="btn primary" id="compare">Read Tally & compare</button></div></div>'+
+      '<div id="interResult"></div>';
+    const previous=new Date();previous.setMonth(previous.getMonth()-1);
+    $("#interMonth",el).value=previous.toISOString().slice(0,7);
+    const fill=async(companyId,text,listId)=>{
+      if(!companyId)return;
+      const d=await api("/companies/"+companyId+"/masters?kind=ledger&q="+encodeURIComponent(text||""),{quiet:true});
+      const target=$("#"+listId,el);if(target)target.innerHTML=d.items.map(x=>'<option value="'+esc(x.name)+'"></option>').join("");
+    };
+    $("#partner",el).onchange=()=>{
+      $("#interLedgerB",el).value="";fill($("#partner",el).value,"","interListB").catch(e=>toast(e.message,true));
+    };
+    $("#interLedgerA",el).oninput=debounce(()=>fill(c.id,$("#interLedgerA",el).value,"interListA"),220);
+    $("#interLedgerB",el).oninput=debounce(()=>fill($("#partner",el).value,$("#interLedgerB",el).value,"interListB"),220);
+    fill(c.id,"","interListA").catch(()=>{});
     $("#compare",el).onclick=async()=>{
       const other=$("#partner",el).value;
       if(!other){toast("Choose another company",true);return;}
-      const d=await api("/companies/"+c.id+"/intercompany/"+other);
-      $("#interResult",el).innerHTML='<div class="card">Possible reciprocal records: <b>'+d.links.length+
-        '</b> · Unmatched in '+esc(d.company_a)+': <b>'+d.unmatched_a.length+'</b> · Unmatched in '+
-        esc(d.company_b)+': <b>'+d.unmatched_b.length+'</b></div>'+
-       '<p class="muted small">'+esc(d.scope)+'</p>'+
-       (d.links.length?'<table class="grid"><tr><th>First company voucher</th><th>Other company voucher</th><th>Amount</th></tr>'+
-       d.links.map(x=>'<tr><td>'+esc(x.a.number)+'</td><td>'+esc(x.b.number)+'</td><td>'+AW_MONEY(x.a.amount)+'</td></tr>').join("")+'</table>':"");
+      const body={period:$("#interMonth",el).value,ledger_a:$("#interLedgerA",el).value,ledger_b:$("#interLedgerB",el).value};
+      try{
+        const d=await api("/companies/"+c.id+"/intercompany/"+other+"/refresh",{body});
+        $("#interResult",el).innerHTML='<div class="card"><b>Possible reciprocal vouchers:</b> '+d.links.length+
+          ' · Unmatched in '+esc(d.company_a)+': <b>'+d.unmatched_a.length+'</b> · Unmatched in '+
+          esc(d.company_b)+': <b>'+d.unmatched_b.length+'</b>'+
+          '<p class="muted small">'+esc(d.scope)+'</p></div>'+
+         (d.links.length?'<table class="grid"><tr><th>First company voucher</th><th>Second company voucher</th><th>Amount</th></tr>'+
+         d.links.map(x=>'<tr><td>'+esc(x.a.number)+' ('+fmtDate(x.a.date)+')</td><td>'+
+          esc(x.b.number)+' ('+fmtDate(x.b.date)+')</td><td>'+AW_MONEY(x.a.amount)+'</td></tr>').join("")+'</table>':"")+
+         (d.unmatched_a.length||d.unmatched_b.length?'<h3>Unmatched source entries</h3><table class="grid">'+
+          [...d.unmatched_a.map(x=>({company:d.company_a,row:x.row})),
+           ...d.unmatched_b.map(x=>({company:d.company_b,row:x}))].slice(0,100).map(x=>
+            '<tr><td>'+esc(x.company)+'</td><td>'+esc(x.row.number)+'</td><td>'+fmtDate(x.row.date)+
+            '</td><td>'+AW_MONEY(x.row.amount)+'</td></tr>').join("")+'</table>':"");
+      }catch(e){toast(e.message,true);}
     };
     return;
   }
