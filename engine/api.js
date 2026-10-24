@@ -12,7 +12,6 @@ import * as G2BP from "./gstr2b-purchase.js";
 import * as SC from "./master-assist.js";
 import * as GC from "./gst-control.js";
 import * as DASH from "./dashboard.js";
-import * as AD from "./audit.js";
 import * as AW from "./accounting-workplace.js";
 import * as SET from "./marketplace-settlements.js";
 import {invoiceDateReview,fiscalYearStart,indiaDate,normalizeInvoiceDate} from "./invoice-period.js";
@@ -249,7 +248,7 @@ route("DELETE", "/api/companies/:cid", async ({ D, p }) => {
   // everything that belongs to the company: bank statements and GSTR-2B too (nothing in Tally is touched)
   await D.batch([
     D.stmt("DELETE FROM bank_pages WHERE statement_id IN (SELECT id FROM bank_statements WHERE company_id=?)", p.cid),
-    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "bank_rules", "tally_bills", "outstanding_reads", "tally_bank_entries", "gst_invoice_links", "gst_docs", "gst_returns", "tally_gst_vouchers", "ecommerce_vouchers", "ecommerce_batches", "settlement_batches", "dashboard_balances", "gst_control"]
+    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "bank_rules", "tally_bank_entries", "gst_docs", "gst_returns", "tally_gst_vouchers", "ecommerce_vouchers", "ecommerce_batches", "settlement_batches", "dashboard_balances", "gst_control"]
       .map((t) => D.stmt(`DELETE FROM ${t} WHERE company_id=?`, p.cid)),
     D.stmt("DELETE FROM companies WHERE id=?", p.cid)]);
   return json({ ok: true });
@@ -727,13 +726,6 @@ DASH.dashboardRoutes(route,requireLicence,authorizeCompany);
 AW.accountingRoutes(route,authorizeCompany);
 SET.settlementRoutes(route,authorizeCompany);
 GC.gstControlRoutes(route,authorizeCompany);
-route("GET","/api/companies/:cid/posting-audit",async ({D,env,p,url})=>{
-  await authorizeCompany(D,env,p.cid);
-  const [rows,integrity]=await Promise.all([AD.auditRows(D,p.cid,Number(url.searchParams.get("limit")||200)),AD.verifyAudit(D)]);
-  return json({rows,integrity});
-});
-
-
 // Read-only local recovery diagnostics: never exposes licence keys, raw bank data or invoice images.
 route("GET","/api/diagnostics",async({env,D})=>{
   let database="unknown";
