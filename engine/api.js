@@ -731,6 +731,28 @@ route("GET","/api/companies/:cid/posting-audit",async ({D,env,p,url})=>{
   return json({rows,integrity});
 });
 
+
+// Read-only local recovery diagnostics: never exposes licence keys, raw bank data or invoice images.
+route("GET","/api/diagnostics",async({env,D})=>{
+  let database="unknown";
+  try{
+    const r=env.DB?.sql?.prepare("PRAGMA quick_check")?.get();
+    database=Object.values(r||{})[0]==="ok"?"ok":"integrity warning";
+  }catch(e){database="error: "+String(e.message).slice(0,150);}
+  const [[pending],[uncertain],[failed]]=await D.many([
+    ["SELECT COUNT(*) n FROM jobs WHERE status IN ('pending','sent')"],
+    ["SELECT COUNT(*) n FROM bank_lines WHERE status='uncertain'"],
+    ["SELECT COUNT(*) n FROM jobs WHERE status='failed'"]
+  ]);
+  let back;
+  try{back=JSON.parse(env.getConfig?.("backup_last")||"null");}catch{}
+  const last=back?.checked?"Verified "+new Date(back.at*1000).toISOString():back?.error?"Backup error: "+back.error:"No recent backup status";
+  return json({version:env.VERSION||"dev",database,
+    tally_status:env.TALLY?.state?.status||"unknown",tally_detail:env.TALLY?.state?.detail||"",
+    jobs:{pending:pending?.n||0,uncertain:uncertain?.n||0,failed:failed?.n||0},
+    backup_status:last});
+});
+
 // ------------------------------------------------------------------ entry
 async function handleApi(req, env, url) {
   const D = db(env);
