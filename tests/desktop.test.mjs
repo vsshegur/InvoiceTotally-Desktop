@@ -138,8 +138,6 @@ test("admin: forced local repost of the same Purchase is blocked by live Tally d
   },15000,"duplicate prevention");
   assert.equal(after.status,"failed","the external duplicate must NOT create a new Tally invoice");
   assert.match(after.sync_error,/already exists in Tally|duplicate/i);
-  const audit=await call("GET","/companies/"+cid+"/posting-audit");
-  assert.ok(audit.rows.some(x=>x.kind==="import_voucher"&&x.phase==="duplicate_blocked"));
 });
 
 test("admin: the AIs are put in a new order; the service gets that order", async () => {
@@ -218,7 +216,7 @@ test("admin: offline Meesho and Flipkart Excel summaries go directly into Tally 
   assert.equal(posted.vouchers[0].status,"synced",posted.vouchers[0].error||"");
 });
 
-test("admin: GST control, multi-company balances, smart mapping and audited posting work over localhost",async()=>{
+test("admin: GST control, multi-company balances, smart mapping and safe posting work over localhost",async()=>{
   const dashboard=await call("GET","/dashboard");
   assert.ok(dashboard.companies.some(x=>x.id===cid));
   const refresh=await call("POST","/dashboard/refresh/"+cid,{});
@@ -246,10 +244,9 @@ test("admin: GST control, multi-company balances, smart mapping and audited post
   const alias=await call("GET","/companies/"+cid+"/smart-maps/export");
   assert.ok(Array.isArray(alias.mappings));
 
-  const audit=await call("GET","/companies/"+cid+"/posting-audit");
-  assert.equal(audit.integrity.ok,true);
-  assert.ok(audit.rows.some(x=>x.phase==="attempt"));
-  assert.ok(audit.rows.some(x=>x.phase==="created"));
+  for(const suffix of ["/posting-audit","/outstandings","/gst-links"]){
+    assert.equal((await call("GET","/companies/"+cid+suffix)).status,404,"removed feature endpoint "+suffix+" must not exist");
+  }
   const backup=await call("POST","/backup",{});
   assert.ok(backup.file,backup.error||"");
   const backups=await call("GET","/backups");

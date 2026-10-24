@@ -96,33 +96,6 @@ async function companySmartMappings(c,el){
     }catch(e){toast(e.message,true);btn.disabled=false;}
   });
 }
-async function companyAudit(c,el){
-  const data=await api("/companies/"+c.id+"/posting-audit?limit=500");
-  const rows=data.rows||[],integrity=data.integrity||{};
-  const phase={attempt:"Attempted",created:"Created",rejected:"Rejected",uncertain:"Check in Tally",
-    duplicate_blocked:"Duplicate blocked",not_sent:"Not sent"};
-  el.innerHTML='<div class="card" style="margin-bottom:16px;padding:16px"><h2 style="margin:0 0 6px">Tally posting audit &amp; recovery</h2>'+
-    '<p class="muted">Every Tally write attempt and response is recorded locally with a payload hash. Rejections and uncertain outcomes remain visible; never retry an uncertain voucher until you check Tally first.</p>'+
-    '<p class="'+(integrity.ok?'good':'bad')+'">'+(integrity.ok?'✓ Audit chain verified':'⚠ Audit log integrity check failed')+
-    ' · '+(integrity.events||0)+' events</p>'+
-    '<button class="btn" id="ccExportAudit">Export displayed audit as CSV</button></div>'+
-    (rows.length?'<div style="overflow:auto"><table class="grid"><thead><tr><th>When</th><th>Operation</th><th>Result</th><th>Details</th><th>Voucher/Job</th></tr></thead><tbody>'+
-      rows.map(r=>'<tr><td class="muted">'+CC.ago(r.at)+'</td><td>'+esc(r.kind)+'</td>'+
-        '<td class="'+(r.phase==="created"?"good":r.phase==="rejected"||r.phase==="uncertain"?"bad":"muted")+'">'+
-        esc(phase[r.phase]||r.phase)+'</td><td class="small">'+esc(r.detail||"")+'</td>'+
-        '<td class="mono small">'+esc((r.invoice_id||r.job_id||"").slice(0,16))+'</td></tr>').join('')+'</tbody></table></div>':
-      '<div class="card empty">No Tally posting events recorded yet. Earlier versions did not maintain this audit log.</div>');
-  $('#ccExportAudit')?.addEventListener('click',()=>{
-    const header=["Date","Company","Job","Voucher","Kind","Phase","Details","Payload SHA256","Entry hash"];
-    const quote=x=>'"'+String(x??"").replace(/"/g,'""')+'"';
-    const csv=[header,...rows.map(r=>[new Date(r.at*1000).toISOString(),c.name,r.job_id,r.invoice_id,r.kind,r.phase,r.detail,r.payload_sha256,r.entry_hash])]
-      .map(row=>row.map(quote).join(",")).join("\r\n");
-    const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
-    const url=URL.createObjectURL(blob),a=document.createElement("a");
-    a.href=url;a.download="InvoiceTotally_Tally_Audit_"+c.name.replace(/[^a-z0-9-]/gi,"_")+".csv";a.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1500);
-  });
-}
 // Display the evidence behind each GSTR-1 comparison, not just one net difference.
 function gstr1Breakup(x){
   const b=x.breakdown,portal=x.portal||{},tally=x.tally||{};

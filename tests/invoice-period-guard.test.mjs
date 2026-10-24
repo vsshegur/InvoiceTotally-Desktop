@@ -6,7 +6,6 @@ import {makeD1} from "../desktop/d1.mjs";
 import * as P from "../engine/pipeline.js";
 import * as M from "../engine/matching.js";
 import * as SC from "../engine/master-assist.js";
-import * as AD from "../engine/audit.js";
 import {normalizeInvoiceDate,invoiceDateReview} from "../engine/invoice-period.js";
 import api from "../engine/api.js";
 
@@ -187,9 +186,8 @@ test("Smart Matching can backfill verified vouchers previously created in Tally,
     D.updateStmt("lines",inv.lines[0].id,{stock_state:"resolved",stock_item:"COTTON TOWEL",
       ledger_state:"resolved",ledger:"GST PURCHASE"})]);
   const job={id:"posted-old-job",invoice_id:iid,kind:"import_voucher",company_id:id,
-    payload:"<ENVELOPE/>",status:"done",created_at:1780000100};
+    payload:"<ENVELOPE/>",status:"done",result:"Created",created_at:1780000100};
   await D.insert("jobs",job);
-  await AD.audit(D,job,"created","Created exactly one voucher in Tally","VIJAYALAXMI TEXTILES");
   const other=await bill(D,"historic-b","2026-05-09",false,"MARKED");
   await D.update("invoices",other,{status:"synced",party_ledger:"KANAKRAJ TEXTILES"});
   await D.insert("jobs",{id:"unverified-job",invoice_id:other,kind:"import_voucher",

@@ -112,8 +112,8 @@ their original upload date determines the financial-year window.
 **Delete batch** now works from the batch page. Local draft invoices,
 pages and files are removed after confirmation; **previously created Tally
 vouchers are never modified**. If a voucher is actively being sent to Tally,
-deletion is refused until the result is known. The posting audit trail remains
-available. Previously-used AI reading credits are not refunded by deletion.
+deletion is refused until the result is known. Tally job outcomes remain
+available in the Tally log. Previously-used AI reading credits are not refunded by deletion.
 
 **Smart Matching** now remembers the confirmed supplier, per-supplier
 stock-item, per-supplier/item account ledger, charges, and GST tax-ledger
@@ -126,8 +126,8 @@ shows how many mappings were learned from confirmed Tally postings.
 
 To reuse mappings from invoices **already posted in older versions**, open
 **Smart Matching → Learn from earlier Tally-posted invoices**. The action
-reads local receipts and posting-audit entries in batches of up to 100.
-Only vouchers whose posting audit confirms **created in Tally** qualify.
+reads locally confirmed completed Tally import jobs in batches of up to 100.
+Only invoices with a completed job and an explicit **Created** result qualify.
 It does not modify Tally or learn from invoices merely marked as synced.
 Click again if more earlier invoices remain; existing manual mappings are
 always preserved.
@@ -260,12 +260,10 @@ configuration and official GST returns before relying on them.
   receivable/payable, Sales/Purchase and Duties/Taxes *net ledger balances* and local
   workflow counts, with snapshot time. These are not an official balance sheet/P&L,
   calculated payable tax, real-time bank balances or cash flow.
-- **Posting audit & safe recovery:** The per-company **Posting Audit** tab displays
-  local tamper-evident SHA-256 hash-chain records for Tally posting attempts, successes,
-  rejections, duplicate prevention and uncertain outcomes; exports a CSV. Raw XML
-  and invoice images are not copied into audit records. A broken chain displays a warning.
-  Auditing starts in this version; older history cannot be recreated. Retry unknown
-  results only after manually checking the source vouchers in Tally.
+- **Safe Tally posting and recovery:** Posting remains create-only, and existing Tally
+  records are checked before invoices and bank entries are sent. Failed or uncertain
+  jobs appear in the **Tally log**; unknown outcomes must be verified in Tally
+  before retrying. The separate Posting Audit module is not included.
 - **Verified backups / restore:** **Account → This PC** displays dated backups with
   SQLite integrity and SHA-256 verification. Existing daily backups retain 14 versions.
   Admins can optionally make *portable password-encrypted AES-256-GCM backups* with a
@@ -314,3 +312,17 @@ the release.
 Try it without Windows or Tally: `node tests/fake-service.mjs 8790`, `python3 tests/mock_tally.py 9100`, then
 `IT_SERVICE=http://127.0.0.1:8790 TALLY_URL=http://127.0.0.1:9100 IT_PRINT_KEY=1 node desktop/main.mjs` and open
 the address it prints.
+
+## Accounting Workplace update (v3.8.0)
+
+This release includes read-only bank reconciliation, reviewed bank ledger mapping,
+manual Meesho/Flipkart settlement previews with bank payout suggestions, a unified
+Accounting Action Center, inter-company ledger comparison, and startup diagnostics.
+The **Outstandings**, **GST Invoice Links**, and **Posting Audit** modules were
+removed from the screens, APIs and schema definitions. Core GSTR-2B reconciliation,
+Tally duplicate checking and existing Tally job records remain supported. Party-ledger
+bank postings now require an explicit **On Account** approval rather than reading
+bill-wise outstanding snapshots. All existing local accounting databases are left
+intact, including any older records created by previous versions. Reconciliation
+screens do not create or modify Tally entries. Review the installer and test with a
+separate Tally company before using new accounting workflows on production books.

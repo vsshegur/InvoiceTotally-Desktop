@@ -12,7 +12,8 @@ import * as G2BP from "./gstr2b-purchase.js";
 import * as SC from "./master-assist.js";
 import * as GC from "./gst-control.js";
 import * as DASH from "./dashboard.js";
-import * as AD from "./audit.js";
+import * as AW from "./accounting-workplace.js";
+import * as SET from "./marketplace-settlements.js";
 import {invoiceDateReview,fiscalYearStart,indiaDate,normalizeInvoiceDate} from "./invoice-period.js";
 
 class HttpError extends Error { constructor(status, msg, code) { super(msg); this.status = status; this.code = code; } }
@@ -247,7 +248,7 @@ route("DELETE", "/api/companies/:cid", async ({ D, p }) => {
   // everything that belongs to the company: bank statements and GSTR-2B too (nothing in Tally is touched)
   await D.batch([
     D.stmt("DELETE FROM bank_pages WHERE statement_id IN (SELECT id FROM bank_statements WHERE company_id=?)", p.cid),
-    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "tally_bills", "tally_bank_entries", "gst_docs", "gst_returns", "tally_gst_vouchers", "ecommerce_vouchers", "ecommerce_batches", "dashboard_balances", "gst_control"]
+    ...["masters", "aliases", "jobs", "bank_lines", "bank_statements", "bank_rules", "tally_bank_entries", "gst_docs", "gst_returns", "tally_gst_vouchers", "ecommerce_vouchers", "ecommerce_batches", "settlement_batches", "dashboard_balances", "gst_control"]
       .map((t) => D.stmt(`DELETE FROM ${t} WHERE company_id=?`, p.cid)),
     D.stmt("DELETE FROM companies WHERE id=?", p.cid)]);
   return json({ ok: true });
@@ -715,18 +716,35 @@ async function useStatementCredit(env, D, st, lines) {
     throw new HttpError(e.status || 503, e.message);
   }
 }
-BK.bankRoutes(route, { useCredit: useStatementCredit, requirePosting });
+BK.bankRoutes(route, { useCredit: useStatementCredit, requirePosting, authorizeCompany });
 EC.ecommerceRoutes(route, { requirePosting, requireLicence });
 // GSTR-2B reconciliation
 GS.gstRoutes(route);
 G2BP.purchase2bRoutes(route,{authorizeCompany,requirePosting});
 SC.smartRoutes(route,authorizeCompany);
 DASH.dashboardRoutes(route,requireLicence,authorizeCompany);
+AW.accountingRoutes(route,authorizeCompany);
+SET.settlementRoutes(route,authorizeCompany);
 GC.gstControlRoutes(route,authorizeCompany);
-route("GET","/api/companies/:cid/posting-audit",async ({D,env,p,url})=>{
-  await authorizeCompany(D,env,p.cid);
-  const [rows,integrity]=await Promise.all([AD.auditRows(D,p.cid,Number(url.searchParams.get("limit")||200)),AD.verifyAudit(D)]);
-  return json({rows,integrity});
+// Read-only local recovery diagnostics: never exposes licence keys, raw bank data or invoice images.
+route("GET","/api/diagnostics",async({env,D})=>{
+  let database="unknown";
+  try{
+    const r=env.DB?.sql?.prepare("PRAGMA quick_check")?.get();
+    database=Object.values(r||{})[0]==="ok"?"ok":"integrity warning";
+  }catch(e){database="error: "+String(e.message).slice(0,150);}
+  const [[pending],[uncertain],[failed]]=await D.many([
+    ["SELECT COUNT(*) n FROM jobs WHERE status IN ('pending','sent')"],
+    ["SELECT COUNT(*) n FROM bank_lines WHERE status='uncertain'"],
+    ["SELECT COUNT(*) n FROM jobs WHERE status='failed'"]
+  ]);
+  let back;
+  try{back=JSON.parse(env.getConfig?.("backup_last")||"null");}catch{}
+  const last=back?.checked?"Verified "+new Date(back.at*1000).toISOString():back?.error?"Backup error: "+back.error:"No recent backup status";
+  return json({version:env.VERSION||"dev",database,
+    tally_status:env.TALLY?.state?.status||"unknown",tally_detail:env.TALLY?.state?.detail||"",
+    jobs:{pending:pending?.n||0,uncertain:uncertain?.n||0,failed:failed?.n||0},
+    backup_status:last});
 });
 
 // ------------------------------------------------------------------ entry

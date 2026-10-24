@@ -270,7 +270,7 @@ async function viewStatement(sid) {
 
   app().innerHTML = topBar([[c.name, `#/c/${c.id}/bank`], [s.name]], c) + `<div class="bar">
       <span class="status">${esc(s.bank_ledger)} → <b>${esc(s.suspense_ledger)}</b> · ${s.period_from ? `${fmtDate(s.period_from)} – ${fmtDate(s.period_to)}` : ""} · in ${money(s.totals.in)} · out ${money(s.totals.out)}</span>
-      <div class="spacer"></div><a class="btn" href="#/c/${c.id}/bank">Back <kbd>Esc</kbd></a>
+      <div class="spacer"></div><a class="btn" href="#/br/${sid}">Reconcile against Tally</a> <a class="btn" href="#/c/${c.id}/bank">Back <kbd>Esc</kbd></a>
       <button class="btn danger" id="del" title="Delete this statement from the app (entries in Tally stay)">🗑</button>
       <button class="btn primary" id="post" ${count.ready && canPost ? "" : "disabled"} ${canPost ? "" : 'title="Posting to Tally is not allowed for your account"'}>Post ${BANK_UI.checked.size ? `${BANK_UI.checked.size} selected` : count.ready ? `all ${count.ready}` : ""} to Tally <kbd>P</kbd></button></div>
     <div class="page wide">

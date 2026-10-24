@@ -2,8 +2,9 @@
 // from net banking), every transaction is posted against one suspense ledger you choose — money in as a Receipt,
 // money out as a Payment — with the bank's narration and reference. You then move each entry from Suspense to the
 // right ledger in Tally, as usual. A transaction already posted from an earlier statement is never posted twice.
-import { newId, now } from "./db.js";
+import { newId, now, jload } from "./db.js";
 import * as T from "./tally.js";
+import {narrationKey} from "../public/bankparse.js";
 import { getCompany } from "./pipeline.js";
 
 export class BankError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
@@ -119,7 +120,7 @@ export async function setSuspense(D, sid, body) {
   if (!ledger) throw new BankError(400, "Choose the suspense ledger");
   if (ledger.toLowerCase() === st.bank_ledger.toLowerCase()) throw new BankError(400, "The suspense ledger must be different from the bank ledger");
   await D.batch([D.updateStmt("bank_statements", sid, { suspense_ledger: ledger }),
-    D.stmt("UPDATE bank_lines SET ledger=? WHERE statement_id=? AND status IN ('ready','ignored','duplicate','failed')", ledger, sid)]);
+    D.stmt("UPDATE bank_lines SET ledger=? WHERE statement_id=? AND status IN ('ready','ignored','duplicate','failed') AND (ledger=? OR ledger IS NULL)", ledger, sid, st.suspense_ledger)]);
   return { ok: true };
 }
 
@@ -138,25 +139,81 @@ export async function mark(D, sid, body) {
   return { ok: true, changed };
 }
 
+
+/** Assign one reviewed ledger to selected statement lines. No Tally write occurs here. */
+export async function assignLedger(D,sid,body){
+  const st=await statement(D,sid);
+  const ids=[...new Set((Array.isArray(body.ids)?body.ids:[]).map(String))].slice(0,300);
+  const ledger=String(body.ledger||"").trim();
+  if(!ids.length||!ledger)throw new BankError(400,"Choose statement transactions and an existing Tally ledger");
+  if(ledger.toUpperCase()===st.bank_ledger.toUpperCase())throw new BankError(400,"Bank and contra ledgers must not be used as a payee ledger");
+  const master=await D.first("SELECT name,primary_group,parent FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND UPPER(name)=UPPER(?)",st.company_id,ledger);
+  if(!master)throw new BankError(400,"Ledger was not found in the imported Tally masters");
+  if(/^(bank accounts|bank od a\/c|bank occ a\/c|cash-in-hand)$/i.test(master.primary_group||master.parent||""))
+    throw new BankError(400,"Bank-to-bank or cash Contra transactions require a separate reviewed workflow");
+  const marks=ids.map(()=>"?").join(",");
+  const lines=await D.all("SELECT id,narration,status,debit,credit FROM bank_lines WHERE statement_id=? AND id IN ("+marks+")",sid,...ids);
+  if(lines.length!==ids.length || lines.some(l=>!["ready","failed"].includes(l.status)))
+    throw new BankError(409,"Only ready or safely failed statement rows can be assigned. Refresh and check selections.");
+  const party=/^(sundry creditors|sundry debtors)$/i.test(String(master.primary_group||master.parent||"").trim());
+  if(party&&body.on_account!==true)throw new BankError(400,
+    "A party ledger requires explicit On Account confirmation; automatic bill allocation is not available.");
+  const statements=lines.map(l=>D.stmt("UPDATE bank_lines SET ledger=?,method='manual',confidence=100,bills='[]',note=? WHERE id=?",
+    master.name,party?"Explicit On Account approval":"Reviewed ledger mapping",l.id));
+  if(body.remember===true){
+    for(const l of lines){
+      const key=narrationKey(l.narration);
+      if(!key)continue;
+      statements.push(D.stmt("INSERT INTO bank_rules(company_id,bank_ledger,key,ledger,approved_at) VALUES(?,?,?,?,?) ON CONFLICT(company_id,bank_ledger,key) DO UPDATE SET ledger=excluded.ledger,approved_at=excluded.approved_at",
+        st.company_id,st.bank_ledger,key,master.name,now()));
+    }
+  }
+  await D.batch(statements);
+  return {ok:true,assigned:lines.length,ledger:master.name,remembered:body.remember===true};
+}
+
+export async function suggestedLedger(D,sid){
+  const st=await statement(D,sid);
+  const [rows,rules]=await D.many([
+    ["SELECT id,narration,ledger,status,method FROM bank_lines WHERE statement_id=? ORDER BY seq",sid],
+    ["SELECT key,ledger FROM bank_rules WHERE company_id=? AND bank_ledger=?",st.company_id,st.bank_ledger]
+  ]);
+  const byKey=new Map(rules.map(r=>[r.key,r.ledger]));
+  return {suggestions:rows.filter(r=>r.status==="ready"&&r.method!=="manual").map(r=>({
+    id:r.id,key:narrationKey(r.narration),suggested:byKey.get(narrationKey(r.narration))||null,
+    current:r.ledger
+  })).filter(x=>x.suggested),notice:"Suggestions are based on manually approved mappings only and never applied or posted automatically."};
+}
+
 /** Post the chosen rows (default: every Ready row) to Tally: Receipt for money in, Payment for money out. */
 export async function push(D, sid, body) {
   const st = await statement(D, sid);
   if (st.stage !== "review") throw new BankError(400, "The statement is not ready yet");
   const c = await getCompany(D, st.company_id);
-  const known = new Set((await D.all("SELECT name FROM masters WHERE company_id=? AND kind='ledger' AND name IN (?,?)", c.id, st.bank_ledger, st.suspense_ledger)).map((r) => r.name));
-  for (const l of [st.bank_ledger, st.suspense_ledger])
-    if (!known.has(l)) throw new BankError(400, `Ledger "${l}" is not in Tally — import masters, or pick another ledger`);
+  const masters=await D.all("SELECT name FROM masters WHERE company_id=? AND kind='ledger' AND pending=0",c.id);
+  const known = new Set(masters.map(r=>r.name));
+  if(!known.has(st.bank_ledger))throw new BankError(400,"The bank ledger is not available in imported Tally masters");
   let lines = await D.all("SELECT * FROM bank_lines WHERE statement_id=? AND status IN ('ready','failed') ORDER BY seq", sid);
   if (Array.isArray(body.ids) && body.ids.length) { const want = new Set(body.ids); lines = lines.filter((l) => want.has(l.id)); }
+  for(const l of lines){
+    const chosen=l.ledger||st.suspense_ledger;
+    if(!known.has(chosen))throw new BankError(400,"Ledger "+chosen+" is not available in Tally. Import masters again.");
+    if(l.check_ok===0)throw new BankError(400,"A selected bank entry has a balance mismatch. Review the source before posting.");
+  }
   const tc = c.tally_company || c.name;
   let t = now();
   const stmts = [];
   for (const l of lines) {
-    const xml = T.bankVoucher(tc, { vtype: l.credit ? "Receipt" : "Payment", date: l.date, bankLedger: st.bank_ledger, ledger: st.suspense_ledger,
-      amount: l.credit || l.debit, moneyIn: l.credit > 0, narration: narrationOf(l) });
+    const chosen=l.ledger||st.suspense_ledger;
+    const selected=await D.first("SELECT primary_group,parent FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND name=?",c.id,chosen);
+    const party=selected&&/^(sundry creditors|sundry debtors)$/i.test(String(selected.primary_group||selected.parent||"").trim());
+    if(party&&l.method!=="manual")throw new BankError(409,"Party ledger needs explicit allocation or On Account approval");
+    const xml = T.bankVoucher(tc, { vtype:l.credit?"Receipt":"Payment",date:l.date,
+      bankLedger:st.bank_ledger,ledger:chosen,amount:l.credit||l.debit,moneyIn:l.credit>0,
+      narration:narrationOf(l),bills:party?jload(l.bills,[]):[],onAccount:!!party });
     stmts.push(D.stmt("DELETE FROM jobs WHERE invoice_id=? AND kind='import_bank' AND status='pending'", l.id));
     stmts.push(D.insertStmt("jobs", { id: newId(), company_id: c.id, kind: "import_bank", invoice_id: l.id, payload: xml, status: "pending", created_at: (t += 0.001), updated_at: t }));
-    stmts.push(D.updateStmt("bank_lines", l.id, { status: "queued", sync_error: null, vtype: l.credit ? "Receipt" : "Payment", ledger: st.suspense_ledger }));
+    stmts.push(D.updateStmt("bank_lines", l.id, { status: "queued", sync_error: null, vtype: l.credit ? "Receipt" : "Payment", ledger: l.ledger || st.suspense_ledger }));
   }
   for (let i = 0; i < stmts.length; i += 90) await D.batch(stmts.slice(i, i + 90));
   return { queued: lines.length };
@@ -172,11 +229,21 @@ export async function remove(D, sid) {
   return { ok: true };
 }
 
-export function bankRoutes(route, { useCredit, requirePosting }) {
-  route("GET", "/api/companies/:cid/bank", async ({ D, p }) => json(await list(D, p.cid)));
-  route("POST", "/api/companies/:cid/bank", async ({ D, p, body }) => json(await create(D, p.cid, body)));
-  route("POST", "/api/bank/:sid/rows", async ({ D, p, body }) => json(await addRows(D, p.sid, body)));
-  route("POST", "/api/bank/:sid/start", async ({ env, D, p }) => {
+export function bankRoutes(route, { useCredit, requirePosting, authorizeCompany }) {
+  const secured=(method,path,handler)=>route(method,path,async ctx=>{
+    const cid=ctx.p.cid||(await DUMMY(ctx));
+    if(authorizeCompany)await authorizeCompany(ctx.D,ctx.env,cid);
+    return handler(ctx);
+  });
+  async function DUMMY(ctx){
+    const st=await ctx.D.first("SELECT company_id FROM bank_statements WHERE id=?",ctx.p.sid);
+    if(!st)throw new BankError(404,"Bank statement not found");
+    return st.company_id;
+  }
+  secured("GET", "/api/companies/:cid/bank", async ({ D, p }) => json(await list(D, p.cid)));
+  secured("POST", "/api/companies/:cid/bank", async ({ D, p, body }) => json(await create(D, p.cid, body)));
+  secured("POST", "/api/bank/:sid/rows", async ({ D, p, body }) => json(await addRows(D, p.sid, body)));
+  secured("POST", "/api/bank/:sid/start", async ({ env, D, p }) => {
     const st = await statement(D, p.sid);
     if (st.stage === "uploading") {
       const n = (await D.first("SELECT count(*) n FROM bank_lines WHERE statement_id=?", p.sid)).n;
@@ -186,9 +253,11 @@ export function bankRoutes(route, { useCredit, requirePosting }) {
     }
     return json({ ok: true });
   });
-  route("GET", "/api/bank/:sid", async ({ D, p }) => json(await view(D, p.sid)));
-  route("POST", "/api/bank/:sid/suspense", async ({ D, p, body }) => json(await setSuspense(D, p.sid, body)));
-  route("POST", "/api/bank/:sid/mark", async ({ D, p, body }) => json(await mark(D, p.sid, body)));
-  route("POST", "/api/bank/:sid/push", async ({ env, D, p, body }) => { await requirePosting(env); return json(await push(D, p.sid, body)); });
-  route("DELETE", "/api/bank/:sid", async ({ D, p }) => json(await remove(D, p.sid)));
+  secured("GET", "/api/bank/:sid", async ({ D, p }) => json(await view(D, p.sid)));
+  secured("GET", "/api/bank/:sid/suggestions", async ({ D, p }) => json(await suggestedLedger(D,p.sid)));
+  secured("POST", "/api/bank/:sid/assign", async ({ D, p, body }) => json(await assignLedger(D,p.sid,body)));
+  secured("POST", "/api/bank/:sid/suspense", async ({ D, p, body }) => json(await setSuspense(D, p.sid, body)));
+  secured("POST", "/api/bank/:sid/mark", async ({ D, p, body }) => json(await mark(D, p.sid, body)));
+  secured("POST", "/api/bank/:sid/push", async ({ env, D, p, body }) => { await requirePosting(env); return json(await push(D, p.sid, body)); });
+  secured("DELETE", "/api/bank/:sid", async ({ D, p }) => json(await remove(D, p.sid)));
 }

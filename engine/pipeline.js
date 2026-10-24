@@ -511,9 +511,12 @@ export async function jobResult(D, job, ok, response, error) {
     }
   } else if (job.kind === "import_bank") {
     const res = ok ? T.parseImportResponse(response) : { ok: false, messages: [error || "Tally error"] };
-    status = res.ok ? "done" : "failed";
-    note = res.messages.join("; ") || (res.ok ? "Created" : "Tally rejected it");
-    if (job.invoice_id) w.push(D.updateStmt("bank_lines", job.invoice_id, res.ok ? { status: "synced", synced_at: t, sync_error: null } : { status: "failed", sync_error: note }));
+    const created=ok && res.ok && res.created===1 && res.altered===0;
+    const uncertain=!created && /check in tally|outcome uncertain|too long|closed while posting|result unknown|timeout/i.test(error||"");
+    status=created?"done":"failed";
+    note=(res.messages||[]).join("; ") || (created?"Created":error||"Tally did not confirm one new bank voucher");
+    if(job.invoice_id)w.push(D.updateStmt("bank_lines",job.invoice_id,
+      created?{status:"synced",synced_at:t,sync_error:null}: {status:uncertain?"uncertain":"failed",sync_error:note}));
   } else if (job.kind === "import_master" || job.kind === "import_voucher") {
     const res = ok ? T.parseImportResponse(response) : { ok: false, messages: [error || "Tally error"] };
     confirmedCreated=job.kind==="import_voucher"&&res.ok&&res.created===1&&res.altered===0;

@@ -147,6 +147,7 @@ function topBar(crumbs = [], company = null) {
   const right = ME?.signed_in ? `<span class="pill" id="tallyPill" title="${esc(ME?.tally?.detail || "")}"><span class="dot ${st[0]}"></span>${esc(st[1])}</span>
       ${company ? `<button class="btn sm" id="importMasters" title="Read ledgers, groups, units and stock items from Tally (Alt+M)" aria-label="Import masters">⟳<span class="lbl"> Import masters</span> <kbd>Alt+M</kbd></button>` : ""}
       ${creditsChip()}
+      <a class="btn sm ghost" href="#/actions" title="Open the combined accounting work queue">Action Center</a>
       <a class="btn sm ghost" href="#/account" title="Your account and this PC's settings" aria-label="Account and settings">⚙</a>` : "";
   return `<header class="top">
     <a class="logo" href="#/"><span class="mark">VW</span>Vipul Workplace</a>
@@ -194,14 +195,16 @@ const routes = [
   [/^#\/?$/, viewCompanies],
   [/^#\/account$/, viewAccount],
   [/^#\/dashboard$/, () => viewDashboard()],
+  [/^#\/actions$/, viewGlobalActionCenter],
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "batches")],
-  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|audit)$/, viewCompany],
+  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|settlements|diagnostics)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
   [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
   [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
   [/^#\/s\/(\w+)$/, (sid) => viewStatement(sid)],
+  [/^#\/br\/(\w+)$/, (sid) => viewBankReconciliation(sid)],
   [/^#\/c\/(\w+)\/gstr2b-purchase$/, (cid) => viewGstr2bPurchaseChoose(cid)],
   [/^#\/c\/(\w+)\/gstr2b-purchase\/upload$/, (cid) => viewGstUpload(cid,"purchase")],
   [/^#\/p2b\/(\w+)$/, (id) => viewGstr2bPurchaseBatch(id)],
@@ -529,7 +532,7 @@ function companyModal() {
 async function viewCompany(cid, tab) {
   const c = await api(`/companies/${cid}`);
   CURRENT.company = c;
-  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["gstr2b", "GSTR-2B"], ["gstcontrol", "GST Reconciliation"], ["ecommerce", "E-Commerce → Tally"], ["smartmaps", "Smart Matching"], ["masters", "Masters"], ["jobs", "Tally log"], ["audit", "Posting Audit"], ["settings", "Settings"]];
+  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["actions", "Action Center"], ["intercompany", "Inter-Company"], ["settlements", "Settlements"], ["diagnostics", "Diagnostics"], ["gstr2b", "GSTR-2B"], ["gstcontrol", "GST Reconciliation"], ["ecommerce", "E-Commerce → Tally"], ["smartmaps", "Smart Matching"], ["masters", "Masters"], ["jobs", "Tally log"], ["settings", "Settings"]];
   const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || ["upload", "⇪ Upload invoices"];
   app().innerHTML = topBar([[c.name, `#/c/${cid}`]], c) + `<div class="bar">
       <div class="status">${c.masters.ledger} ledgers · ${c.masters.stock_item} stock items · masters ${c.masters_imported_at ? "imported " + ago(c.masters_imported_at) : c.pending_jobs ? "being read from Tally…" : "not imported yet"}</div>
@@ -539,6 +542,7 @@ async function viewCompany(cid, tab) {
   wireTop(c);
   keymap.u = () => location.hash = `#/c/${cid}/${upload[0]}`;
   const el = $("#tab");
+  if (["actions","intercompany","settlements","diagnostics"].includes(tab)) return companyAccounting(c,el,tab);
   if (tab === "batches") return companyBatches(c, el);
   if (tab === "masters") return companyMasters(c, el);
   if (tab === "jobs") return companyJobs(c, el);
@@ -548,7 +552,6 @@ async function viewCompany(cid, tab) {
   if (tab === "ecommerce") return companyEcommerce(c, el);
   if (tab === "gstcontrol") return companyGstControl(c, el);
   if (tab === "smartmaps") return companySmartMappings(c, el);
-  if (tab === "audit") return companyAudit(c, el);
 }
 
 function tallyHelp(c) {

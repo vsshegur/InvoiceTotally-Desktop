@@ -187,6 +187,14 @@ async function checkUpdate() {
 
 export function start() {
   return new Promise((resolve, reject) => {
+    // Refuse to launch a broken database; do not overwrite it or create jobs.
+    try{
+      const check=DB.sql.prepare("PRAGMA quick_check").get();
+      if(Object.values(check||{})[0]!=="ok")throw new Error("SQLite integrity check failed; restore a verified backup instead of posting");
+      for(const f of ["index.html","app.js","bank.js","accounting-workplace.js"]){
+        if(!fs.existsSync(path.join(pub,f)))throw new Error("Installed application file is missing: "+f);
+      }
+    }catch(e){log("startup integrity failed",e.message);reject(e);return;}
     server.once("error", (e) => {
       if (e.code === "EADDRINUSE") { log("already running on port", PORT); process.exitCode = 3; }
       reject(e);

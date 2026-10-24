@@ -14,9 +14,25 @@
   <script src="/control-center.js"></script>
   <script src="/gstr2b-purchase.js"></script>
   <script src="/gst-workplace.js"></script>
+  <script src="/accounting-workplace.js"></script>
   <script src="/app.js"></script>
   <script src="/ecommerce.js"></script>
   <script src="/bank.js"></script>
   <script src="/gst.js"></script>
+  <script>
+    // An early browser-script error must never leave the user staring at "Loading…" forever.
+    window.addEventListener("load", () => {
+      setTimeout(() => {
+        const root = document.getElementById("app");
+        if(root && root.querySelector(".boot")){
+          root.innerHTML = '<div class="page" style="max-width:680px;margin:48px auto">'+
+            '<h2>Vipul Workplace could not finish loading</h2>'+
+            '<p>The interface did not initialize. The app has not submitted any new Tally entry from this page.</p>'+
+            '<p>Close the window and reopen Vipul Workplace from its desktop icon. If it repeats, inspect the Startup Diagnostics or logs in LocalAppData/InvoiceTotally/logs.</p>'+
+            '<button class="btn" onclick="location.reload()">Retry loading</button></div>';
+        }
+      },12000);
+    });
+  </script>
 </body>
 </html>

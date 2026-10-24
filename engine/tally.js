@@ -188,13 +188,6 @@ export function lineNarration(lines) {
 }
 
 // ------------------------------------------------------------ bank statements
-/** Pending bills of all parties: Tally's own Bills Receivable / Bills Payable reports. */
-export function billsRequest(side, company) {
-  return "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>" +
-    `<ID>${side === "payable" ? "Bills Payable" : "Bills Receivable"}</ID></HEADER><BODY><DESC><STATICVARIABLES>` +
-    `<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>${companyVar(company)}</STATICVARIABLES></DESC></BODY></ENVELOPE>`;
-}
-
 /** Vouchers already entered in the bank ledger between two dates (to spot statement lines already in Tally). */
 export function bankEntriesRequest(company, ledger, from, to) {
   return "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE>" +
@@ -203,7 +196,7 @@ export function bankEntriesRequest(company, ledger, from, to) {
     `<SVFROMDATE TYPE="Date">${tallyDate(from)}</SVFROMDATE><SVTODATE TYPE="Date">${tallyDate(to)}</SVTODATE></STATICVARIABLES>` +
     `<TDL><TDLMESSAGE><COLLECTION NAME="ITBankEntries" ISMODIFY="No"><TYPE>Vouchers : Ledger</TYPE><CHILDOF>${esc(ledger)}</CHILDOF>` +
     "<NATIVEMETHOD>Date</NATIVEMETHOD><NATIVEMETHOD>VoucherNumber</NATIVEMETHOD><NATIVEMETHOD>PartyLedgerName</NATIVEMETHOD>" +
-    "<NATIVEMETHOD>VoucherTypeName</NATIVEMETHOD><NATIVEMETHOD>Narration</NATIVEMETHOD><NATIVEMETHOD>Amount</NATIVEMETHOD>" +
+    "<NATIVEMETHOD>VoucherTypeName</NATIVEMETHOD><NATIVEMETHOD>Narration</NATIVEMETHOD><NATIVEMETHOD>Reference</NATIVEMETHOD><NATIVEMETHOD>Amount</NATIVEMETHOD>" +
     "<FETCH>AllLedgerEntries.LedgerName,AllLedgerEntries.Amount</FETCH><NATIVEMETHOD>MasterID</NATIVEMETHOD>" +
     "</COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>";
 }
@@ -236,7 +229,7 @@ export function purchaseGstRequest(company, from, to) {
  * Debit = negative AMOUNT with ISDEEMEDPOSITIVE=Yes. Bills are settled with
  * "Agst Ref"; any part not set against a bill goes "On Account".
  */
-export function bankVoucher(company, { vtype, date, bankLedger, ledger, amount, moneyIn, narration, bills = [] }) {
+export function bankVoucher(company, { vtype, date, bankLedger, ledger, amount, moneyIn, narration, bills = [], onAccount = false }) {
   if (!["Receipt", "Payment", "Contra"].includes(vtype)) throw new Error(`Unsupported voucher type ${vtype}`);
   const d = tallyDate(date);
   const a = Math.abs(+amount);
@@ -244,7 +237,7 @@ export function bankVoucher(company, { vtype, date, bankLedger, ledger, amount, 
   const deemed = (x) => (x < 0 ? "Yes" : "No");
   const sign = Math.sign(otherAmt);
   let alloc = "";
-  if (bills.length && vtype !== "Contra") {
+  if ((bills.length || onAccount) && vtype !== "Contra") {
     let rest = a;
     for (const b of bills) {
       const x = Math.min(Math.abs(+b.amount), rest);
@@ -255,7 +248,7 @@ export function bankVoucher(company, { vtype, date, bankLedger, ledger, amount, 
     if (rest >= 0.005) alloc += `<BILLALLOCATIONS.LIST><BILLTYPE>On Account</BILLTYPE><AMOUNT>${amt(sign * rest)}</AMOUNT></BILLALLOCATIONS.LIST>`;
   }
   const other = `<ALLLEDGERENTRIES.LIST><LEDGERNAME>${esc(ledger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(otherAmt)}</ISDEEMEDPOSITIVE>` +
-    `${bills.length && vtype !== "Contra" ? "<ISPARTYLEDGER>Yes</ISPARTYLEDGER>" : ""}<AMOUNT>${amt(otherAmt)}</AMOUNT>${alloc}</ALLLEDGERENTRIES.LIST>`;
+    `${(bills.length || onAccount) && vtype !== "Contra" ? "<ISPARTYLEDGER>Yes</ISPARTYLEDGER>" : ""}<AMOUNT>${amt(otherAmt)}</AMOUNT>${alloc}</ALLLEDGERENTRIES.LIST>`;
   // TallyPrime's Banking feature requires a BANKALLOCATIONS.LIST on the bank-side ledger entry of
   // Receipt/Payment/Contra vouchers whenever the ledger sits under the Bank Accounts/Bank OD/OCC group
   // and banking features are enabled for it. Without it, Tally silently rejects the voucher as an
