@@ -112,7 +112,7 @@ export function matchInterCompany(a,b){
   for(const x of a){
     const eligible=b.map((y,index)=>({...y,index})).filter(y=>
       !used.has(y.index)&&Math.abs(money(x.amount)-money(y.amount))<=0.01 &&
-      Math.abs(day(x.date)-day(y.date))<=7 &&
+      day(x.date)!==null && day(y.date)!==null && Math.abs(day(x.date)-day(y.date))<=7 &&
       ((x.reference&&y.reference&&same(x.reference,y.reference)) ||
        (x.number&&y.reference&&same(x.number,y.reference)) ||
        (x.reference&&y.number&&same(x.reference,y.number))));
