@@ -10,6 +10,11 @@ const norm=x=>R.normRef(x);
 const r2=x=>Math.round(Number(x||0)*100)/100;
 const date=()=>new Date().toISOString().slice(0,10);
 const validPeriod=x=>/^\d{4}-\d{2}-\d{2}$/.test(String(x||""));
+const addDays=(d,delta)=>{
+  const value=Date.parse(String(d||"")+"T00:00:00Z");
+  if(!Number.isFinite(value))bad("Invalid bank date");
+  return new Date(value+delta*86400000).toISOString().slice(0,10);
+};
 async function company(D,cid){const c=await D.first("SELECT id,name,tally_company,gstin,owner_email FROM companies WHERE id=?",cid);if(!c)bad("Company not found",404);return c;}
 const tallyName=c=>c.tally_company||c.name;
 function ensureTally(env){if(!env.TALLY?.readOnly)bad("Tally read-only connection is unavailable",503);return env.TALLY.readOnly;}
@@ -21,7 +26,7 @@ export async function bankReview(D,env,sid){
   const lines=await D.all("SELECT id,date,credit,debit,narration,ref,status,ledger,method FROM bank_lines WHERE statement_id=? ORDER BY seq",sid);
   if(!lines.length)bad("No statement rows available");
   if(!validPeriod(st.period_from)||!validPeriod(st.period_to))bad("Statement dates are invalid");
-  const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,st.period_from,st.period_to));
+  const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,addDays(st.period_from,-3),addDays(st.period_to,3)));
   const vouchers=R.bankVouchers(xml,st.bank_ledger);
   return {statement:{id:sid,name:st.name,company_id:c.id,bank_ledger:st.bank_ledger,
     period_from:st.period_from,period_to:st.period_to},lines,
@@ -32,15 +37,17 @@ export async function beforeBankPosting(D,job,read){
   const x=await D.first("SELECT l.*,s.bank_ledger,s.company_id,s.id statement_id FROM bank_lines l JOIN bank_statements s ON s.id=l.statement_id WHERE l.id=?",job.invoice_id);
   if(!x||x.status!=="queued")return {blocked:true,reason:"Bank transaction is no longer queued; do not send"};
   const c=await company(D,x.company_id);
-  const xml=await read(T.bankEntriesRequest(tallyName(c),x.bank_ledger,x.date,x.date));
+  const xml=await read(T.bankEntriesRequest(tallyName(c),x.bank_ledger,addDays(x.date,-7),addDays(x.date,7)));
   const rows=bankVouchers(xml,x.bank_ledger);
   const ref=norm(x.ref),signed=r2((x.credit||0)-(x.debit||0));
   const same=rows.filter(y=>{
-    if(y.date!==x.date||Math.abs(y.signed-signed)>0.01)return false;
+    if(Math.abs(y.signed-signed)>0.01)return false;
+    const dayGap=Math.abs((Date.parse(y.date+"T00:00:00Z")-Date.parse(x.date+"T00:00:00Z"))/86400000);
+    if(!Number.isFinite(dayGap)||dayGap>7)return false;
     const source=norm(y.reference+" "+y.narration);
     // Even a different or missing reference can be a manually entered voucher.
     // Hold same-date/same-amount records for review rather than risking duplicate Tally books.
-    return true;
+    return dayGap===0 || (!!ref && ref.length>=6 && source.includes(ref));
   });
   if(same.length)return {blocked:true,reason:"Possible existing Tally bank entry on this date for the same amount. Compare before posting: "+same.map(y=>y.number||y.id).slice(0,5).join(", ")};
   return {blocked:false};
@@ -62,9 +69,10 @@ export async function recheckBank(D,env,sid){
   const statements=[];
   let still=0;
   for(const x of rows){
-    const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,x.date,x.date));
+    const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,addDays(x.date,-7),addDays(x.date,7)));
     const candidates=bankVouchers(xml,st.bank_ledger).filter(y=>
-      y.date===x.date&&Math.abs(y.signed-r2((x.credit||0)-(x.debit||0)))<=0.01);
+      Math.abs(y.signed-r2((x.credit||0)-(x.debit||0)))<=0.01&&
+      Math.abs((Date.parse(y.date+"T00:00:00Z")-Date.parse(x.date+"T00:00:00Z"))/86400000)<=7);
     // Never infer that a missing match proves the previous import did not reach Tally.
     // An explicit operator review of the Tally company is still required.
     const reason=candidates.length?
@@ -92,8 +100,9 @@ export async function resolveUncertainBank(D,env,sid,body){
   // All checks must pass before modifying any row.
   for(const x of rows){
     const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,x.date,x.date));
-    const prior=bankVouchers(xml,st.bank_ledger).filter(y=>y.date===x.date&&
-      Math.abs(y.signed-r2((x.credit||0)-(x.debit||0)))<=0.01);
+    const prior=bankVouchers(xml,st.bank_ledger).filter(y=>
+      Math.abs(y.signed-r2((x.credit||0)-(x.debit||0)))<=0.01&&
+      Math.abs((Date.parse(y.date+"T00:00:00Z")-Date.parse(x.date+"T00:00:00Z"))/86400000)<=7);
     if(prior.length)bad("Matching Tally vouchers were found for "+x.date+" and this amount. Do not reset to Ready; inspect vouchers "+prior.map(x=>x.number).join(", "),409);
   }
   const ops=rows.map(x=>D.stmt("UPDATE bank_lines SET status='ready',sync_error=NULL,note='Manually checked live Tally absence and explicitly released for review' WHERE id=?",x.id));
