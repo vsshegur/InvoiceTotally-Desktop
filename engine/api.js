@@ -13,6 +13,7 @@ import * as SC from "./master-assist.js";
 import * as GC from "./gst-control.js";
 import * as DASH from "./dashboard.js";
 import * as AD from "./audit.js";
+import * as AW from "./accounting-workplace.js";
 import {invoiceDateReview,fiscalYearStart,indiaDate,normalizeInvoiceDate} from "./invoice-period.js";
 
 class HttpError extends Error { constructor(status, msg, code) { super(msg); this.status = status; this.code = code; } }
@@ -722,6 +723,7 @@ GS.gstRoutes(route);
 G2BP.purchase2bRoutes(route,{authorizeCompany,requirePosting});
 SC.smartRoutes(route,authorizeCompany);
 DASH.dashboardRoutes(route,requireLicence,authorizeCompany);
+AW.accountingRoutes(route,authorizeCompany);
 GC.gstControlRoutes(route,authorizeCompany);
 route("GET","/api/companies/:cid/posting-audit",async ({D,env,p,url})=>{
   await authorizeCompany(D,env,p.cid);
