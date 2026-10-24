@@ -38,9 +38,9 @@ export async function beforeBankPosting(D,job,read){
   const same=rows.filter(y=>{
     if(y.date!==x.date||Math.abs(y.signed-signed)>0.01)return false;
     const source=norm(y.reference+" "+y.narration);
-    if(ref.length>=6 && source.includes(ref))return true;
-    // Without independent reference evidence a same-date/same-amount match is ambiguous.
-    return !ref || source.length<6;
+    // Even a different or missing reference can be a manually entered voucher.
+    // Hold same-date/same-amount records for review rather than risking duplicate Tally books.
+    return true;
   });
   if(same.length)return {blocked:true,reason:"Possible existing Tally bank entry on this date for the same amount. Compare before posting: "+same.map(y=>y.number||y.id).slice(0,5).join(", ")};
   return {blocked:false};
