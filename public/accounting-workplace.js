@@ -7,7 +7,7 @@ async function companyAccounting(c,el,tab){
   if(tab==="settlements")return companySettlements(c,el);
   if(tab==="actions"){
     const data=await api("/companies/"+c.id+"/action-center");
-    const labels={invoices:"Invoice reviews",bank:"Bank issues",marketplace:"Marketplace",purchases:"GSTR-2B purchases",gstr2b:"GST differences",jobs:"Tally errors",settlements:"Settlement reviews",overdue:"Overdue bills"};
+    const labels={invoices:"Invoice reviews",bank:"Bank issues",marketplace:"Marketplace",purchases:"GSTR-2B purchases",gstr2b:"GST differences",jobs:"Tally errors",settlements:"Settlement reviews"};
     el.innerHTML='<h2>Accounting Action Center</h2>'+AW_NOTICE+
       '<div class="card"><div class="stats" style="display:flex;gap:18px;flex-wrap:wrap">'+
       Object.entries(data.counts).map(([k,v])=>'<div><b>'+v+'</b><div class="muted small">'+esc(labels[k]||k)+'</div></div>').join("")+
@@ -17,50 +17,6 @@ async function companyAccounting(c,el,tab){
         '<td><a class="btn sm" href="'+esc(r.link)+'">Review</a></td></tr>').join("")+'</tbody></table>':
       '<div class="card empty">No issues in the local accounting work queue.</div>')+
       '<p class="muted small">'+esc(data.note)+'</p>';
-    return;
-  }
-  if(tab==="outstandings"){
-    const render=async()=>{
-      const d=await api("/companies/"+c.id+"/outstandings");
-      el.innerHTML='<div class="bar"><h2>Outstanding Receipts & Payments</h2><div class="spacer"></div>'+
-        '<button class="btn primary" id="refreshOutstanding">Read fresh Tally bills</button></div>'+
-        '<div class="card" style="margin-bottom:16px"><b>Receivable '+AW_MONEY(d.totals.receivable)+
-        '</b> · <b>Payable '+AW_MONEY(d.totals.payable)+'</b>'+
-        '<div class="muted small">Overdue: receivable '+AW_MONEY(d.totals.overdue_receivable)+
-        ' / payable '+AW_MONEY(d.totals.overdue_payable)+
-        ' · Last reading: '+esc(d.fetched_at?ago(d.fetched_at):"Never")+'</div></div>'+
-        (d.rows.length?'<table class="grid"><thead><tr><th>Type</th><th>Party</th><th>Bill</th><th>Due</th><th>Age</th><th class="num">Amount</th></tr></thead><tbody>'+
-         d.rows.map(b=>'<tr><td>'+esc(b.side)+'</td><td>'+esc(b.party)+'</td><td>'+esc(b.name)+'</td><td>'+fmtDate(b.due)+
-           '</td><td>'+ (b.days_overdue?b.days_overdue+" overdue":"—")+'</td><td class="num">'+AW_MONEY(b.amount)+'</td></tr>').join("")+
-         '</tbody></table>':'<div class="card empty">No bill-wise snapshot. Choose “Read fresh Tally bills”.</div>')+
-        '<p class="muted small">'+esc(d.note)+'</p>';
-      $("#refreshOutstanding",el).onclick=async()=>{
-        await act(()=>api("/companies/"+c.id+"/outstandings/refresh",{body:{}}),"Tally bills refreshed");
-        await render();
-      };
-    };return render();
-  }
-  if(tab==="gstlinks"){
-    const data=await api("/companies/"+c.id+"/gst-links");
-    el.innerHTML='<h2>GSTR-2B ↔ Uploaded Invoices</h2>'+AW_NOTICE+
-     '<p class="muted">Only documents with matching supplier GSTIN, invoice number and amount can be confirmed as source links. Verify the original invoice date, source and Tally posting separately.</p>'+
-     (data.rows.length?'<table class="grid"><thead><tr><th>Portal period</th><th>Supplier GSTIN</th><th>Invoice</th><th class="num">Total</th><th>Matched upload</th><th>Action</th></tr></thead><tbody>'+
-     data.rows.map(d=>'<tr><td>'+esc(d.period)+'</td><td class="mono small">'+esc(d.ctin)+'</td><td>'+esc(d.num)+'</td><td class="num">'+AW_MONEY(d.val)+'</td>'+
-      '<td>'+esc(d.linked?"Confirmed local link":d.level==="unique"?"One candidate":d.level==="ambiguous"?"Multiple candidates":"Not found")+'</td>'+
-      '<td>'+(d.linked?'<span class="good">Linked</span>':
-        d.candidates.length===1?'<button class="btn sm" data-link="'+esc(d.id)+'" data-iid="'+esc(d.candidates[0].id)+'">Review & link</button>':
-        d.candidates.length>1?'<select class="in sm" data-candidates="'+esc(d.id)+'"><option value="">Select invoice</option>'+
-         d.candidates.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.number)+' · '+esc(x.status)+' · '+esc(x.date)+'</option>').join("")+
-         '</select> <button class="btn sm" data-link="'+esc(d.id)+'">Review & link</button>':"—")+
-       '</td></tr>').join("")+'</tbody></table>':'<div class="card empty">No uploaded GSTR-2B documents.</div>');
-    $$("[data-link]",el).forEach(bt=>bt.onclick=async()=>{
-      const doc=bt.dataset.link;
-      const iid=bt.dataset.iid||$('select[data-candidates="'+doc+'"]',el)?.value;
-      if(!iid){toast("Select a source invoice",true);return;}
-      if(!confirm("I have checked the original source invoice and its GSTIN, number and total. Link locally? This does not post anything to Tally."))return;
-      await act(()=>api("/companies/"+c.id+"/gst-links/confirm",{body:{doc_id:doc,invoice_id:iid}}),"Source linked");
-      companyAccounting(c,el,"gstlinks");
-    });
     return;
   }
   if(tab==="intercompany"){
@@ -127,9 +83,8 @@ async function viewBankReconciliation(sid){
   const c=await api("/companies/"+d.statement.company_id);
   CURRENT.company=c;
   const byId=new Map(d.matches.map(m=>[m.id,m]));
-  const [masters,billSnapshot,suggestions]=await Promise.all([
+  const [masters,suggestions]=await Promise.all([
     api("/companies/"+c.id+"/masters?kind=ledger"),
-    api("/companies/"+c.id+"/outstandings"),
     api("/bank/"+sid+"/suggestions")
   ]);
   const suggestedById=new Map(suggestions.suggestions.map(x=>[x.id,x.suggested]));
@@ -147,7 +102,7 @@ async function viewBankReconciliation(sid){
     '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">'+
     '<select class="in" id="assignLedger" style="min-width:220px;max-width:420px">'+options+'</select>'+
     '<input class="in" id="ledgerSearch" placeholder="Find a Tally ledger" style="max-width:240px">'+
-    '<input class="in" id="assignBill" list="billOptions" placeholder="Exact outstanding bill (optional)" style="min-width:180px"><datalist id="billOptions"></datalist>'+
+
     '<label><input type="checkbox" id="onAccount"> Explicitly On Account</label>'+
     '<label><input type="checkbox" id="rememberRule"> Remember narration rule</label>'+
     '<button class="btn primary" id="assign">Assign selected transaction</button></div></div>'+
@@ -175,12 +130,6 @@ async function viewBankReconciliation(sid){
     }catch(e){toast(e.message,true);}
   });
 
-  const fillBills=()=>{
-    const ledger=$("#assignLedger").value.toUpperCase();
-    $("#billOptions").innerHTML=billSnapshot.rows.filter(x=>String(x.party||"").toUpperCase()===ledger)
-       .slice(0,100).map(x=>'<option value="'+esc(x.name)+'"></option>').join("");
-  };
-  $("#assignLedger").onchange=fillBills;
   document.querySelectorAll("[data-use]").forEach(bt=>bt.onclick=()=>{
     const row=bt.closest("tr");
     const radio=row?.querySelector('input[name="bankPick"]');
@@ -188,7 +137,7 @@ async function viewBankReconciliation(sid){
     const name=suggestedById.get(bt.dataset.use);
     const sel=$("#assignLedger");
     if(![...sel.options].some(o=>o.value===name))sel.add(new Option(name,name));
-    sel.value=name;fillBills();
+    sel.value=name;
   });
 
   $("#ledgerSearch").oninput=debounce(async()=>{
@@ -203,7 +152,7 @@ async function viewBankReconciliation(sid){
     if(!selected||!ledger){toast("Select one ready bank entry and a Tally ledger",true);return;}
     if(!confirm("Confirm you checked this transaction against the bank statement and selected the correct existing Tally ledger?"))return;
     await act(()=>api("/bank/"+sid+"/assign",{body:{ids:[selected.value],ledger,
-      bill_ref:$("#assignBill").value.trim(),on_account:$("#onAccount").checked,
+      on_account:$("#onAccount").checked,
       remember:$("#rememberRule").checked}}),"Ledger assigned");
     route();
   };
