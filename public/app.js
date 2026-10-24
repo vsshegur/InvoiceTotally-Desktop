@@ -199,7 +199,7 @@ const routes = [
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "batches")],
-  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|audit|actions|outstandings|gstlinks|intercompany|settlements|diagnostics)$/, viewCompany],
+  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|settlements|diagnostics)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
   [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
   [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
@@ -532,7 +532,7 @@ function companyModal() {
 async function viewCompany(cid, tab) {
   const c = await api(`/companies/${cid}`);
   CURRENT.company = c;
-  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["actions", "Action Center"], ["outstandings", "Outstandings"], ["gstlinks", "GST Invoice Links"], ["intercompany", "Inter-Company"], ["settlements", "Settlements"], ["diagnostics", "Diagnostics"], ["gstr2b", "GSTR-2B"], ["gstcontrol", "GST Reconciliation"], ["ecommerce", "E-Commerce → Tally"], ["smartmaps", "Smart Matching"], ["masters", "Masters"], ["jobs", "Tally log"], ["audit", "Posting Audit"], ["settings", "Settings"]];
+  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["actions", "Action Center"], ["intercompany", "Inter-Company"], ["settlements", "Settlements"], ["diagnostics", "Diagnostics"], ["gstr2b", "GSTR-2B"], ["gstcontrol", "GST Reconciliation"], ["ecommerce", "E-Commerce → Tally"], ["smartmaps", "Smart Matching"], ["masters", "Masters"], ["jobs", "Tally log"], ["settings", "Settings"]];
   const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || ["upload", "⇪ Upload invoices"];
   app().innerHTML = topBar([[c.name, `#/c/${cid}`]], c) + `<div class="bar">
       <div class="status">${c.masters.ledger} ledgers · ${c.masters.stock_item} stock items · masters ${c.masters_imported_at ? "imported " + ago(c.masters_imported_at) : c.pending_jobs ? "being read from Tally…" : "not imported yet"}</div>
@@ -542,7 +542,7 @@ async function viewCompany(cid, tab) {
   wireTop(c);
   keymap.u = () => location.hash = `#/c/${cid}/${upload[0]}`;
   const el = $("#tab");
-  if (["actions","outstandings","gstlinks","intercompany","settlements","diagnostics"].includes(tab)) return companyAccounting(c,el,tab);
+  if (["actions","intercompany","settlements","diagnostics"].includes(tab)) return companyAccounting(c,el,tab);
   if (tab === "batches") return companyBatches(c, el);
   if (tab === "masters") return companyMasters(c, el);
   if (tab === "jobs") return companyJobs(c, el);
@@ -552,7 +552,6 @@ async function viewCompany(cid, tab) {
   if (tab === "ecommerce") return companyEcommerce(c, el);
   if (tab === "gstcontrol") return companyGstControl(c, el);
   if (tab === "smartmaps") return companySmartMappings(c, el);
-  if (tab === "audit") return companyAudit(c, el);
 }
 
 function tallyHelp(c) {
