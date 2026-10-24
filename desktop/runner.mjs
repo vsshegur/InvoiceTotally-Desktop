@@ -4,7 +4,6 @@ import * as P from "../engine/pipeline.js";
 import * as GS from "../engine/gstr2b.js";
 import * as EC from "../engine/ecommerce.js";
 import * as G2BP from "../engine/gstr2b-purchase.js";
-import * as AD from "../engine/audit.js";
 import * as AW from "../engine/accounting-workplace.js";
 import * as T from "../engine/tally.js";
 import * as DUP from "../engine/duplicate-check.js";
@@ -106,11 +105,9 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
       catch(e) {
         if(e.down||e.timeout){state.at=0;await requeue(job,"Waiting for live Tally bank verification");return;}
         const msg="Bank duplicate verification failed; nothing sent: "+e.message;
-        await AD.audit(D,job,"not_sent",msg,tc).catch(err=>log("Audit error: "+err.message));
         await P.jobResult(D,job,false,"",msg);return;
       }
       if(check.blocked){
-        await AD.audit(D,job,"duplicate_blocked",check.reason,tc);
         await AW.blockBankJob(D,job,check.reason);
         return;
       }
@@ -124,7 +121,6 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
         return; // fail closed: never import without checking Tally
       }
       if (check.duplicate) {
-        await AD.audit(D,job,"duplicate_blocked",check.message,tc);
         await EC.jobResult(D,job,false,"",check.message,true); return;
       }
     }
@@ -134,12 +130,10 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
       catch(e){
         if(e.down||e.timeout){state.at=0;await requeue(job,"Waiting for Tally purchase duplicate verification");return;}
         const message="Live Tally purchase check failed: "+e.message;
-        await AD.audit(D,job,"not_sent",message,tc).catch(err=>log("Audit failure: "+err.message));
         await G2BP.jobResult(D,job,false,"",message);
         return;
       }
       if(check.duplicate){
-        await AD.audit(D,job,"duplicate_blocked",check.message,tc);
         await G2BP.jobResult(D,job,false,"",check.message,true);
         return;
       }
@@ -152,24 +146,13 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
       catch(e){
         if(e.down||e.timeout){state.at=0;await requeue(job,"Waiting for Tally existing-invoice verification");return;}
         const message="Tally existing-invoice verification failed: "+e.message;
-        await AD.audit(D,job,"not_sent",message,tc);
         await P.jobResult(D,job,false,"",message);
         return;
       }
       if(check.duplicate){
-        await AD.audit(D,job,"duplicate_blocked",check.message,tc);
         await P.jobResult(D,job,false,"",check.message);
         return;
       }
-    }
-    try {
-      await AD.audit(D,job,"attempt", "Create-only Tally posting requested",tc);
-    } catch (e) {
-      const message="Posting blocked: the local audit log is unavailable ("+e.message+")";
-      if(job.kind==="import_ecommerce") await EC.jobResult(D,job,false,"",message);
-      else if(job.kind==="import_gstr2b_purchase")await G2BP.jobResult(D,job,false,"",message);
-      else await P.jobResult(D,job,false,"",message);
-      return;
     }
     let res;
     try { res = await TL.post(job.payload, tc); }
@@ -178,33 +161,26 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
         // A network reset after transmission might still have saved the voucher.
         // Fail closed rather than automatically resending an uncertain payment.
         const msg="Check in Tally before retrying — posting outcome uncertain: "+e.message;
-        await AD.audit(D,job,"uncertain",msg,tc).catch(err=>log("Audit error: "+err.message));
         await P.jobResult(D,job,false,"",msg);
         return;
       }
       if (job.kind === "import_gstr2b_purchase") {
         const message="Check Tally before retrying — posting result unknown: "+e.message;
-        await AD.audit(D,job,"uncertain",message,tc).catch(err=>log("Audit failure: "+err.message));
         await G2BP.jobResult(D,job,false,"",message,false,true);
         return;
       }
       if (job.kind === "import_ecommerce") {
         // The request might have reached Tally before a timeout or connection reset.
         // Stop; never automatically retry a write with an unknown outcome.
-        await AD.audit(D,job,"uncertain","Check Tally before retrying: "+e.message,tc).catch(err=>log("Audit failure: "+err.message));
         await EC.jobResult(D, job, false, "", "Check in Tally before retrying — " + e.message);
         return;
       }
       if (e.down) { state.at = 0; await requeue(job, "Waiting for Tally — it will be posted when TallyPrime is open"); return; } // nothing reached Tally
       const msg = e.timeout ? "Tally took too long to answer. Check in Tally whether it was saved before pushing again." : `Not sent: ${e.message}`;
-      await AD.audit(D,job,e.timeout?"uncertain":"not_sent",msg,tc).catch(err=>log("Audit failure: "+err.message));
       await P.jobResult(D, job, false, "", msg);
       return;
     }
     const result=T.parseImportResponse(res.reply);
-    await AD.audit(D,job,result.ok && result.created===1 && !result.altered?"created":"rejected",
-      result.messages.join("; ") || ("Created "+result.created+", altered "+result.altered+", errors "+result.errors+", exceptions "+result.exceptions),tc)
-      .catch(err=>log("Audit failure after Tally response: "+err.message));
     if (job.kind === "import_ecommerce") await EC.jobResult(D, job, true, res.reply);
     else if(job.kind==="import_gstr2b_purchase")await G2BP.jobResult(D,job,true,res.reply);
     else await P.jobResult(D, job, true, res.reply);
@@ -217,7 +193,6 @@ export function makeRunner(D, { canPost = async () => true, log = () => {} } = {
     await D.run("UPDATE jobs SET status='pending' WHERE status='sent' AND kind LIKE 'export_%'");
     for (const j of await D.all("SELECT * FROM jobs WHERE status='sent'")) {
       const msg = "The app closed while posting this. Check in Tally whether it was saved before pushing again.";
-      await AD.audit(D,j,"uncertain",msg).catch(err=>log("Audit recovery failure: "+err.message));
       if (j.kind === "import_ecommerce") await EC.jobResult(D, j, false, "", msg);
       else if(j.kind==="import_gstr2b_purchase")await G2BP.jobResult(D,j,false,"",msg,false,true);
       else await P.jobResult(D, j, false, "", msg);
