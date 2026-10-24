@@ -3,12 +3,13 @@ import * as T from "./tally.js";
 import * as R from "./accounting-reconcile.js";
 import {newId,now,jload} from "./db.js";
 import {bankVouchers} from "./accounting-reconcile.js";
+import {indiaDate} from "./invoice-period.js";
 
 const json=x=>new Response(JSON.stringify(x),{headers:{"content-type":"application/json","cache-control":"no-store"}});
 const bad=(message,status=400)=>{const e=new Error(message);e.status=status;throw e;};
 const norm=x=>R.normRef(x);
 const r2=x=>Math.round(Number(x||0)*100)/100;
-const date=()=>new Date().toISOString().slice(0,10);
+const date=()=>indiaDate();
 const validPeriod=x=>/^\d{4}-\d{2}-\d{2}$/.test(String(x||""));
 const addDays=(d,delta)=>{
   const value=Date.parse(String(d||"")+"T00:00:00Z");
@@ -248,7 +249,7 @@ async function actionCenter(D,cid){
     ["SELECT d.id,d.return_id,d.status,d.num FROM gst_docs d WHERE d.company_id=? AND d.status IN ('missing','mismatch','probable') LIMIT 80",cid],
     ["SELECT id,kind,result FROM jobs WHERE company_id=? AND status='failed' ORDER BY updated_at DESC LIMIT 80",cid],
     ["SELECT id,source_name,period,status,summary FROM settlement_batches WHERE company_id=? AND status='review' ORDER BY created_at DESC LIMIT 40",cid],
-    ["SELECT party,name,due,amount FROM tally_bills WHERE company_id=? AND due<? AND amount>0 ORDER BY due LIMIT 40",cid,new Date().toISOString().slice(0,10)]
+    ["SELECT party,name,due,amount FROM tally_bills WHERE company_id=? AND due<? AND amount>0 ORDER BY due LIMIT 40",cid,indiaDate()]
   ]);
   const items=[];
   function add(list,kind,make){for(const r of list)items.push({kind,...make(r)});}
