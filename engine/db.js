@@ -132,6 +132,7 @@ export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS bank_rules (
     company_id TEXT NOT NULL,bank_ledger TEXT NOT NULL,key TEXT NOT NULL,ledger TEXT NOT NULL,approved_at REAL NOT NULL,
     PRIMARY KEY(company_id,bank_ledger,key))`,
+  `CREATE TABLE IF NOT EXISTS outstanding_reads (company_id TEXT PRIMARY KEY, fetched_at REAL NOT NULL, bill_count INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS settlement_batches (
     id TEXT PRIMARY KEY,company_id TEXT NOT NULL,platform TEXT NOT NULL,period TEXT NOT NULL,
     source_name TEXT,source_hash TEXT,summary TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'review',
