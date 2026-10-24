@@ -4,7 +4,7 @@ import {analyzeSettlement,parseCash,matchSettlementBanks} from "../engine/settle
 const headers=["Settle","Date","Gross","Refund","Commission","Shipping","Other","TCS","TDS","Payout"];
 const map={settlement_id:0,date:1,gross:2,refund:3,commission:4,shipping:5,other:6,tcs:7,tds:8,payout:9};
 function body(mode="per_settlement"){
- return {platform:"ME",period:"2026-10",payout_mode:mode,mapping:map,filename:"Meesho.xlsx",
+ return {platform:"ME",period:"2026-10",payout_mode:mode,mapping:{...map},filename:"Meesho.xlsx",
    rows:[headers,
     ["PAY-100","21/10/2026","₹ 100.00","-5","-5","0","0","0","0","280"],
     ["PAY-100","21/10/2026","200","0","-10","0","0","0","0","280"]]};
