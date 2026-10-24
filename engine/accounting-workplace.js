@@ -77,6 +77,32 @@ export async function recheckBank(D,env,sid){
   return {checked:rows.length,still_uncertain:still,notice:"Uncertain postings are never reset to Ready automatically."};
 }
 
+
+export async function resolveUncertainBank(D,env,sid,body){
+  const st=await D.first("SELECT * FROM bank_statements WHERE id=?",sid);
+  if(!st)bad("Bank statement not found",404);
+  if(body.confirmed!==true||String(body.verification||"").trim()!=="CHECKED IN TALLY")
+    bad("Confirm you inspected the target company in Tally and this entry was NOT created");
+  const ids=[...new Set(Array.isArray(body.ids)?body.ids.map(String):[])].slice(0,50);
+  if(!ids.length)bad("Choose at least one uncertain transaction");
+  const q=ids.map(()=>"?").join(",");
+  const rows=await D.all("SELECT * FROM bank_lines WHERE statement_id=? AND status='uncertain' AND id IN ("+q+")",sid,...ids);
+  if(rows.length!==ids.length)bad("Some selected entries are no longer uncertain; refresh",409);
+  const c=await company(D,st.company_id),read=ensureTally(env);
+  // All checks must pass before modifying any row.
+  for(const x of rows){
+    const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,x.date,x.date));
+    const prior=bankVouchers(xml,st.bank_ledger).filter(y=>y.date===x.date&&
+      Math.abs(y.signed-r2((x.credit||0)-(x.debit||0)))<=0.01);
+    if(prior.length)bad("Matching Tally vouchers were found for "+x.date+" and this amount. Do not reset to Ready; inspect vouchers "+prior.map(x=>x.number).join(", "),409);
+  }
+  const ops=rows.map(x=>D.stmt("UPDATE bank_lines SET status='ready',sync_error=NULL,note='Manually checked live Tally absence and explicitly released for review' WHERE id=?",x.id));
+  ops.push(D.stmt("INSERT INTO activity(batch_id,invoice_id,message,at) VALUES(?,?,?,?)",
+    null,null,"Uncertain bank postings manually released after separate verification: "+sid+" ("+rows.length+" rows)",now()));
+  await D.batch(ops);
+  return {released:rows.length,notice:"Now Ready for a new explicit posting approval. A fresh Tally duplicate guard runs immediately before any write."};
+}
+
 export async function refreshOutstandings(D,env,cid){
   const c=await company(D,cid),read=ensureTally(env),records=[];
   // Read both first. A failure must leave the previous snapshot untouched.
@@ -207,6 +233,11 @@ export function accountingRoutes(route,authorize){
     const st=await ctx.D.first("SELECT company_id FROM bank_statements WHERE id=?",ctx.p.sid);
     if(!st)bad("Statement not found",404);
     await auth(ctx,st.company_id);return json(await recheckBank(ctx.D,ctx.env,ctx.p.sid));
+  });
+  route("POST","/api/bank/:sid/resolve-uncertain",async ctx=>{
+    const st=await ctx.D.first("SELECT company_id FROM bank_statements WHERE id=?",ctx.p.sid);
+    if(!st)bad("Statement not found",404);
+    await auth(ctx,st.company_id);return json(await resolveUncertainBank(ctx.D,ctx.env,ctx.p.sid,ctx.body));
   });
   route("GET","/api/companies/:cid/outstandings",async ctx=>{
     await auth(ctx,ctx.p.cid);return json(await outstandingSnapshot(ctx.D,ctx.p.cid));
