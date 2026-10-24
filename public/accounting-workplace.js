@@ -127,7 +127,12 @@ async function viewBankReconciliation(sid){
   const c=await api("/companies/"+d.statement.company_id);
   CURRENT.company=c;
   const byId=new Map(d.matches.map(m=>[m.id,m]));
-  const masters=await api("/companies/"+c.id+"/masters?kind=ledger");
+  const [masters,billSnapshot,suggestions]=await Promise.all([
+    api("/companies/"+c.id+"/masters?kind=ledger"),
+    api("/companies/"+c.id+"/outstandings"),
+    api("/bank/"+sid+"/suggestions")
+  ]);
+  const suggestedById=new Map(suggestions.suggestions.map(x=>[x.id,x.suggested]));
   const ledgerNames=masters.items.map(x=>x.name).sort();
   const options='<option value="">Select a ledger</option>'+ledgerNames.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join("");
   app().innerHTML=topBar([[c.name,"#/c/"+c.id+"/bank"],[d.statement.name,"#/s/"+sid],["Reconciliation"]],c)+
@@ -142,6 +147,8 @@ async function viewBankReconciliation(sid){
     '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">'+
     '<select class="in" id="assignLedger" style="min-width:220px;max-width:420px">'+options+'</select>'+
     '<input class="in" id="ledgerSearch" placeholder="Find a Tally ledger" style="max-width:240px">'+
+    '<input class="in" id="assignBill" list="billOptions" placeholder="Exact outstanding bill (optional)" style="min-width:180px"><datalist id="billOptions"></datalist>'+
+    '<label><input type="checkbox" id="onAccount"> Explicitly On Account</label>'+
     '<label><input type="checkbox" id="rememberRule"> Remember narration rule</label>'+
     '<button class="btn primary" id="assign">Assign selected transaction</button></div></div>'+
     (d.lines.length?'<table class="grid"><thead><tr><th></th><th>Date</th><th>Reference / narration</th><th class="num">Amount</th><th>Match</th><th>Ledger</th></tr></thead><tbody>'+
@@ -152,7 +159,9 @@ async function viewBankReconciliation(sid){
         (["ready","failed"].includes(l.status)?"":"disabled")+'></td><td>'+fmtDate(l.date)+'</td>'+
         '<td class="small"><b>'+esc(l.ref)+'</b> '+esc(l.narration)+'</td><td class="num">'+
         AW_MONEY(l.credit?l.credit:-l.debit)+'</td><td>'+esc(status)+'<div class="muted small">'+esc(m.reason||"")+'</div>'+(l.status==="uncertain"?'<button class="btn sm" data-release="'+esc(l.id)+'">Manually verify absent</button>':'')+'</td>'+
-        '<td>'+esc(l.ledger||"")+(l.method==="manual"?" <span class=good>Reviewed</span>":"")+'</td></tr>';
+        '<td>'+esc(l.ledger||"")+(l.method==="manual"?" <span class=good>Reviewed</span>":"")+
+          (suggestedById.get(l.id)?'<div class="small">Suggest: '+esc(suggestedById.get(l.id))+
+            ' <button class="btn sm" data-use="'+esc(l.id)+'">Select</button></div>':"")+'</td></tr>';
     }).join("")+'</tbody></table>':'<p>No rows.</p>')+
     '<p class="muted small">Ledger options show the first 200 masters. Use search for other masters.</p></div>';
   wireTop(c);
@@ -166,6 +175,22 @@ async function viewBankReconciliation(sid){
     }catch(e){toast(e.message,true);}
   });
 
+  const fillBills=()=>{
+    const ledger=$("#assignLedger").value.toUpperCase();
+    $("#billOptions").innerHTML=billSnapshot.rows.filter(x=>String(x.party||"").toUpperCase()===ledger)
+       .slice(0,100).map(x=>'<option value="'+esc(x.name)+'"></option>').join("");
+  };
+  $("#assignLedger").onchange=fillBills;
+  document.querySelectorAll("[data-use]").forEach(bt=>bt.onclick=()=>{
+    const row=bt.closest("tr");
+    const radio=row?.querySelector('input[name="bankPick"]');
+    if(radio && !radio.disabled)radio.checked=true;
+    const name=suggestedById.get(bt.dataset.use);
+    const sel=$("#assignLedger");
+    if(![...sel.options].some(o=>o.value===name))sel.add(new Option(name,name));
+    sel.value=name;fillBills();
+  });
+
   $("#ledgerSearch").oninput=debounce(async()=>{
     const q=$("#ledgerSearch").value.trim();
     const x=await api("/companies/"+c.id+"/masters?kind=ledger&q="+encodeURIComponent(q),{quiet:true});
@@ -177,7 +202,9 @@ async function viewBankReconciliation(sid){
     const ledger=$("#assignLedger").value;
     if(!selected||!ledger){toast("Select one ready bank entry and a Tally ledger",true);return;}
     if(!confirm("Confirm you checked this transaction against the bank statement and selected the correct existing Tally ledger?"))return;
-    await act(()=>api("/bank/"+sid+"/assign",{body:{ids:[selected.value],ledger,remember:$("#rememberRule").checked}}),"Ledger assigned");
+    await act(()=>api("/bank/"+sid+"/assign",{body:{ids:[selected.value],ledger,
+      bill_ref:$("#assignBill").value.trim(),on_account:$("#onAccount").checked,
+      remember:$("#rememberRule").checked}}),"Ledger assigned");
     route();
   };
 }
