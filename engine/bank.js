@@ -220,11 +220,21 @@ export async function remove(D, sid) {
   return { ok: true };
 }
 
-export function bankRoutes(route, { useCredit, requirePosting }) {
-  route("GET", "/api/companies/:cid/bank", async ({ D, p }) => json(await list(D, p.cid)));
-  route("POST", "/api/companies/:cid/bank", async ({ D, p, body }) => json(await create(D, p.cid, body)));
-  route("POST", "/api/bank/:sid/rows", async ({ D, p, body }) => json(await addRows(D, p.sid, body)));
-  route("POST", "/api/bank/:sid/start", async ({ env, D, p }) => {
+export function bankRoutes(route, { useCredit, requirePosting, authorizeCompany }) {
+  const secured=(method,path,handler)=>route(method,path,async ctx=>{
+    const cid=ctx.p.cid||(await DUMMY(ctx));
+    if(authorizeCompany)await authorizeCompany(ctx.D,ctx.env,cid);
+    return handler(ctx);
+  });
+  async function DUMMY(ctx){
+    const st=await ctx.D.first("SELECT company_id FROM bank_statements WHERE id=?",ctx.p.sid);
+    if(!st)throw new BankError(404,"Bank statement not found");
+    return st.company_id;
+  }
+  secured("GET", "/api/companies/:cid/bank", async ({ D, p }) => json(await list(D, p.cid)));
+  secured("POST", "/api/companies/:cid/bank", async ({ D, p, body }) => json(await create(D, p.cid, body)));
+  secured("POST", "/api/bank/:sid/rows", async ({ D, p, body }) => json(await addRows(D, p.sid, body)));
+  secured("POST", "/api/bank/:sid/start", async ({ env, D, p }) => {
     const st = await statement(D, p.sid);
     if (st.stage === "uploading") {
       const n = (await D.first("SELECT count(*) n FROM bank_lines WHERE statement_id=?", p.sid)).n;
@@ -234,11 +244,11 @@ export function bankRoutes(route, { useCredit, requirePosting }) {
     }
     return json({ ok: true });
   });
-  route("GET", "/api/bank/:sid", async ({ D, p }) => json(await view(D, p.sid)));
-  route("GET", "/api/bank/:sid/suggestions", async ({ D, p }) => json(await suggestedLedger(D,p.sid)));
-  route("POST", "/api/bank/:sid/assign", async ({ D, p, body }) => json(await assignLedger(D,p.sid,body)));
-  route("POST", "/api/bank/:sid/suspense", async ({ D, p, body }) => json(await setSuspense(D, p.sid, body)));
-  route("POST", "/api/bank/:sid/mark", async ({ D, p, body }) => json(await mark(D, p.sid, body)));
-  route("POST", "/api/bank/:sid/push", async ({ env, D, p, body }) => { await requirePosting(env); return json(await push(D, p.sid, body)); });
-  route("DELETE", "/api/bank/:sid", async ({ D, p }) => json(await remove(D, p.sid)));
+  secured("GET", "/api/bank/:sid", async ({ D, p }) => json(await view(D, p.sid)));
+  secured("GET", "/api/bank/:sid/suggestions", async ({ D, p }) => json(await suggestedLedger(D,p.sid)));
+  secured("POST", "/api/bank/:sid/assign", async ({ D, p, body }) => json(await assignLedger(D,p.sid,body)));
+  secured("POST", "/api/bank/:sid/suspense", async ({ D, p, body }) => json(await setSuspense(D, p.sid, body)));
+  secured("POST", "/api/bank/:sid/mark", async ({ D, p, body }) => json(await mark(D, p.sid, body)));
+  secured("POST", "/api/bank/:sid/push", async ({ env, D, p, body }) => { await requirePosting(env); return json(await push(D, p.sid, body)); });
+  secured("DELETE", "/api/bank/:sid", async ({ D, p }) => json(await remove(D, p.sid)));
 }
