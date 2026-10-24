@@ -442,10 +442,6 @@ export async function pushInvoice(D, invId, force = false) {
     throw new Error("Resolve party, stock, ledger and tax first.");
   }
   const h = inv.data;
-  const linkedGst=await D.first(
-    "SELECT p.status,p.supplier_invoice FROM gst_invoice_links l JOIN gstr2b_purchase_vouchers p ON p.doc_id=l.doc_id AND p.company_id=l.company_id WHERE l.company_id=? AND l.invoice_id=? AND p.status IN ('queued','synced','uncertain') LIMIT 1",
-    inv.company_id,invId);
-  if(linkedGst)throw new Error("This source invoice has already been queued/posted via GSTR-2B as "+linkedGst.supplier_invoice+". Reconcile the records in Tally before any other posting.");
   const dup = await findDuplicate(D, inv.company_id, invId, h.number, h.party_gstin, h.party_name, inv.party_ledger);
   if (dup && ["synced", "queued"].includes(dup.status) && !force)
     throw new Error(`Invoice ${h.number} from ${inv.party_ledger} is already in Tally (batch ${dup.batch_name}).`);
