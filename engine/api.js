@@ -717,7 +717,7 @@ async function useStatementCredit(env, D, st, lines) {
     throw new HttpError(e.status || 503, e.message);
   }
 }
-BK.bankRoutes(route, { useCredit: useStatementCredit, requirePosting });
+BK.bankRoutes(route, { useCredit: useStatementCredit, requirePosting, authorizeCompany });
 EC.ecommerceRoutes(route, { requirePosting, requireLicence });
 // GSTR-2B reconciliation
 GS.gstRoutes(route);
