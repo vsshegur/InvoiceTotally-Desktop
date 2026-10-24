@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {makeD1} from "../desktop/d1.mjs";
 import {db} from "../engine/db.js";
 import * as W from "../engine/accounting-workplace.js";
+import * as BK from "../engine/bank.js";
 
 const D=db({DB:makeD1()});
 const BANK='<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><MASTERID>7</MASTERID><DATE>20261020</DATE>'+
@@ -33,6 +34,21 @@ test("bank posting guard refuses a duplicate external voucher even when manually
  assert.equal(r.blocked,true);
  assert.match(r.reason,/existing Tally/i);
 });
+
+test("party bank mappings require explicit On Account review without any outstanding service",async()=>{
+  await D.run("UPDATE bank_lines SET status='ready' WHERE id='line-1'");
+  await D.insert("masters",{company_id:"a",kind:"ledger",name:"Customer",uname:"CUSTOMER",
+    parent:"Sundry Debtors",primary_group:"Sundry Debtors",pending:0});
+  await assert.rejects(()=>BK.assignLedger(D,"st",{ids:["line-1"],ledger:"Customer"}),/On Account/i);
+  const ok=await BK.assignLedger(D,"st",{ids:["line-1"],ledger:"Customer",on_account:true});
+  assert.equal(ok.assigned,1);
+  const x=await D.first("SELECT ledger,bills,method,note FROM bank_lines WHERE id='line-1'");
+  assert.equal(x.ledger,"Customer");
+  assert.equal(x.bills,"[]");
+  assert.equal(x.method,"manual");
+  assert.match(x.note,/On Account/);
+});
+
 test("reciprocal company voucher matching is source-linked and read-only",async()=>{
  await D.insert("tally_gst_vouchers",{company_id:"a",mid:"1",date:"2026-10-10",number:"A-1",ref:"",
    party:"Vijayalaxmi Textiles",gstin:"27BBBBBBBBB1Z1",inv:0,e:JSON.stringify([["Vijayalaxmi Textiles",1180]]),vtype:"Sales"});
