@@ -5,7 +5,6 @@ import os from "node:os";
 import path from "node:path";
 import { db } from "../engine/db.js";
 import { makeD1 } from "../desktop/d1.mjs";
-import * as AD from "../engine/audit.js";
 import * as DASH from "../engine/dashboard.js";
 import * as GST from "../engine/gst-control.js";
 import * as SC from "../engine/master-assist.js";
@@ -28,19 +27,9 @@ test("setup independent accounting control company and masters",async()=>{
     gst_rate:kind==="stock_item"?5:null,hsn,unit});
 });
 
-test("posting audit is append only by API, hash linked, and detects tampering",async()=>{
-  const job={id:"job-control",company_id:"controls-company",invoice_id:"inv-1",kind:"import_voucher",
-    payload:"<VOUCHER ACTION='Create'/>"};
-  await AD.audit(D,job,"attempt","Sending one voucher","VIPUL TEXTILES");
-  await AD.audit(D,job,"created","Created 1, errors 0","VIPUL TEXTILES");
-  let verified=await AD.verifyAudit(D);
-  assert.equal(verified.ok,true);
-  assert.equal(verified.events,2);
-  assert.equal((await AD.auditRows(D,"controls-company")).length,2);
-  await D.run("UPDATE posting_audit SET detail='altered' WHERE id=1");
-  verified=await AD.verifyAudit(D);
-  assert.equal(verified.ok,false);
-  assert.equal(verified.first_bad_event,1);
+test("removed features have no newly created database tables",()=>{
+  const names=DB.sql.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('posting_audit','gst_invoice_links','tally_bills','outstanding_reads')").all();
+  assert.deepEqual(names,[]);
 });
 
 test("dashboard snapshots classify bank, outstanding and tax account balances correctly",async()=>{
