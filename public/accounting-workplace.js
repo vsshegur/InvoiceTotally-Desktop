@@ -131,7 +131,7 @@ async function viewBankReconciliation(sid){
     '<p class="muted small">Ledger options show the first 200 masters. Use search for other masters.</p></div>';
   wireTop(c);
   $("#recheck").onclick=()=>route();
-  $("[data-release]").forEach(bt=>bt.onclick=async()=>{
+  $$("[data-release]").forEach(bt=>bt.onclick=async()=>{
     const phrase=prompt("Open the correct company in Tally and verify this bank voucher was NOT created. Type CHECKED IN TALLY to explicitly release it:");
     if(phrase!=="CHECKED IN TALLY"){toast("Manual verification not confirmed",true);return;}
     try{
