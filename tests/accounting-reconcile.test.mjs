@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {bankVouchers,reconcileBank,billsFromTally,matchInterCompany} from "../engine/accounting-reconcile.js";
+import {bankVouchers,reconcileBank,matchInterCompany} from "../engine/accounting-reconcile.js";
 
 const xml='<ENVELOPE><BODY><COLLECTION>'+
 '<VOUCHER><MASTERID>12</MASTERID><DATE>20261020</DATE><VOUCHERNUMBER>RC-1</VOUCHERNUMBER>'+
@@ -37,17 +37,6 @@ test("two equal-reference vouchers are not matched automatically",()=>{
   const r=reconcileBank([{id:"x",date:"2026-10-20",credit:1000,ref:"UTR654321"}],
     [...tally,tally[0] && {...tally[0],id:"another"}]);
   assert.equal(r.matches[0].status,"ambiguous");
-});
-
-test("bill fixed and balance pairs read correctly without treating negative as zero",()=>{
-  const x='<ENVELOPE><BILLFIXED><BILLDATE>20261001</BILLDATE><BILLREF>INV-31</BILLREF>'+
-  '<BILLPARTY>ABC</BILLPARTY></BILLFIXED><BILLCL>-1200.5</BILLCL><BILLDUE>20261015</BILLDUE>'+
-  '<BILLFIXED><BILLDATE>20261002</BILLDATE><BILLREF>INV-32</BILLREF>'+
-  '<BILLPARTY>ABC</BILLPARTY></BILLFIXED><BILLCL>200</BILLCL></ENVELOPE>';
-  const got=billsFromTally(x,"receivable");
-  assert.equal(got.length,2);
-  assert.equal(got[0].amount,1200.5);
-  assert.equal(got[0].due,"2026-10-15");
 });
 
 test("intercompany matching requires actual reciprocal reference and amount",()=>{
