@@ -267,9 +267,6 @@ export async function queue(D,id,input){
   if(rows.length!==ids.length)throw new Purchase2bError("Some selected invoices are not in this batch");
   const stmts=[];
   for(const r of rows){
-    const linked=await D.first("SELECT i.status,i.id FROM gst_invoice_links l JOIN invoices i ON i.id=l.invoice_id AND i.company_id=l.company_id WHERE l.company_id=? AND l.doc_id=?",b.company_id,r.doc_id);
-    if(linked&&["queued","synced","uncertain"].includes(linked.status))
-      throw new Purchase2bError(r.supplier_invoice+" is already queued/posted through Upload Invoices (local source link "+linked.id+"). Verify in Tally before selecting a posting workflow.");
     if(!approvedStates.has(r.status))throw new Purchase2bError(r.supplier_invoice+" is not ready to post ("+r.status+")");
     const doc=await D.first("SELECT mid,status,sec,note,itc,rev,compare,txval,val,igst,cgst,sgst,cess FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,b.return_id);
     if(!doc||validNormalDoc({...doc,ctin:r.supplier_gstin,num:r.supplier_invoice,dt:r.date,
@@ -294,9 +291,6 @@ export async function queue(D,id,input){
 export async function beforePosting(D,job,tallyCompanyName,readOnly){
   const r=must(await D.first("SELECT * FROM gstr2b_purchase_vouchers WHERE id=?",job.invoice_id),"GSTR-2B purchase not found");
   if(r.status!=="queued")throw new Purchase2bError("Invoice was not queued");
-  const linked=await D.first("SELECT i.status FROM gst_invoice_links l JOIN invoices i ON i.id=l.invoice_id AND i.company_id=l.company_id WHERE l.company_id=? AND l.doc_id=?",r.company_id,r.doc_id);
-  if(linked&&["queued","synced","uncertain"].includes(linked.status))
-    return {duplicate:true,message:"Linked original invoice is already queued or saved through Upload Invoices; verify the voucher in Tally."};
   const batchRow=await batch(D,r.batch_id);
   const doc=await D.first("SELECT mid,status,sec,note,itc,rev,compare,txval,val,igst,cgst,sgst,cess FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,batchRow.return_id);
   if(!doc||validNormalDoc({...doc,ctin:r.supplier_gstin,num:r.supplier_invoice,dt:r.date,
