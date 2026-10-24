@@ -83,29 +83,6 @@ export function reconcileBank(statementLines,tallyLines,{dateTolerance=3}={}){
     notice:"Matches are application-side comparisons only; bank reconciliation dates in Tally are not changed."};
 }
 
-export function billsFromTally(xml,side){
-  const root=TL.parseXml(xml);
-  const found=[];
-  function scan(n){
-    for(let i=0;i<n.kids.length;i++){
-      const b=n.kids[i];
-      if(b.name==="BILLFIXED"){
-        const date=iso(val(b,"BILLDATE")),ref=val(b,"BILLREF"),party=val(b,"BILLPARTY");
-        let closing="",due="";
-        for(let j=i+1;j<n.kids.length && n.kids[j].name!=="BILLFIXED";j++){
-          const x=n.kids[j];if(x.name==="BILLCL")closing=x.text.trim();
-          if(x.name==="BILLDUE")due=iso(x.text.trim());
-        }
-        const outstanding=money(Math.abs(Number(String(closing).replace(/,/g,""))));
-        if(date&&party&&ref&&Number.isFinite(outstanding)&&outstanding>0)
-          found.push({side,party,reference:ref,date,due:due||date,amount:outstanding});
-      }else scan(b);
-    }
-  }
-  scan(root);
-  return found;
-}
-
 export function matchInterCompany(a,b){
   const same=(x,y)=>normRef(x)===normRef(y);
   const links=[],used=new Set(),unmatched=[];
