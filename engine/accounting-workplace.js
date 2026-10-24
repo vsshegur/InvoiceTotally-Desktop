@@ -18,13 +18,13 @@ export async function bankReview(D,env,sid){
   const st=await D.first("SELECT * FROM bank_statements WHERE id=?",sid);
   if(!st)bad("Statement not found",404);
   const c=await company(D,st.company_id),read=ensureTally(env);
-  const lines=await D.all("SELECT id,date,credit,debit,narration,ref,status FROM bank_lines WHERE statement_id=? ORDER BY seq",sid);
+  const lines=await D.all("SELECT id,date,credit,debit,narration,ref,status,ledger,method FROM bank_lines WHERE statement_id=? ORDER BY seq",sid);
   if(!lines.length)bad("No statement rows available");
   if(!validPeriod(st.period_from)||!validPeriod(st.period_to))bad("Statement dates are invalid");
   const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,st.period_from,st.period_to));
   const vouchers=R.bankVouchers(xml,st.bank_ledger);
   return {statement:{id:sid,name:st.name,company_id:c.id,bank_ledger:st.bank_ledger,
-    period_from:st.period_from,period_to:st.period_to},
+    period_from:st.period_from,period_to:st.period_to},lines,
     ...R.reconcileBank(lines,vouchers),read_at:now(),tally_count:vouchers.length};
 }
 
@@ -89,10 +89,6 @@ export async function refreshOutstandings(D,env,cid){
   for(const x of records)ops.push(D.stmt(
     "INSERT INTO tally_bills(company_id,side,party,name,date,amount,due,fetched_at) VALUES(?,?,?,?,?,?,?,?)",
     cid,x.side,x.party,x.reference,x.date,x.amount,x.due,stamp));
-  for(let i=0;i<ops.length;i+=200){
-    // Keep refresh all-or-nothing even for large companies: issue a single SQLite batch.
-    // No partial replace: fail if database cannot hold the full snapshot.
-  }
   await D.batch(ops);
   return outstandingSnapshot(D,cid);
 }
