@@ -75,9 +75,6 @@ export const SCHEMA = [
     round_off REAL, invoice REAL, items TEXT, status TEXT, error TEXT, synced_at REAL,
     UNIQUE(company_id, number))`,
   `CREATE INDEX IF NOT EXISTS ix_ec_vouchers ON ecommerce_vouchers(batch_id, seq)`,
-  `CREATE TABLE IF NOT EXISTS tally_bills (
-    company_id TEXT NOT NULL, side TEXT, party TEXT, name TEXT, date TEXT, amount REAL, due TEXT, fetched_at REAL)`,
-  `CREATE INDEX IF NOT EXISTS ix_tally_bills ON tally_bills(company_id, side)`,
   `CREATE TABLE IF NOT EXISTS tally_bank_entries (
     company_id TEXT NOT NULL, ledger TEXT, date TEXT, amount REAL, vtype TEXT, number TEXT, party TEXT, narration TEXT, fetched_at REAL)`,
   `CREATE INDEX IF NOT EXISTS ix_tally_bank ON tally_bank_entries(company_id, ledger, date)`,
@@ -109,12 +106,6 @@ export const SCHEMA = [
     company_id TEXT NOT NULL, mid TEXT, date TEXT, number TEXT, vtype TEXT, kind TEXT, ref TEXT, refdate TEXT, party TEXT, gstin TEXT,
     inv REAL, e TEXT, fetched_at REAL)`,
   `CREATE INDEX IF NOT EXISTS ix_tally_gst ON tally_gst_vouchers(company_id, date)`,
-  `CREATE TABLE IF NOT EXISTS posting_audit (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, company_id TEXT NOT NULL, job_id TEXT, invoice_id TEXT,
-    kind TEXT NOT NULL, phase TEXT NOT NULL, target_company TEXT,
-    payload_sha256 TEXT, detail TEXT, previous_hash TEXT, entry_hash TEXT NOT NULL,
-    at REAL NOT NULL)`,
-  `CREATE INDEX IF NOT EXISTS ix_post_audit_company ON posting_audit(company_id, id)`,
   `CREATE TABLE IF NOT EXISTS dashboard_balances (
     company_id TEXT NOT NULL, ledger TEXT NOT NULL, parent TEXT, amount REAL NOT NULL, fetched_at REAL,
     PRIMARY KEY(company_id, ledger))`,
@@ -126,13 +117,9 @@ export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS gst_ledger_rules (company_id TEXT NOT NULL, ledger_name TEXT NOT NULL, role TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(company_id,ledger_name))`,
   `CREATE INDEX IF NOT EXISTS ix_gst_ledger_rules_company ON gst_ledger_rules(company_id)`,
 
-  `CREATE TABLE IF NOT EXISTS gst_invoice_links (
-    company_id TEXT NOT NULL,doc_id TEXT NOT NULL,invoice_id TEXT NOT NULL,confirmed_at REAL NOT NULL,
-    PRIMARY KEY(company_id,doc_id),UNIQUE(company_id,invoice_id))`,
   `CREATE TABLE IF NOT EXISTS bank_rules (
     company_id TEXT NOT NULL,bank_ledger TEXT NOT NULL,key TEXT NOT NULL,ledger TEXT NOT NULL,approved_at REAL NOT NULL,
     PRIMARY KEY(company_id,bank_ledger,key))`,
-  `CREATE TABLE IF NOT EXISTS outstanding_reads (company_id TEXT PRIMARY KEY, fetched_at REAL NOT NULL, bill_count INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS settlement_batches (
     id TEXT PRIMARY KEY,company_id TEXT NOT NULL,platform TEXT NOT NULL,period TEXT NOT NULL,
     source_name TEXT,source_hash TEXT,summary TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'review',
