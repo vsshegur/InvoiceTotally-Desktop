@@ -188,13 +188,6 @@ export function lineNarration(lines) {
 }
 
 // ------------------------------------------------------------ bank statements
-/** Pending bills of all parties: Tally's own Bills Receivable / Bills Payable reports. */
-export function billsRequest(side, company) {
-  return "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>" +
-    `<ID>${side === "payable" ? "Bills Payable" : "Bills Receivable"}</ID></HEADER><BODY><DESC><STATICVARIABLES>` +
-    `<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>${companyVar(company)}</STATICVARIABLES></DESC></BODY></ENVELOPE>`;
-}
-
 /** Vouchers already entered in the bank ledger between two dates (to spot statement lines already in Tally). */
 export function bankEntriesRequest(company, ledger, from, to) {
   return "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE>" +
