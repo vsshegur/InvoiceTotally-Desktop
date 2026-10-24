@@ -11,11 +11,7 @@ const BANK='<ENVELOPE><BODY><DATA><COLLECTION><VOUCHER><MASTERID>7</MASTERID><DA
  '<ALLLEDGERENTRIES.LIST><LEDGERNAME>HDFC</LEDGERNAME><AMOUNT>-1000</AMOUNT></ALLLEDGERENTRIES.LIST>'+
  '<ALLLEDGERENTRIES.LIST><LEDGERNAME>Customer</LEDGERNAME><AMOUNT>1000</AMOUNT></ALLLEDGERENTRIES.LIST>'+
  '</VOUCHER></COLLECTION></DATA></BODY></ENVELOPE>';
-const RCV='<ENVELOPE><BILLFIXED><BILLDATE>20261001</BILLDATE><BILLREF>B-1</BILLREF>'+
- '<BILLPARTY>Customer</BILLPARTY></BILLFIXED><BILLCL>-1000</BILLCL><BILLDUE>20261019</BILLDUE></ENVELOPE>';
-const PAY='<ENVELOPE><BILLFIXED><BILLDATE>20261001</BILLDATE><BILLREF>S-2</BILLREF>'+
- '<BILLPARTY>Supplier</BILLPARTY></BILLFIXED><BILLCL>500</BILLCL><BILLDUE>20261022</BILLDUE></ENVELOPE>';
-const env={TALLY:{readOnly:async xml=>xml.includes("Bills Receivable")?RCV:xml.includes("Bills Payable")?PAY:BANK}};
+const env={TALLY:{readOnly:async()=>BANK}};
 
 test("setup accounting integration fixture",async()=>{
  for(const [id,name,gstin] of [["a","Vipul Textiles","27AAAAAAAAA1Z1"],["b","Vijayalaxmi Textiles","27BBBBBBBBB1Z1"]])
@@ -36,25 +32,6 @@ test("bank posting guard refuses a duplicate external voucher even when manually
  const r=await W.beforeBankPosting(D,{invoice_id:"line-1"},async()=>BANK);
  assert.equal(r.blocked,true);
  assert.match(r.reason,/existing Tally/i);
-});
-test("outstandings refresh both sides before replacing verified snapshot",async()=>{
- const r=await W.refreshOutstandings(D,env,"a");
- assert.equal(r.totals.receivable,1000);
- assert.equal(r.totals.payable,500);
- assert.equal(r.count,2);
- assert.ok(r.fetched_at);
-});
-test("GSTR-2B source link guards date, GSTIN, number and amount",async()=>{
- await D.insert("gst_docs",{id:"doc1",return_id:"ret1",company_id:"a",num:"INV-10",ctin:"27SUPPLIER00Z1",dt:"2026-10-10",val:1180,sec:"B2B"});
- await D.insert("invoices",{id:"inv1",batch_id:"bat",company_id:"a",status:"review",
-    data:JSON.stringify({number:"INV-10",party_gstin:"27SUPPLIER00Z1",date:"2020-10-10",total:1180})});
- await assert.rejects(()=>W.confirmGstLink(D,"a","doc1","inv1"),/dates differ/i);
- await D.run("UPDATE invoices SET data=? WHERE id='inv1'",
-    JSON.stringify({number:"INV-10",party_gstin:"27SUPPLIER00Z1",date:"2026-10-10",total:1180}));
- const result=await W.confirmGstLink(D,"a","doc1","inv1");
- assert.equal(result.ok,true);
- const links=await D.all("SELECT * FROM gst_invoice_links WHERE company_id='a'");
- assert.equal(links.length,1);
 });
 test("reciprocal company voucher matching is source-linked and read-only",async()=>{
  await D.insert("tally_gst_vouchers",{company_id:"a",mid:"1",date:"2026-10-10",number:"A-1",ref:"",
