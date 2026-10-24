@@ -83,9 +83,12 @@ export async function refreshOutstandings(D,env,cid){
   for(const side of ["receivable","payable"]){
     const xml=await read(T.billsRequest(side,tallyName(c)));
     if(!/<ENVELOPE[\s>]/i.test(xml))bad("Unexpected Tally "+side+" response; previous snapshot retained",502);
-    records.push(...R.billsFromTally(xml,side));
+    const parsed=R.billsFromTally(xml,side);
+    if(/<BILLFIXED[\s>]/i.test(xml)&&!parsed.length)bad("Tally returned bill data in an unrecognized shape; keep the previous snapshot and review the export",422);
+    records.push(...parsed);
   }
-  const stamp=now(),ops=[D.stmt("DELETE FROM tally_bills WHERE company_id=?",cid)];
+  const stamp=now(),ops=[D.stmt("DELETE FROM tally_bills WHERE company_id=?",cid),
+    D.stmt("INSERT INTO outstanding_reads(company_id,fetched_at,bill_count) VALUES(?,?,?) ON CONFLICT(company_id) DO UPDATE SET fetched_at=excluded.fetched_at,bill_count=excluded.bill_count",cid,stamp,records.length)];
   for(const x of records)ops.push(D.stmt(
     "INSERT INTO tally_bills(company_id,side,party,name,date,amount,due,fetched_at) VALUES(?,?,?,?,?,?,?,?)",
     cid,x.side,x.party,x.reference,x.date,x.amount,x.due,stamp));
@@ -93,16 +96,17 @@ export async function refreshOutstandings(D,env,cid){
   return outstandingSnapshot(D,cid);
 }
 export async function outstandingSnapshot(D,cid){
-  const rows=await D.all("SELECT side,party,name,date,amount,due,fetched_at FROM tally_bills WHERE company_id=? ORDER BY due,party LIMIT 5000",cid);
+  const allRows=await D.all("SELECT side,party,name,date,amount,due,fetched_at FROM tally_bills WHERE company_id=? ORDER BY due,party",cid);
+  const rows=allRows.slice(0,5000);
   const today=date(),totals={receivable:0,payable:0,overdue_receivable:0,overdue_payable:0};
-  for(const b of rows){
+  for(const b of allRows){
     const k=b.side==="payable"?"payable":"receivable",value=Math.abs(Number(b.amount)||0);
     totals[k]=r2(totals[k]+value);
     if(b.due&&b.due<today)totals["overdue_"+k]=r2(totals["overdue_"+k]+value);
     b.days_overdue=b.due&&b.due<today?Math.floor((Date.parse(today)-Date.parse(b.due))/86400000):0;
   }
-  const all=await D.first("SELECT COUNT(*) count,MAX(fetched_at) at FROM tally_bills WHERE company_id=?",cid);
-  return {rows,totals,count:all?.count||0,fetched_at:all?.at||null,
+  const snapshot=await D.first("SELECT bill_count,fetched_at FROM outstanding_reads WHERE company_id=?",cid);
+  return {rows,totals,count:snapshot?.bill_count||allRows.length,fetched_at:snapshot?.fetched_at||null,
     note:"Bill-level snapshot; values and due dates must be checked against live Tally before payment allocation."};
 }
 
@@ -136,6 +140,8 @@ export async function confirmGstLink(D,cid,docId,invoiceId){
   ]);
   if(!d||!inv)bad("Invoice or GSTR-2B document not found",404);
   const h=jload(inv.data,{});
+  if(String(h.date||"").slice(0,10)!==String(d.dt||"").slice(0,10))
+    bad("Invoice dates differ between uploaded original and GSTR-2B. Verify and correct the source invoice date before linking.");
   if(norm(h.number)!==norm(d.num)||norm(h.party_gstin)!==norm(d.ctin)||
     !Number.isFinite(Number(h.total))||Math.abs(Number(h.total)-Number(d.val))>1)
     bad("Cannot confirm: supplier GSTIN, invoice reference or totals do not agree");
