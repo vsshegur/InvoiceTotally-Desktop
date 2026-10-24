@@ -7,7 +7,7 @@ async function companyAccounting(c,el,tab){
   if(tab==="settlements")return companySettlements(c,el);
   if(tab==="actions"){
     const data=await api("/companies/"+c.id+"/action-center");
-    const labels={invoices:"Invoice reviews",bank:"Bank issues",marketplace:"Marketplace",purchases:"GSTR-2B purchases",gstr2b:"GST differences",jobs:"Tally errors"};
+    const labels={invoices:"Invoice reviews",bank:"Bank issues",marketplace:"Marketplace",purchases:"GSTR-2B purchases",gstr2b:"GST differences",jobs:"Tally errors",settlements:"Settlement reviews",overdue:"Overdue bills"};
     el.innerHTML='<h2>Accounting Action Center</h2>'+AW_NOTICE+
       '<div class="card"><div class="stats" style="display:flex;gap:18px;flex-wrap:wrap">'+
       Object.entries(data.counts).map(([k,v])=>'<div><b>'+v+'</b><div class="muted small">'+esc(labels[k]||k)+'</div></div>').join("")+
