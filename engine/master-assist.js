@@ -107,8 +107,9 @@ export async function backfillConfirmedPostings(D,cid,limit=100){
   const items=await D.all(
     "SELECT i.id,COALESCE(i.created_at,0) created_at FROM invoices i "+
     "WHERE i.company_id=? AND i.status='synced' AND "+
-    "EXISTS (SELECT 1 FROM jobs j JOIN posting_audit a ON a.job_id=j.id AND a.phase='created' "+
-    "WHERE j.invoice_id=i.id AND j.company_id=? AND j.kind='import_voucher' AND j.status='done') "+
+    "EXISTS (SELECT 1 FROM jobs j WHERE j.invoice_id=i.id AND j.company_id=? "+
+    "AND j.kind='import_voucher' AND j.status='done' "+
+    "AND (LOWER(TRIM(j.result))='created' OR LOWER(TRIM(j.result)) LIKE 'created 1%')) "+
     "AND (COALESCE(i.created_at,0)>? OR (COALESCE(i.created_at,0)=? AND i.id>?)) "+
     "ORDER BY COALESCE(i.created_at,0),i.id LIMIT ?",cid,cid,at,at,lastId,cap+1);
   const work=items.slice(0,cap);
