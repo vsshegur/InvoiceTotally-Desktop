@@ -333,6 +333,47 @@ export function outstandingBillRows(reply) {
   return out;
 }
 
+const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+/** "20260115", "15-Jan-2026", "15-Jan-26", "2026-01-15" → "2026-01-15" (empty when it isn't a date). */
+export function anyDate(s) {
+  s = String(s || "").trim();
+  let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = /^(\d{1,2})[-\s/]([A-Za-z]{3})[A-Za-z]*[-\s/,]+(\d{2,4})$/.exec(s);
+  if (m && MONTHS[m[2].toLowerCase()]) {
+    const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    return `${y}-${String(MONTHS[m[2].toLowerCase()]).padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  }
+  return "";
+}
+
+/**
+ * Tally's Bills Receivable / Bills Payable report: flat repeating tags in document order —
+ * BILLFIXED (BILLDATE, BILLREF, BILLPARTY) then BILLCL (pending amount), BILLDUE and BILLOVERDUE.
+ * Each BILLFIXED starts a new bill; the tags that follow belong to it. `amount` is signed as Tally prints it.
+ */
+export function billsReportRows(reply) {
+  const out = [];
+  let cur = null;
+  const root = parseXml(reply);
+  const seq = [];
+  walk(root, (n) => { if (/^BILL(FIXED|CL|DUE|OVERDUE)$/.test(n.name)) seq.push(n); });
+  for (const n of seq) {
+    if (n.name === "BILLFIXED") {
+      cur = { ledger: child(n, "BILLPARTY"), name: child(n, "BILLREF"), date: anyDate(child(n, "BILLDATE")), amount: null, due: "", overdue_days: null };
+      out.push(cur);
+    } else if (cur) {
+      const t = n.text.trim();
+      if (n.name === "BILLCL") cur.amount = /\d/.test(t) ? r2(num(t.replace(/\s*(Dr|Cr)\.?$/i, (m0, d) => "")) * (/Cr\.?$/i.test(t) ? 1 : /Dr\.?$/i.test(t) ? -1 : 1)) : null;
+      else if (n.name === "BILLDUE") cur.due = anyDate(t);
+      else if (n.name === "BILLOVERDUE") cur.overdue_days = /\d/.test(t) ? parseInt(t.replace(/[^\d-]/g, ""), 10) : null;
+    }
+  }
+  return out.filter((b) => b.ledger && b.name && b.amount !== null && Math.abs(b.amount) >= 0.005);
+}
+
 // ------------------------------------------------------------------ status
 const COMPANIES_XML = '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>ITCompanies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="ITCompanies" ISMODIFY="No"><TYPE>Company</TYPE><NATIVEMETHOD>Name</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
 

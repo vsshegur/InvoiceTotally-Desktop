@@ -14,7 +14,7 @@ const EC = {
 async function companyEcommerce(c, el) {
   const rows = await api('/companies/' + c.id + '/ecommerce');
   el.innerHTML =
-    '<div class="card" style="margin:0 0 18px;padding:18px"><h2 style="margin:0 0 8px">Offline Meesho, Flipkart &amp; Amazon → Tally</h2>' +
+    '<div class="card" style="margin:0 0 18px;padding:18px">' +
     '<p class="muted">Read marketplace GST Excel files locally, review consolidated monthly sales and GST, map ledgers from this company, then post individual vouchers straight to TallyPrime. No AI or internet API is used for conversion.</p>' +
     '<p class="muted small">Monthly consolidated accounting, not one voucher per order. Marketplace settlement, commissions and payouts are separate.</p>' +
     '<a class="btn primary" href="#/c/' + c.id + '/ecommerce/upload">⇪ Import marketplace files</a></div>' +

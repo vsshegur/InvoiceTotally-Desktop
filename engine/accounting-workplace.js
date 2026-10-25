@@ -4,6 +4,7 @@ import * as R from "./accounting-reconcile.js";
 import * as TL from "../desktop/tally.mjs";
 import {newId,now,jload} from "./db.js";
 import {bankVouchers} from "./accounting-reconcile.js";
+import {legacyBillAgeing} from "./outstanding.js";
 
 const json=x=>new Response(JSON.stringify(x),{headers:{"content-type":"application/json","cache-control":"no-store"}});
 const bad=(message,status=400)=>{const e=new Error(message);e.status=status;throw e;};
@@ -150,15 +151,21 @@ export async function liveIntercompany(D,env,cid,other,body){
   if(names.length && (!names.some(n=>norm(n)===norm(tallyName(a))) || !names.some(n=>norm(n)===norm(tallyName(b)))))
     bad("Both target companies must be open in Tally for the live comparison",409);
   const read=ensureTally(env);
-  const one=await read(T.bankEntriesRequest(tallyName(a),ledgerA,from,to));
-  const two=await read(T.bankEntriesRequest(tallyName(b),ledgerB,from,to));
+  // Read a margin either side of the month: one company often books on the 1st what the other booked on the 30th.
+  const one=await read(T.bankEntriesRequest(tallyName(a),ledgerA,addDays(from,-10),addDays(to,10)));
+  const two=await read(T.bankEntriesRequest(tallyName(b),ledgerB,addDays(from,-10),addDays(to,10)));
   const translate=(xml,ledger)=>R.bankVouchers(xml,ledger).map(v=>({
     id:v.id,number:v.number,reference:v.reference||v.number,date:v.date,
     amount:Math.abs(v.signed),signed:v.signed,party:v.party,type:v.type
   }));
   const x=translate(one,ledgerA),y=translate(two,ledgerB);
+  const inMonth=r=>r.date>=from&&r.date<=to;
+  const m=R.matchInterCompany(x,y);
+  // Entries in the margin only help to find partners; they are not themselves reported as unmatched.
+  const links=m.links.filter(l=>inMonth(l.a)||inMonth(l.b));
+  const unmatched_a=m.unmatched_a.filter(u=>inMonth(u.row)),unmatched_b=m.unmatched_b.filter(inMonth);
   return {company_a:a.name,company_b:b.name,ledger_a:ledgerA,ledger_b:ledgerB,
-    period,rows_a:x.length,rows_b:y.length,...R.matchInterCompany(x,y),
+    period,rows_a:x.filter(inMonth).length,rows_b:y.filter(inMonth).length,links,unmatched_a,unmatched_b,notice:m.notice,
     scope:"Fresh read-only ledger vouchers for the chosen month. Equal amounts must have opposite ledger signs and a matching invoice/reference. No entries or bank reconciliation dates are changed."};
 }
 
@@ -190,24 +197,7 @@ async function actionCenter(D,cid){
 /** Live bill-wise ageing across every Sundry Debtor and Sundry Creditor ledger, read fresh from Tally
  *  (reuses the same read already built for single-party bill allocation in bank.js). Age is measured
  *  from the bill's own date; "overdue" additionally needs the bill's own credit period to be set. */
-export async function billAgeing(D,env,cid){
-  const c=await company(D,cid),read=ensureTally(env);
-  const today=new Date().toISOString().slice(0,10);
-  const todayMs=Date.parse(today+"T00:00:00Z");
-  const bills=[];
-  for(const group of ["Sundry Debtors","Sundry Creditors"]){
-    const xml=await read(T.outstandingBillsRequest(tallyName(c),group));
-    for(const b of TL.outstandingBillRows(xml)){
-      const billMs=Date.parse((b.date||"")+"T00:00:00Z");
-      const days_old=Number.isFinite(billMs)?Math.max(0,Math.round((todayMs-billMs)/86400000)):null;
-      const overdue_days=(days_old!=null&&b.credit_days!=null)?Math.max(0,days_old-b.credit_days):null;
-      bills.push({...b,group,days_old,overdue_days});
-    }
-  }
-  bills.sort((a,b)=>(b.overdue_days??b.days_old??-1)-(a.overdue_days??a.days_old??-1));
-  return {as_of:today,bills,
-    notice:"Freshly read from Tally just now, across every Sundry Debtor and Sundry Creditor ledger. Not yet validated against a real Tally company — check a bill's amount there before relying on it."};
-}
+export const billAgeing=(D,env,cid)=>legacyBillAgeing(D,env,cid);
 
 export function accountingRoutes(route,authorize){
   async function auth(ctx,cid){await authorize(ctx.D,ctx.env,cid);}

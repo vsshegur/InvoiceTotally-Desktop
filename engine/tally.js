@@ -213,10 +213,25 @@ export function outstandingBillsRequest(company, group) {
   return "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE>" +
     "<ID>ITOutstandingBills</ID></HEADER><BODY><DESC><STATICVARIABLES>" +
     `<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>${companyVar(company)}</STATICVARIABLES>` +
-    `<TDL><TDLMESSAGE><COLLECTION NAME="ITOutstandingBills" ISMODIFY="No"><TYPE>Ledger</TYPE><CHILDOF>${esc(group)}</CHILDOF>` +
+    `<TDL><TDLMESSAGE><COLLECTION NAME="ITOutstandingBills" ISMODIFY="No"><TYPE>Ledger</TYPE><CHILDOF>${esc(group)}</CHILDOF><BELONGSTO>Yes</BELONGSTO>` +
     "<NATIVEMETHOD>Name</NATIVEMETHOD>" +
     "<FETCH>BillAllocations.Name,BillAllocations.BillDate,BillAllocations.OpeningBalance,BillAllocations.ClosingBalance,BillAllocations.BillCreditPeriod</FETCH>" +
     "</COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>";
+}
+
+/**
+ * Pending bills for one side, the way TallyPrime's own Bills Receivable / Bills Payable reports list them
+ * (bill date, reference, party, pending amount, due date, days overdue). Read-only report export, as of one date.
+ * Tried first; outstandingBillsRequest() above is the fallback, and ledger closing balances are the last resort.
+ */
+export function billsReportRequest(company, side, asOf, from) {
+  const report = side === "payable" ? "Bills Payable" : "Bills Receivable";
+  const to = tallyDate(asOf);
+  const start = tallyDate(from || asOf.slice(0, 4) + "-01-01");
+  return "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Data</TYPE>" +
+    `<ID>${report}</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>${companyVar(company)}` +
+    `<SVFROMDATE TYPE="Date">${start}</SVFROMDATE><SVTODATE TYPE="Date">${to}</SVTODATE>` +
+    "</STATICVARIABLES></DESC></BODY></ENVELOPE>";
 }
 
 // ------------------------------------------------------------ GSTR-2B reconciliation

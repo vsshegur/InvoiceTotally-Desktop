@@ -198,8 +198,8 @@ const routes = [
   [/^#\/actions$/, viewGlobalActionCenter],
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
-  [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "batches")],
-  [/^#\/c\/(\w+)\/(settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|settlements|diagnostics)$/, viewCompany],
+  [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "overview")],
+  [/^#\/c\/(\w+)\/(overview|batches|ageing|settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|settlements|diagnostics)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
   [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
   [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
@@ -529,20 +529,56 @@ function companyModal() {
 // ---------------------------------------------------------------------------
 // company home
 // ---------------------------------------------------------------------------
+// The company's navigation, grouped by what the person is doing. Diagnostics is deliberately the last item.
+const COMPANY_NAV = [
+  [null, [["overview", "Overview", "⌂"], ["actions", "Action Center", "◎"]]],
+  ["Post to Tally", [["batches", "Invoices", "▤"], ["bank", "Bank statements", "▥"], ["ecommerce", "E-Commerce → Tally", "⇄"]]],
+  ["Reconcile", [["gstr2b", "GSTR-2B", "§"], ["gstcontrol", "GST reconciliation", "≡"], ["intercompany", "Inter-company", "⇋"], ["settlements", "Settlements", "◍"]]],
+  ["Parties & bills", [["ageing", "Outstanding & ageing", "₹"], ["masters", "Masters", "☰"], ["smartmaps", "Smart matching", "✦"]]],
+  ["System", [["jobs", "Tally log", "⟲"], ["settings", "Settings", "⚙"], ["diagnostics", "Diagnostics", "✚"]]],
+];
+const TAB_INFO = {
+  overview: ["Overview", "Where things stand for this company, and where to start."],
+  actions: ["Action Center", "Everything that needs a decision, in one list."],
+  batches: ["Invoices", "Read purchase and sales invoices, check them, and post them to Tally."],
+  bank: ["Bank statements", "Match a bank statement to ledgers and bills, then post the entries."],
+  ecommerce: ["E-Commerce → Tally", "Offline Meesho, Flipkart and Amazon sales and settlements."],
+  gstr2b: ["GSTR-2B", "Compare the GST portal's purchase data with what is booked in Tally."],
+  gstcontrol: ["GST reconciliation", "GSTR-1, GSTR-2B and GSTR-3B against your books."],
+  intercompany: ["Inter-company reconciliation", "Check that two of your companies agree on what they owe each other."],
+  settlements: ["Settlements", "Marketplace payouts against the sales they settle."],
+  ageing: ["Outstanding & ageing", "Who owes you and whom you owe, how old it is — and share it on WhatsApp or as a PDF."],
+  masters: ["Masters", "Ledgers, stock items, groups and units read from Tally."],
+  smartmaps: ["Smart matching", "What the app has learned about your ledgers and items."],
+  jobs: ["Tally log", "Everything sent to Tally, and what came back."],
+  settings: ["Settings", "This company's names, defaults and invoice readers."],
+  diagnostics: ["Diagnostics", "Health of this app, its database, backups and the Tally connection."],
+};
 async function viewCompany(cid, tab) {
+  tab = tab || "overview";
   const c = await api(`/companies/${cid}`);
   CURRENT.company = c;
-  const tabs = [["batches", "Invoices"], ["bank", "Bank statements"], ["actions", "Action Center"], ["ageing", "Bill Ageing"], ["intercompany", "Inter-Company"], ["settlements", "Settlements"], ["diagnostics", "Diagnostics"], ["gstr2b", "GSTR-2B"], ["gstcontrol", "GST Reconciliation"], ["ecommerce", "E-Commerce → Tally"], ["smartmaps", "Smart Matching"], ["masters", "Masters"], ["jobs", "Tally log"], ["settings", "Settings"]];
-  const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || ["upload", "⇪ Upload invoices"];
-  app().innerHTML = topBar([[c.name, `#/c/${cid}`]], c) + `<div class="bar">
-      <div class="status">${c.masters.ledger} ledgers · ${c.masters.stock_item} stock items · masters ${c.masters_imported_at ? "imported " + ago(c.masters_imported_at) : c.pending_jobs ? "being read from Tally…" : "not imported yet"}</div>
-      <div class="spacer"></div><a class="btn primary" href="#/c/${cid}/${upload[0]}">${upload[1]} <kbd>U</kbd></a></div>
-    <div class="page wide"><nav class="tabs">${tabs.map(([k, l]) => `<a href="#/c/${cid}${k === "batches" ? "" : "/" + k}" class="${tab === k ? "on" : ""}">${l}</a>`).join("")}</nav>
-    <div id="tab"></div></div>`;
+  const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || (["overview", "batches", "actions"].includes(tab) ? ["upload", "⇪ Upload invoices"] : null);
+  const info = TAB_INFO[tab] || [tab, ""];
+  const st = tallyState(c);
+  const nav = COMPANY_NAV.map(([group, items]) => `<div class="grp">${group ? `<div class="gh">${group}</div>` : ""}${items.map(([k, l, ico]) =>
+    `<a class="nav ${tab === k ? "on" : ""}" href="#/c/${cid}${k === "overview" ? "" : "/" + k}" ${tab === k ? 'aria-current="page"' : ""}><span class="ico" aria-hidden="true">${ico}</span>${l}</a>`).join("")}</div>`).join("");
+  app().innerHTML = topBar([[c.name, `#/c/${cid}`]], c) + `<div class="shell">
+      <aside class="side" aria-label="${esc(c.name)} sections">
+        <div class="co"><div class="coname" title="${esc(c.name)}">${esc(c.name)}</div>
+          <div class="muted small">${esc(c.gstin || "No GSTIN")}</div>
+          <div class="muted small" style="margin-top:4px"><span class="dot ${st[0]}"></span> ${esc(st[1])}</div>
+          <div class="muted small meta">${c.masters.ledger} ledgers · ${c.masters.stock_item} items · ${c.masters_imported_at ? "masters " + ago(c.masters_imported_at) : c.pending_jobs ? "reading masters…" : "masters not imported"}</div></div>
+        ${nav}</aside>
+      <main class="main"><div class="phead"><div><h1>${esc(info[0])}</h1><p class="muted">${esc(info[1])}</p></div><div class="spacer"></div>
+        ${upload ? `<a class="btn primary" href="#/c/${cid}/${upload[0]}">${upload[1]} <kbd>U</kbd></a>` : ""}</div>
+        <div id="tab"></div></main></div>`;
   wireTop(c);
-  keymap.u = () => location.hash = `#/c/${cid}/${upload[0]}`;
+  if (upload) keymap.u = () => location.hash = `#/c/${cid}/${upload[0]}`;
   const el = $("#tab");
-  if (["actions","ageing","intercompany","settlements","diagnostics"].includes(tab)) return companyAccounting(c,el,tab);
+  if (tab === "overview") return companyOverview(c, el);
+  if (["actions", "intercompany", "settlements", "diagnostics"].includes(tab)) return companyAccounting(c, el, tab);
+  if (tab === "ageing") return renderOutstanding(c, el);
   if (tab === "batches") return companyBatches(c, el);
   if (tab === "masters") return companyMasters(c, el);
   if (tab === "jobs") return companyJobs(c, el);
@@ -552,6 +588,41 @@ async function viewCompany(cid, tab) {
   if (tab === "ecommerce") return companyEcommerce(c, el);
   if (tab === "gstcontrol") return companyGstControl(c, el);
   if (tab === "smartmaps") return companySmartMappings(c, el);
+}
+
+// The company's home: what to do, and what is waiting.
+async function companyOverview(c, el) {
+  const [ac, batches, stmts] = await Promise.all([
+    api(`/companies/${c.id}/action-center`).catch(() => null),
+    api(`/companies/${c.id}/batches`).catch(() => []),
+    api(`/companies/${c.id}/bank`).catch(() => []),
+  ]);
+  const help = tallyHelp(c);
+  const todo = ac ? Object.values(ac.counts).reduce((a, b) => a + b, 0) : 0;
+  const tile = (href, icon, title, text) => `<a class="tile" href="${href}"><span class="ti">${icon}</span><b>${title}</b><span class="muted small">${text}</span></a>`;
+  el.innerHTML = (help ? `<div class="alert warn" style="margin-bottom:14px">${help}</div>` : "") +
+    (!c.masters.ledger ? `<div class="alert warn" style="margin-bottom:14px">${c.pending_jobs ? "Reading your ledgers and stock items from Tally…" : "Masters aren't imported yet. Press <b>Import masters</b> (top right) so entries can be matched to your ledgers and stock items."}</div>` : "") +
+    `<div class="eyebrow" style="margin-bottom:8px">Start something</div>
+    <div class="tiles">
+      ${tile(`#/c/${c.id}/upload`, "▤", "Upload invoices", "PDF, photo or Excel purchase and sales invoices")}
+      ${tile(`#/c/${c.id}/bank/upload`, "▥", "Upload a bank statement", "Match it to ledgers and bills, then post")}
+      ${tile(`#/c/${c.id}/ageing`, "₹", "Outstanding & ageing", "Receivables and payables — share on WhatsApp or PDF")}
+      ${tile(`#/c/${c.id}/gstr2b-purchase`, "§", "GSTR-2B purchases", "Prepare purchase vouchers from the GST portal file")}
+      ${tile(`#/c/${c.id}/intercompany`, "⇋", "Inter-company check", "Do two of your companies agree?")}
+      ${tile(`#/c/${c.id}/gstcontrol`, "≡", "GST reconciliation", "GSTR-1, 2B and 3B against your books")}
+    </div>
+    <div class="cols-ov">
+      <section><div class="eyebrow" style="margin:18px 0 8px">Needs attention ${todo ? `<span class="count">${todo}</span>` : ""}</div>
+        ${ac && ac.items.length ? `<div class="card flush"><table class="grid"><tbody>${ac.items.slice(0, 7).map((r) => `<tr class="click" data-href="${esc(r.link)}"><td><b>${esc(r.label)}</b><div class="muted small">${esc(r.description || "")}</div></td><td class="num"><span class="tag">${esc(r.kind)}</span></td></tr>`).join("")}</tbody></table>
+          ${ac.items.length > 7 ? `<div style="padding:8px 12px"><a href="#/c/${c.id}/actions"><u>See all ${ac.items.length}</u></a></div>` : ""}</div>`
+          : `<div class="card empty">Nothing is waiting. 🎉</div>`}</section>
+      <section><div class="eyebrow" style="margin:18px 0 8px">Recent</div>
+        <div class="card flush"><table class="grid"><tbody>
+        ${batches.slice(0, 4).map((b) => `<tr class="click" data-href="#/b/${b.id}"><td>Invoices · <b>${esc(b.name)}</b></td><td class="muted num">${ago(b.created_at)}</td></tr>`).join("")}
+        ${(Array.isArray(stmts) ? stmts : []).slice(0, 3).map((s) => `<tr class="click" data-href="#/s/${s.id}"><td>Bank · <b>${esc(s.name)}</b></td><td class="muted num">${ago(s.created_at)}</td></tr>`).join("")}
+        ${!batches.length && !(Array.isArray(stmts) && stmts.length) ? `<tr><td class="muted">Nothing uploaded yet.</td></tr>` : ""}</tbody></table></div></section>
+    </div>`;
+  $$("tr[data-href]", el).forEach((tr) => tr.onclick = () => location.hash = tr.dataset.href);
 }
 
 function tallyHelp(c) {
@@ -587,10 +658,13 @@ async function companyMasters(c, el) {
       <button data-k="ledger" class="on">Ledgers <span class="c">${c.masters.ledger}</span></button>
       <button data-k="stock_item">Stock items <span class="c">${c.masters.stock_item}</span></button>
       <button data-k="group">Groups <span class="c">${c.masters.group}</span></button>
-      <button data-k="unit">Units <span class="c">${c.masters.unit}</span></button></div>
+      <button data-k="unit">Units <span class="c">${c.masters.unit}</span></button>
+      <button data-k="outstanding" title="Who owes what — share by party or group on WhatsApp or as a PDF">Outstanding &amp; share</button></div>
     <input class="in" id="q" placeholder="Search name, group, GSTIN, HSN…" style="max-width:340px"></div><div id="list"></div>`;
   let kind = "ledger";
   const load = async () => {
+    $("#q").classList.toggle("hidden", kind === "outstanding");
+    if (kind === "outstanding") return renderOutstanding(c, $("#list"));
     const r = await api(`/companies/${c.id}/masters?kind=${kind}&q=${encodeURIComponent($("#q").value)}`);
     $("#list").innerHTML = `<table class="grid"><thead><tr><th>Name</th><th>${kind === "stock_item" ? "HSN" : "Under"}</th><th>${kind === "stock_item" ? "GST" : kind === "ledger" ? "GSTIN" : ""}</th><th>${kind === "stock_item" ? "Unit" : kind === "ledger" ? "Group" : ""}</th></tr></thead><tbody>
       ${r.items.map((m) => `<tr><td>${esc(m.name)} ${m.pending ? '<span class="tag warn">being created in Tally</span>' : ""}</td>
@@ -708,8 +782,8 @@ async function viewUpload(cid) {
     const step = !st.type ? 1 : !st.source ? 2 : 3;
     const ch = (key, val, title, sub) => `<div class="choice ${st[key] === val ? "on" : ""}" data-k="${key}" data-v="${val}"><div><div><b>${title}</b></div><div class="sub">${sub}</div></div>${st[key] === val ? "✓" : ""}</div>`;
     const done = (n, title, val, key) => `<div class="wstep"><div class="head"><span class="check">✓</span><b>${title}</b><div class="spacer"></div><span class="muted">${val}</span><button class="btn sm" data-reset="${key}">Change</button></div></div>`;
-    app().innerHTML = topBar([[c.name, `#/c/${cid}`], ["Upload invoices"]], c) + `<div class="bar"><span class="status">${st.files.length} file(s)</span><div class="spacer"></div>
-      <a class="btn" href="#/c/${cid}">Back <kbd>Esc</kbd></a><button class="btn primary" id="go" ${step === 3 && st.files.length ? "" : "disabled"}>Upload &amp; read <kbd>↵</kbd></button></div>
+    app().innerHTML = topBar([[c.name, `#/c/${cid}/batches`], ["Upload invoices"]], c) + `<div class="bar"><span class="status">${st.files.length} file(s)</span><div class="spacer"></div>
+      <a class="btn" href="#/c/${cid}/batches">Back <kbd>Esc</kbd></a><button class="btn primary" id="go" ${step === 3 && st.files.length ? "" : "disabled"}>Upload &amp; read <kbd>↵</kbd></button></div>
     <div class="page wiz"><div class="eyebrow">Upload invoices</div><h1>${esc(c.name)}</h1>
       ${step > 1 ? done(1, "What are these invoices?", `Booked as ${st.type}`, "type") : `<div class="wstep active"><div class="head"><span class="n">1</span><b>What are these invoices?</b></div><div class="choices">
         ${ch("type", "Purchase", "Purchase", "Bills from your suppliers — booked as Purchase vouchers")}${ch("type", "Sales", "Sales", "Invoices you issued — booked as Sales vouchers")}</div></div>`}
@@ -799,7 +873,7 @@ async function viewUpload(cid) {
       busy = false; render();
     }
   };
-  keymap.Escape = () => location.hash = `#/c/${cid}`;
+  keymap.Escape = () => location.hash = `#/c/${cid}/batches`;
   keymap.enter = () => upload();
   render();
 }
@@ -834,9 +908,9 @@ async function viewBatch(bid) {
   const failedFiles = b.files.filter((f) => f.status === "failed");
   const reviewable = b.invoices.filter((i) => i.status === "review" || i.status === "failed").length;
   const rechecked = b.invoices.filter((i) => i.rechecked).length;
-  app().innerHTML = topBar([[c.name, `#/c/${c.id}`], [b.name]], c) + `<div class="bar">
+  app().innerHTML = topBar([[c.name, `#/c/${c.id}/batches`], [b.name]], c) + `<div class="bar">
       <span class="status">${b.period_mode==="month" ? "Month "+esc(b.expected_period)+" · " : b.period_mode==="mixed"?"Regular mixed invoices · ":""}${b.stage === "review" ? `${b.invoices.length} invoice(s) read — ${reviewable ? "ready to review" : "all done"}${rechecked ? ` · ${rechecked} double-checked by a second read` : ""}${b.ai_cost_usd ? ` · AI cost ≈ ₹${(b.ai_cost_usd * 88).toFixed(2)}` : ""}` : b.stage === "error" ? "Something went wrong" : "Working…"}</span><div class="spacer"></div>
-      <button class="btn" id="refresh">⟳ Refresh <kbd>Alt+R</kbd></button><a class="btn" href="#/c/${c.id}">Back <kbd>Esc</kbd></a>
+      <button class="btn" id="refresh">⟳ Refresh <kbd>Alt+R</kbd></button><a class="btn" href="#/c/${c.id}/batches">Back <kbd>Esc</kbd></a>
       <button class="btn danger" id="del" title="Delete this batch from Vipul Workplace">🗑 Delete batch</button>
       ${!working && (b.invoices.some((i) => i.status === "error") || failedFiles.length) ? `<button class="btn" id="retry">↻ Retry failed</button>` : ""}
       ${b.stage === "review" && reviewable ? `<a class="btn primary" href="#/b/${bid}/review/party">Bulk review <kbd>R</kbd></a>` : ""}</div>
@@ -863,13 +937,13 @@ async function viewBatch(bid) {
   wireTop(c);
   $$("tr[data-href]").forEach((tr) => tr.onclick = () => location.hash = tr.dataset.href);
   $("#refresh").onclick = route; keymap["Alt+r"] = route;
-  keymap.Escape = () => location.hash = `#/c/${c.id}`;
+  keymap.Escape = () => location.hash = `#/c/${c.id}/batches`;
   keymap.r = () => b.stage === "review" && (location.hash = `#/b/${bid}/review/party`);
   $("#del").onclick=async()=>{
     if(!confirm("DELETE "+b.name+" from Vipul Workplace? This removes its invoice files and drafts. Vouchers already in Tally will NOT be deleted.\n\nThis action cannot be undone."))return;
     try{await api(`/batches/${bid}`,{method:"DELETE"});
       toast("Batch deleted. Entries already posted in Tally were not changed.");
-      location.hash=`#/c/${c.id}`;
+      location.hash=`#/c/${c.id}/batches`;
     }catch(e){toast("Delete failed: "+e.message,true);}
   };
   $("#retry")?.addEventListener("click", async () => { await act(() => api(`/batches/${bid}/retry`, { body: {} }), "Reading again…"); route(); });
@@ -880,7 +954,7 @@ async function viewBatch(bid) {
 async function viewBatchDateReview(bid){
   const {b,c}=await loadBatchCtx(bid);
   const flagged=b.invoices.filter(i=>i.date_review?.needs_review);
-  app().innerHTML=topBar([[c.name,`#/c/${c.id}`],[b.name,`#/b/${bid}`],["Have a look"]],c)+
+  app().innerHTML=topBar([[c.name,`#/c/${c.id}/batches`],[b.name,`#/b/${bid}`],["Have a look"]],c)+
     `<div class="bar"><span class="status">${flagged.length} invoice(s) to check</span><div class="spacer"></div>
       <a class="btn" href="#/b/${bid}">Back to batch</a><button class="btn" id="dateRefresh">Refresh</button></div>
     <div class="page wide"><h1>Have a look — verify invoice dates</h1>
@@ -908,7 +982,7 @@ async function viewReview(bid, step) {
   const idx = STEPS.findIndex((s) => s[0] === step);
   const next = STEPS[idx + 1], prev = STEPS[idx - 1];
   const locked = (k) => k === "sync" && !inReview.every((i) => i.steps.party && i.steps.stock && i.steps.ledger && i.steps.tax) && inReview.length > 0;
-  const head = `${topBar([[c.name, `#/c/${c.id}`], [b.name, `#/b/${bid}`], [`${STEPS[idx][1]} · ${idx + 1} of 5`]], c)}
+  const head = `${topBar([[c.name, `#/c/${c.id}/batches`], [b.name, `#/b/${bid}`], [`${STEPS[idx][1]} · ${idx + 1} of 5`]], c)}
     <div class="bar"><span class="status" id="stat"></span><div class="spacer"></div>
       <a class="btn" href="${prev ? `#/b/${bid}/review/${prev[0]}` : `#/b/${bid}`}">Back <kbd>Esc</kbd></a>
       <span id="extraBtns" style="display:contents"></span>
@@ -1301,7 +1375,7 @@ async function viewInvoice(iid) {
     <td><input class="cell num" data-l="amount" value="${l.amount ?? ""}" ${ro} style="width:100px"></td>
     <td>${editable ? `<button class="btn sm ghost" data-del="${i}" title="Remove line">✕</button>` : ""}</td></tr>`;
   const statusLbl = { review: inv.steps.ready ? "Ready to sync" : "In review", queued: "Sending to Tally…", synced: "In Tally", failed: "Tally rejected it", error: "Could not read", reading: "Reading…" }[inv.status];
-  app().innerHTML = topBar([[c.name, `#/c/${c.id}`], [b.name, `#/b/${b.id}`], [`Invoice ${h.number || ""}`]], c) + `<div class="bar">
+  app().innerHTML = topBar([[c.name, `#/c/${c.id}/batches`], [b.name, `#/b/${b.id}`], [`Invoice ${h.number || ""}`]], c) + `<div class="bar">
       <span class="status"><b class="${inv.status === "synced" ? "good" : inv.status === "failed" || inv.status === "error" ? "bad" : ""}">${statusLbl}</b> · ${b.voucher_type} · steps: ${["party", "stock", "ledger", "tax"].map((s) => `${s} ${inv.steps[s] ? '<span class="good">✓</span>' : '<span class="faint">○</span>'}`).join(" ")}</span>
       <div class="spacer"></div><button class="btn" onclick="history.back()">Back <kbd>Esc</kbd></button>
       ${editable ? `<button class="btn danger" id="del">Delete invoice</button>${inv.pages.length ? `<button class="btn" id="reread" title="Read this invoice again from the image (your edits are replaced)">↻ Read again</button>` : ""}<button class="btn" id="save">Save changes <kbd>Ctrl+S</kbd></button>` : `<button class="btn" id="back">Send back to review</button>`}

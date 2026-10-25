@@ -83,20 +83,69 @@ export function reconcileBank(statementLines,tallyLines,{dateTolerance=3}={}){
     notice:"Matches are application-side comparisons only; bank reconciliation dates in Tally are not changed."};
 }
 
-export function matchInterCompany(a,b){
-  const same=(x,y)=>normRef(x)===normRef(y);
-  const links=[],used=new Set(),unmatched=[];
-  for(const x of a){
-    const eligible=b.map((y,index)=>({...y,index})).filter(y=>
-      !used.has(y.index)&&Math.abs(money(x.amount)-money(y.amount))<=0.01 &&
-      (!Number.isFinite(Number(x.signed))||!Number.isFinite(Number(y.signed))||Math.abs(money(Number(x.signed)+Number(y.signed)))<=0.01) &&
-      day(x.date)!==null && day(y.date)!==null && Math.abs(day(x.date)-day(y.date))<=7 &&
-      ((x.reference&&y.reference&&same(x.reference,y.reference)) ||
-       (x.number&&y.reference&&same(x.number,y.reference)) ||
-       (x.reference&&y.number&&same(x.reference,y.number))));
-    if(eligible.length===1){used.add(eligible[0].index);links.push({a:x,b:eligible[0],status:"suggested"});}
-    else unmatched.push({row:x,reason:eligible.length?"multiple_candidates":"no_matching_reference"});
+/** A reference as people actually type it: financial-year tails and zero padding do not count ("INV/0012/25-26" = "INV12"). */
+export function looseRef(x){
+  let v=String(x||"").toUpperCase().trim();
+  v=v.replace(/[\/\-\s](20)?\d{2}[\/\-](20)?\d{2}$/,"");
+  return v.replace(/[^A-Z0-9]/g,"").replace(/(^|[A-Z])0+(?=\d)/g,"$1");
+}
+function refScore(x,y){
+  const xs=[x.reference,x.number].filter(Boolean),ys=[y.reference,y.number].filter(Boolean);
+  let best=0;
+  // A reference on one side normally names the other side's own voucher number, so cross-pair them (and also the same field).
+  for(const p of xs)for(const q of ys){
+    if(normRef(p)&&normRef(p)===normRef(q))best=Math.max(best,3);
+    else{
+      const a=looseRef(p),b=looseRef(q);
+      if(a&&a===b)best=Math.max(best,2);
+      else if(a&&b&&Math.min(a.length,b.length)>=4&&(a.endsWith(b)||b.endsWith(a)))best=Math.max(best,1);
+    }
   }
-  return {links,unmatched_a:unmatched,unmatched_b:b.filter((_,i)=>!used.has(i)),
+  return best;
+}
+/**
+ * Pair two companies' reciprocal entries. Candidates must have opposite ledger sides (when both sides give one), amounts within
+ * a rupee (round-off) and dates within 10 days. They are ranked: same reference > same reference after tidy-up > same amount and
+ * nearly the same date with nothing else competing. Best pairs are taken first, so a repeated amount cannot steal another entry's partner.
+ * Links carry the method and confidence so the person can see why they were paired.
+ */
+export function matchInterCompany(a,b){
+  const pairs=[];
+  a.forEach((x,i)=>b.forEach((y,j)=>{
+    const diff=Math.abs(money(x.amount)-money(y.amount));
+    if(diff>1.0)return;
+    const sx=Number(x.signed),sy=Number(y.signed);
+    if(Number.isFinite(sx)&&Number.isFinite(sy)&&Math.abs(money(sx+sy))>1.0)return;
+    const dx=day(x.date),dy=day(y.date);
+    if(dx===null||dy===null)return;
+    const dd=Math.abs(dx-dy);
+    if(dd>10)return;
+    const rs=refScore(x,y);
+    if(rs>0)pairs.push({i,j,rs,diff,dd,method:rs>=3?"reference":"reference_tidied"});
+    else if(diff<=0.01&&dd<=3)pairs.push({i,j,rs:0,diff,dd,method:"amount_date"});
+  }));
+  pairs.sort((p,q)=>q.rs-p.rs||p.diff-q.diff||p.dd-q.dd||p.i-q.i||p.j-q.j);
+  const usedA=new Set(),usedB=new Set(),links=[];
+  for(const p of pairs){
+    if(usedA.has(p.i)||usedB.has(p.j))continue;
+    if(p.method==="amount_date"){
+      // Weak evidence: only when this is the single plausible partner both ways.
+      const rivalsA=pairs.filter(o=>o.method==="amount_date"&&o.i===p.i&&!usedB.has(o.j)).length;
+      const rivalsB=pairs.filter(o=>o.method==="amount_date"&&o.j===p.j&&!usedA.has(o.i)).length;
+      if(rivalsA>1||rivalsB>1)continue;
+    }
+    usedA.add(p.i);usedB.add(p.j);
+    links.push({a:a[p.i],b:b[p.j],status:"suggested",method:p.method,
+      confidence:p.method==="reference"&&p.diff<=0.01?"high":p.method==="amount_date"?"low":"medium",
+      amount_diff:money(p.diff),day_diff:p.dd});
+  }
+  const why=(x,i)=>{
+    const near=b.map((y,j)=>({y,j})).filter(({y,j})=>!usedB.has(j)&&Math.abs(money(x.amount)-money(y.amount))<=1.0);
+    if(!near.length)return "no_entry_with_this_amount";
+    return near.some(({y})=>day(x.date)!==null&&day(y.date)!==null&&Math.abs(day(x.date)-day(y.date))<=10)?"same_amount_but_reference_differs":"same_amount_but_date_too_far";
+  };
+  return {links,
+    unmatched_a:a.map((x,i)=>({x,i})).filter(({i})=>!usedA.has(i)).map(({x,i})=>({row:x,reason:why(x,i)})),
+    unmatched_b:b.filter((_,j)=>!usedB.has(j)),
     notice:"These are suggestions only; verify legal entity, voucher nature and reciprocal accounting."};
 }
