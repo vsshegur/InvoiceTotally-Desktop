@@ -137,16 +137,22 @@ export async function intercompanyReview(D,aId,bId){
 export async function liveIntercompany(D,env,cid,other,body){
   if(cid===other)bad("Choose different companies");
   const [a,b]=await Promise.all([company(D,cid),company(D,other)]);
-  const period=String(body.period||"");
-  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))bad("Choose a valid month");
+  // Either one month ("2026-04") or a whole financial year (fy = the year it starts: 2026 → 1 Apr 2026 to 31 Mar 2027).
+  const fyRaw=body.fy;
+  const fy=fyRaw==null||fyRaw===""?null:Number(fyRaw);
+  let period=String(body.period||"");
+  if(fy!=null){if(!Number.isInteger(fy)||fy<2000||fy>2100)bad("Choose a valid financial year");}
+  else if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))bad("Choose a valid month");
   const ledgerA=String(body.ledger_a||"").trim(),ledgerB=String(body.ledger_b||"").trim();
   if(!ledgerA||!ledgerB)bad("Choose the reciprocal inter-company ledger in each Tally company");
   for(const [c,name] of [[a,ledgerA],[b,ledgerB]]){
     const known=await D.first("SELECT id FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND UPPER(name)=UPPER(?)",c.id,name);
     if(!known)bad("Inter-company ledger "+name+" does not exist in the imported masters for "+c.name);
   }
-  const yy=Number(period.slice(0,4)),mm=Number(period.slice(5,7));
-  const from=period+"-01",to=new Date(Date.UTC(yy,mm,0)).toISOString().slice(0,10);
+  let from,to,scopeLabel;
+  if(fy!=null){from=fy+"-04-01";to=(fy+1)+"-03-31";period=fy+"-"+String(fy+1).slice(2);scopeLabel="FY "+fy+"-"+String(fy+1).slice(2);}
+  else{const yy=Number(period.slice(0,4)),mm=Number(period.slice(5,7));
+    from=period+"-01";to=new Date(Date.UTC(yy,mm,0)).toISOString().slice(0,10);scopeLabel=period;}
   const names=env.TALLY?.state?.companies||[];
   if(names.length && (!names.some(n=>norm(n)===norm(tallyName(a))) || !names.some(n=>norm(n)===norm(tallyName(b)))))
     bad("Both target companies must be open in Tally for the live comparison",409);
@@ -165,8 +171,8 @@ export async function liveIntercompany(D,env,cid,other,body){
   const links=m.links.filter(l=>inMonth(l.a)||inMonth(l.b));
   const unmatched_a=m.unmatched_a.filter(u=>inMonth(u.row)),unmatched_b=m.unmatched_b.filter(inMonth);
   return {company_a:a.name,company_b:b.name,ledger_a:ledgerA,ledger_b:ledgerB,
-    period,rows_a:x.filter(inMonth).length,rows_b:y.filter(inMonth).length,links,unmatched_a,unmatched_b,notice:m.notice,
-    scope:"Fresh read-only ledger vouchers for the chosen month. Equal amounts must have opposite ledger signs and a matching invoice/reference. No entries or bank reconciliation dates are changed."};
+    period,fy,from,to,scope_label:scopeLabel,rows_a:x.filter(inMonth).length,rows_b:y.filter(inMonth).length,links,unmatched_a,unmatched_b,notice:m.notice,
+    scope:"Fresh read-only ledger vouchers for the chosen "+(fy!=null?"financial year":"month")+". Equal amounts must have opposite ledger signs and a matching invoice/reference. No entries or bank reconciliation dates are changed."};
 }
 
 async function actionCenter(D,cid){

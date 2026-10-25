@@ -361,3 +361,13 @@ in an audit of the recent accounting modules:
 - **Share by WhatsApp or PDF**, per party, for the ticked parties, or one summary message per group. WhatsApp opens with the message ready (a link cannot attach a file, so download the PDF and attach it in the chat). Numbers are stored on this PC only (not in Tally).
 - **Inter-company matching** now pairs by reference ignoring prefixes, year tails and zero padding, allows ₹1 round-off, reads 10 days either side of the month so month-end entries are not reported as unmatched, ranks pairs so repeated amounts cannot steal each other's partner, and says why anything is left unpaired.
 - Nothing in these features writes to Tally: all reads are Export requests.
+
+## Version 4.1.0 — transaction-by-transaction bank matching, modern pickers, per-user features
+- **Bank reconciliation, one transaction at a time.** "Go through transactions one by one" (or "One by one" on a recurring pattern) walks each statement line: the party is read from the narration (cheque clearing "By-Clearing NAME, Chq: …", UPI `…/DEBIT/NAME/…`, NEFT/IMPS), the party's *live* open bills are read from Tally, bills named in the narration or equal to the amount are pre-ticked, "Fill oldest bills first" is one click, and the rest is saved On Account. Nothing is posted from this screen.
+- **Searchable ledger boxes.** Every long dropdown (≥10 options) becomes a type-to-search box with full keyboard control (↑ ↓ Enter Esc). The ledger list now loads every master, not the first 200.
+- **New calendar and month picker** (typed dates too: `25/10/2026`, `Oct 2026`).
+- **Invoice upload: several months.** Choose any set of months (or a whole FY) as the allowed invoice months.
+- **Inter-company: month or whole financial year** (1 Apr – 31 Mar).
+- **Outstanding & ageing:** sort by party name, bills, oldest or pending (click again to reverse). The WhatsApp group message now lists every party's bills.
+- **GST reconciliation panel redesigned:** a stepper, Tally figure cards, portal figures in a collapsible section and a pass/fail pill on each comparison.
+- **Admin: per-user features.** Switch Invoices, Bank, E-Commerce, Settlements, GSTR-2B, GST reconciliation, Inter-company, Outstanding and WhatsApp/PDF sharing on or off for each user. Switched-off features are hidden in the app and refused by the API. Everything is on by default; the admin is never restricted.

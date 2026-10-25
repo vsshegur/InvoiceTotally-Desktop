@@ -1,5 +1,6 @@
 // InvoiceTotally for Windows — the JSON API behind the app window (served on this PC only; see desktop/main.mjs).
 import { db, newId, now, jload } from "./db.js";
+import { featureForPath, cleanDisabled } from "./features.js";
 import * as P from "./pipeline.js";
 import * as M from "./matching.js";
 import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
@@ -113,7 +114,7 @@ route("GET", "/api/health", async ({ env }) => json({ ok: true, version: env.VER
 function licView(lic) {
   if (!lic) return null;
   return { email: lic.email, name: lic.name || "", admin: !!lic.admin, active: lic.active !== false, company_limit: lic.company_limit ?? 0,
-    can_post: !!lic.can_post, invoice_credits: lic.invoice_credits ?? 0, statement_credits: lic.statement_credits ?? 0,
+    can_post: !!lic.can_post, disabled_features: lic.admin ? [] : cleanDisabled(lic.disabled_features), invoice_credits: lic.invoice_credits ?? 0, statement_credits: lic.statement_credits ?? 0,
     unlimited: !!lic.admin, ai_options: allowedAI(lic),
     issued_at: lic.issued_at, stale: !!lic.stale };
 }
@@ -263,7 +264,8 @@ route("GET", "/api/companies/:cid/masters", async ({ D, p, url }) => {
   if (q) { sql += " AND (uname LIKE ? OR parent LIKE ? OR gstin LIKE ? OR hsn LIKE ?)"; args.push(`%${M.norm(q)}%`, `%${q}%`, `%${q.toUpperCase()}%`, `%${q}%`); }
   if (groups.length) { sql += ` AND primary_group IN (${groups.map(() => "?").join(",")})`; args.push(...groups); }
   const total = (await D.first(`SELECT count(*) n FROM (${sql})`, ...args)).n;
-  return json({ total, items: await D.all(sql + " ORDER BY name LIMIT 200", ...args) });
+  const limit = Math.min(5000, Math.max(1, parseInt(url.searchParams.get("limit") || "200", 10) || 200));
+  return json({ total, items: await D.all(sql + " ORDER BY name LIMIT " + limit, ...args) });
 });
 route("GET", "/api/companies/:cid/suggest/:what", async ({ D, p, url }) => {
   const s = url.searchParams;
@@ -312,14 +314,16 @@ async function createBatch(D, cid, body, { source, label = "" } = {}) {
   const files = (body.files || []).slice(0, 40);
   const mode=body.period_mode||"mixed";
   if(!["mixed","month"].includes(mode))throw new HttpError(400,"Choose a specific month/year or regular mixed invoices");
-  const period=String(body.expected_period||"");
-  if(mode==="month"&&(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)||+period.slice(0,4)<2000||+period.slice(0,4)>2100))
-    throw new HttpError(400,"Choose the invoice month and year before uploading");
+  const picked=[...new Set(String(body.expected_period||"").split(",").map(x=>x.trim()).filter(Boolean))].sort();
+  if(mode==="month"&&(!picked.length||picked.length>36||picked.some(x=>!/^\d{4}-(0[1-9]|1[0-2])$/.test(x)||+x.slice(0,4)<2000||+x.slice(0,4)>2100)))
+    throw new HttpError(400,"Choose the invoice month(s) and year before uploading");
+  const period=picked.join(",");
+  const periodName=picked.length>1?picked[0]+"_TO_"+picked[picked.length-1]:period;
   const fy=fiscalYearStart(indiaDate());
   if (!files.length) throw new HttpError(400, "Add at least one file");
   const d = new Date(Date.now() + 5.5 * 3600e3);
   const uploadDay=`${String(d.getUTCDate()).padStart(2,"0")}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${d.getUTCFullYear()}`;
-  let name=mode==="month"?`${vt.toUpperCase()}_${period}_UPLOAD_${uploadDay}`:
+  let name=mode==="month"?`${vt.toUpperCase()}_${periodName}_UPLOAD_${uploadDay}`:
     mode==="mixed"?`${vt.toUpperCase()}_MIXED_FY${fy}-${String((fy+1)%100).padStart(2,"0")}_UPLOAD_${uploadDay}`:
     `${vt.toUpperCase()}_${uploadDay}`;
   if (label) name += ` · ${label}`;
@@ -758,7 +762,12 @@ async function handleApi(req, env, url) {
     const m = url.pathname.match(r.re);
     if (!m) continue;
     if (!r.open) requireWindow(env, req, url);
-    if (!r.open && !r.keyed) await requireLicence(env);
+    if (!r.open && !r.keyed) {
+      const lic = await requireLicence(env);
+      const f = featureForPath(url.pathname);
+      if (f && !lic.admin && cleanDisabled(lic.disabled_features).includes(f))
+        throw new HttpError(403, "This feature is switched off for your account. Ask the admin to turn it on.", "feature");
+    }
     let body = {};
     if (req.method !== "GET" && req.method !== "DELETE") { try { body = await req.json(); } catch { body = {}; } }
     if (r.post || (r.createPosts && body.create)) await requirePosting(env);

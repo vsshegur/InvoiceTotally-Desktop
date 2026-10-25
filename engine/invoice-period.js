@@ -25,18 +25,29 @@ export function batchFiscalYear(batch){
     indiaDate(new Date(uploaded*1000)):indiaDate();
   return fiscalYearStart(iso);
 }
+const MONTH_RE=/^\d{4}-(0[1-9]|1[0-2])$/;
+/** The upload's allowed months as a sorted list (one month, or several chosen together). Empty when not a month upload. */
+export function expectedMonths(batch){
+  if(batch.period_mode!=="month")return [];
+  const list=String(batch.expected_period||"").split(",").map(x=>x.trim()).filter(Boolean);
+  return list.length&&list.every(x=>MONTH_RE.test(x))?[...new Set(list)].sort():[];
+}
+/** Same value as before for a single month; "2026-04,2026-05" for several. Null when not a month upload. */
 export function expectedPeriod(batch){
-  return batch.period_mode==="month"&&/^\d{4}-(0[1-9]|1[0-2])$/.test(batch.expected_period||"")?
-    batch.expected_period:null;
+  const m=expectedMonths(batch);return m.length?m.join(","):null;
+}
+export function periodLabel(months){
+  if(!months.length)return "";
+  return months.length===1?months[0]:months[0]+" to "+months[months.length-1]+" ("+months.length+" months)";
 }
 export function invoiceDateReview(inv){
   const h=inv.data||{},date=normalizeInvoiceDate(h.date);
-  const month=expectedPeriod(inv),fy=batchFiscalYear(inv);
+  const months=expectedMonths(inv),month=months.length?periodLabel(months):null,fy=batchFiscalYear(inv);
   const reasons=[];
-  const hard=date&&month&&date.slice(0,7)!==month;
+  const hard=date&&months.length&&!months.includes(date.slice(0,7));
   if(!date)reasons.push("Invoice date is invalid or missing — check the original invoice image");
   else if(hard)reasons.push("Recognized "+date+" but this upload was specifically for "+month+
-    ". Correct the date to "+month+" or upload the actual invoice in a different batch");
+    ". Correct the date to "+(months.length>1?"one of those months":month)+" or upload the actual invoice in a different batch");
   else if(!month && fiscalYearStart(date)!==fy)reasons.push("Recognized "+date+" outside financial year "+
       fy+"-"+(fy+1)+" (1 Apr "+fy+" to 31 Mar "+(fy+1)+"). Check the original; AI may have misread the year");
   const rawReason=String(h.date_issue_original||"").trim();
@@ -51,5 +62,5 @@ export function invoiceDateReview(inv){
   const confirmed=!!date&&!hard&&!!h.date_verified_at&&h.date_verified_value===date;
   const needsReview=reasons.length>0&&!confirmed;
   return {date,month,fy_start:fy,reasons,confirmed,needs_review:needsReview,hard_mismatch:!!hard,
-    label:month?"Selected month "+month:"FY "+fy+"-"+(fy+1),have_a_look:needsReview};
+    label:month?(months.length>1?"Selected months ":"Selected month ")+month:"FY "+fy+"-"+(fy+1),have_a_look:needsReview};
 }

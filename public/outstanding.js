@@ -7,8 +7,9 @@ const outKey = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
 const OUT_BUCKETS = [["0-30", "0–30 days"], ["31-60", "31–60"], ["61-90", "61–90"], ["90+", "Over 90"], ["undated", "No date"]];
 
 async function renderOutstanding(c, el) {
-  const S = (OUT_STATE[c.id] ||= { side: "receivable", q: "", group: "", asOf: "", off: new Set(), skip: new Set(), open: new Set() });
+  const S = (OUT_STATE[c.id] ||= { side: "receivable", q: "", group: "", asOf: "", sort: "pending", dir: -1, off: new Set(), skip: new Set(), open: new Set() });
   const Share = await import("/share.js");
+  const canShare = featureOn("share");
   const { download } = await import("/xlsxwrite.js");
   let data = null, failed = "";
 
@@ -19,6 +20,8 @@ async function renderOutstanding(c, el) {
       <input class="in" id="oQ" placeholder="Find a party…" style="max-width:240px">
       <select class="in" id="oGroup" style="max-width:220px"></select>
       <div class="spacer"></div>
+      <div class="seg sortseg" id="oSort" role="group" aria-label="Sort parties"><span class="sortlbl">Sort</span>
+        <button data-k="name">Party name</button><button data-k="bills">Bills</button><button data-k="oldest">Oldest</button><button data-k="pending">Pending ₹</button></div>
       <button class="btn" id="oReload" title="Read Tally again">↻ Read Tally again</button>
     </div>
     <div id="oBody"><div class="boot"><span class="spin"></span> Reading outstanding bills from Tally…</div></div>
@@ -29,7 +32,18 @@ async function renderOutstanding(c, el) {
   const sum = (bills) => Math.round(bills.reduce((s, b) => s + b.amount, 0) * 100) / 100;
   const inr = Share.inr;
   const side = () => data.sides[S.side];
-  const visible = () => side().parties.filter((p) => (!S.q || outKey(p.ledger).includes(outKey(S.q))) && (!S.group || p.group === S.group));
+  const sortVal = {
+    name: (p) => outKey(p.ledger),
+    bills: (p) => effBills(p).filter((b) => b.amount > 0).length,
+    oldest: (p) => (p.oldest_days == null ? -1 : p.oldest_days),
+    pending: (p) => sum(effBills(p)),
+  };
+  const visible = () => side().parties.filter((p) => (!S.q || outKey(p.ledger).includes(outKey(S.q))) && (!S.group || p.group === S.group))
+    .sort((a, b) => {
+      const f = sortVal[S.sort] || sortVal.pending, x = f(a), y = f(b);
+      const r = typeof x === "string" ? x.localeCompare(y) : x - y;
+      return (r || outKey(a.ledger).localeCompare(outKey(b.ledger))) * S.dir;
+    });
   const included = () => visible().filter((p) => !S.off.has(outKey(p.ledger)));
 
   async function load() {
@@ -87,7 +101,7 @@ async function renderOutstanding(c, el) {
         <td class="num">${p.oldest_days != null ? p.oldest_days + " d" : "—"}</td>
         <td class="num">${od ? `<span class="bad">${inr(od)}</span>` : "—"}</td>
         <td class="num"><b>${inr(sum(eb))}</b></td>
-        <td class="acts"><button class="btn sm wa" data-wa title="Send on WhatsApp">WhatsApp</button> <button class="btn sm" data-pdf title="Download a PDF statement">PDF</button></td></tr>
+        <td class="acts">${canShare ? `<button class="btn sm wa" data-wa title="Send on WhatsApp">WhatsApp</button> <button class="btn sm" data-pdf title="Download a PDF statement">PDF</button>` : ""}</td></tr>
         ${open ? `<tr class="bills"><td></td><td colspan="7"><table class="grid inner"><thead><tr><th></th><th>Bill</th><th>Date</th><th>Due</th><th class="num">Days</th><th class="num">Overdue</th><th class="num">Pending ₹</th></tr></thead><tbody>${billRows(p)}</tbody></table>
           <div class="small muted" style="margin:4px 0 8px">Untick a bill to leave it out of this party's total, message and PDF.</div></td></tr>` : ""}`;
     }).join("");
@@ -101,6 +115,7 @@ async function renderOutstanding(c, el) {
     const groups = [...new Set(side().parties.map((p) => p.group).filter(Boolean))].sort();
     if (S.group && !groups.includes(S.group)) S.group = "";
     $("#oGroup", el).innerHTML = `<option value="">All groups</option>` + groups.map((g) => `<option ${g === S.group ? "selected" : ""}>${esc(g)}</option>`).join("");
+    $$("#oSort button", el).forEach((b) => { const on = b.dataset.k === S.sort; b.classList.toggle("on", on); b.dataset.dir = on ? (S.dir > 0 ? "▲" : "▼") : ""; b.setAttribute("aria-pressed", on); });
     const list = visible(), inc = included();
     body.innerHTML = sourceHtml() + summaryHtml(inc) + `<div class="card flush"><table class="grid out-table"><thead><tr>
         <th style="width:30px"><input type="checkbox" id="oAll" ${inc.length && inc.length === list.length ? "checked" : ""} aria-label="Select all parties"></th>
@@ -108,8 +123,8 @@ async function renderOutstanding(c, el) {
       <tbody>${partyRows(list)}</tbody></table></div>
       <div class="out-foot"><span><b>${inc.length}</b> of ${list.length} parties ticked</span><div class="spacer"></div>
         <button class="btn" id="oExpand">${list.every((p) => S.open.has(outKey(p.ledger))) ? "Collapse all" : "Expand all"}</button>
-        <button class="btn" id="oShare" ${inc.length ? "" : "disabled"}>Share ticked parties…</button>
-        <button class="btn primary" id="oPdfAll" ${inc.length ? "" : "disabled"}>PDF of ticked parties</button></div>`;
+        ${canShare ? `<button class="btn" id="oShare" ${inc.length ? "" : "disabled"}>Share ticked parties…</button>
+        <button class="btn primary" id="oPdfAll" ${inc.length ? "" : "disabled"}>PDF of ticked parties</button>` : ""}</div>`;
     wire();
   }
 
@@ -155,8 +170,8 @@ async function renderOutstanding(c, el) {
       <div class="share-list">${parties.map((p, i) => `<div class="share-row" data-i="${i}"><div class="who"><b>${esc(p.ledger)}</b><div class="muted small">₹${inr(sum(effBills(p)))} · ${plural(effBills(p).filter((b) => b.amount > 0).length, "bill")}</div></div>
         <input class="in mono ph" placeholder="Mobile number" value="${esc(p.phone ? "+" + p.phone : "")}" aria-label="Mobile number for ${esc(p.ledger)}">
         <button type="button" class="btn sm wa" data-w>WhatsApp</button><button type="button" class="btn sm" data-p>PDF</button></div>`).join("")}</div>
-      <div class="field" style="margin-top:12px"><label>One summary message for the whole list (each party's total)</label>
-        <div style="display:flex;gap:8px"><input class="in mono" id="grpPhone" placeholder="Number to send the summary to (optional)"><button type="button" class="btn" id="grpWa">WhatsApp summary</button><button type="button" class="btn" id="grpCopy">Copy</button></div></div>
+      <div class="field" style="margin-top:12px"><label>One message for the whole list (every party with its bills)</label>
+        <div style="display:flex;gap:8px"><input class="in mono" id="grpPhone" placeholder="Number to send the summary to (optional)"><button type="button" class="btn" id="grpWa">WhatsApp message</button><button type="button" class="btn" id="grpCopy">Copy</button></div></div>
       <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px"><button type="button" class="btn" data-close>Close</button></div>`, async () => {});
     $(".modal", bg).style.maxWidth = "720px"; $(".modal", bg).style.width = "min(720px,94vw)";
     $$(".share-row", bg).forEach((row) => {
@@ -182,11 +197,12 @@ async function renderOutstanding(c, el) {
       $("[data-party]", tr).onchange = (e) => { e.target.checked ? S.off.delete(k) : S.off.add(k); draw(); };
       $("[data-toggle]", tr).onclick = () => { S.open.has(k) ? S.open.delete(k) : S.open.add(k); draw(); };
       $("[data-phone]", tr).onclick = () => phoneModal(p);
-      $("[data-wa]", tr).onclick = () => waParty(p);
-      $("[data-pdf]", tr).onclick = () => pdfParty(p);
+      const wa = $("[data-wa]", tr); if (wa) wa.onclick = () => waParty(p);
+      const pd = $("[data-pdf]", tr); if (pd) pd.onclick = () => pdfParty(p);
     });
     $$("[data-bill]", el).forEach((cb) => cb.onchange = () => { cb.checked ? S.skip.delete(cb.dataset.bill) : S.skip.add(cb.dataset.bill); draw(); });
     $("#oExpand", el).onclick = () => { const l = visible(); const all = l.every((p) => S.open.has(outKey(p.ledger))); for (const p of l) all ? S.open.delete(outKey(p.ledger)) : S.open.add(outKey(p.ledger)); draw(); };
+    if (!canShare) return;
     $("#oShare", el).onclick = shareModal;
     $("#oPdfAll", el).onclick = () => {
       try { const t = S.group ? `${titleOf()} - ${S.group}` : titleOf(); download(pdfFor(included(), t), `${t} - ${data.as_of}.pdf`.replace(/[\\/:*?"<>|]/g, "")); toast("PDF saved to your Downloads folder"); }
@@ -196,6 +212,10 @@ async function renderOutstanding(c, el) {
 
   $$("#oSide button", el).forEach((b) => b.onclick = () => { S.side = b.dataset.s; S.group = ""; if (data) draw(); });
   $("#oAsOf", el).onchange = (e) => { S.asOf = e.target.value; S.skip.clear(); load(); };
+  $$("#oSort button", el).forEach((b) => b.onclick = () => {
+    if (S.sort === b.dataset.k) S.dir = -S.dir; else { S.sort = b.dataset.k; S.dir = b.dataset.k === "name" ? 1 : -1; }
+    if (data) draw();
+  });
   $("#oQ", el).value = S.q;
   $("#oQ", el).oninput = debounce((e) => { S.q = e.target.value; if (data) draw(); }, 150);
   $("#oGroup", el).onchange = (e) => { S.group = e.target.value; if (data) draw(); };

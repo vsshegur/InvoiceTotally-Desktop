@@ -340,3 +340,45 @@ export function narrationKey(narration) {
   }
   return "";
 }
+
+// ---------------------------------------------------------------- who is on the other side of a statement line
+const BANKISH = /\b(BANK|BRANCH|BR|SEQ|CHQ|CHEQUE|MICR|CTS|CLEARING|CLG|PHONEPE|GPAY|PAYTM|GOOGLE|BHIM|TFR|TRF|DEBIT|CREDIT|UPI|NEFT|RTGS|IMPS|PAYMENT|FROM|REF)\b/;
+/**
+ * Names that could be the other party in a narration, best first. Understands cheque clearing
+ * ("By-Clearing DEVIDAS NARSAYYA GUNDALA, Chq : 55006, Seq : …, Bank : …"), UPI
+ * ("UPI/356…/DEBIT/VIJAYALAXMI TEXTILES/PUNB…/vpa@bank/…") and NEFT / RTGS / IMPS style lines.
+ * Only suggestions: the app never assigns a party from these on its own.
+ */
+export function partyNamesFrom(narration) {
+  const s = clean(narration).toUpperCase();
+  const out = [];
+  const add = (n) => {
+    n = String(n || "").replace(/\s+/g, " ").replace(/^[\s,.\-:;/]+|[\s,.\-:;/]+$/g, "").trim();
+    if (n.replace(/[^A-Z]/g, "").length >= 3 && !/@/.test(n) && !IFSC.test(n) && !out.includes(n)) out.push(n);
+  };
+  let m = s.match(/(?:CLEARING|CLG|CHQ DEP(?:OSIT)?|CHEQUE DEP(?:OSIT)?)\s*[-:/ ]+\s*([A-Z][A-Z .&'()\-]*?)\s*(?:,|;|\bCHQ\b|\bCHEQUE\b|\bSEQ\b|\bBANK\b|\bBR\b|\bINST\b|$)/);
+  if (m) add(m[1]);
+  m = s.match(/UPI[\/\-][^\/]*?\d{6,}[\/\-](?:DEBIT|CREDIT|DR|CR)[\/\-]([A-Z][A-Z .&']+?)[\/\-]/) || s.match(/UPI[\/\-](?:DR|CR)[\/\-]\d{6,}[\/\-]([A-Z][A-Z .&']+?)[\/\-]/);
+  if (m) add(m[1]);
+  for (const seg of s.split(/[\/\-,:*|;]+/)) {
+    const words = seg.split(/\s+/).filter(Boolean);
+    if (!words.length || words.some((w) => /\d/.test(w) || IFSC.test(w) || /@/.test(w))) continue;
+    const kept = words.filter((w) => /^[A-Z.&']+$/.test(w) && !KIND_WORDS.test(w) && !NOISE.has(w));
+    if (kept.length < words.length - 1 || BANKISH.test(seg)) continue;
+    add(kept.join(" "));
+  }
+  return out.slice(0, 4);
+}
+/** The cheque number in a clearing narration ("Chq : 55006"), or "". */
+export function chequeNo(narration) {
+  const m = /\bCH(?:Q|EQUE)\s*(?:NO\.?)?\s*[:.#-]?\s*(\d{4,9})/i.exec(clean(narration));
+  return m ? m[1] : "";
+}
+/** Bill / invoice numbers written in a narration ("INV 123", "Bill no. A/45"), to pre-select matching open bills. */
+export function billHints(narration) {
+  const out = new Set();
+  const re = /\b(?:INV(?:OICE)?|BILL|BL)\s*(?:NO\.?|NUMBER|#)?\s*[:.\-]?\s*([A-Z0-9][A-Z0-9\/\-]{1,19})/gi;
+  let m;
+  while ((m = re.exec(clean(narration)))) if (/\d/.test(m[1])) out.add(m[1].toUpperCase());
+  return [...out];
+}

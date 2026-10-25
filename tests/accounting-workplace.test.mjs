@@ -148,3 +148,21 @@ test("live inter-company reading uses reciprocal Tally ledgers, reference and op
   assert.equal(r.rows_a,1);
   assert.equal(r.rows_b,1);
 });
+
+test("inter-company can compare a whole financial year (1 Apr to 31 Mar)",async()=>{
+  function voucher(ledger,sign,date){
+    return '<ENVELOPE><BODY><COLLECTION><VOUCHER><DATE>'+date+'</DATE><VOUCHERNUMBER>'+(sign>0?"A-1":"P-1")+'</VOUCHERNUMBER>'+
+      '<REFERENCE>A-1</REFERENCE><VOUCHERTYPENAME>Journal</VOUCHERTYPENAME>'+
+      '<ALLLEDGERENTRIES.LIST><LEDGERNAME>'+ledger+'</LEDGERNAME><AMOUNT>'+sign+'</AMOUNT></ALLLEDGERENTRIES.LIST></VOUCHER></COLLECTION></BODY></ENVELOPE>';
+  }
+  const env={TALLY:{readOnly:async request=>request.includes("<SVCURRENTCOMPANY>Vipul Textiles</SVCURRENTCOMPANY>")?
+    voucher("Vijayalaxmi Textiles",1180,"20261010"):voucher("Vipul Textiles",-1180,"20261010"),
+    state:{companies:["Vipul Textiles","Vijayalaxmi Textiles"]}}};
+  const body={ledger_a:"Vijayalaxmi Textiles",ledger_b:"Vipul Textiles"};
+  const inFy=await W.liveIntercompany(D,env,"a","b",{...body,fy:2026});
+  assert.equal(inFy.from,"2026-04-01");assert.equal(inFy.to,"2027-03-31");
+  assert.equal(inFy.scope_label,"FY 2026-27");assert.equal(inFy.links.length,1);
+  const other=await W.liveIntercompany(D,env,"a","b",{...body,fy:2025});
+  assert.equal(other.rows_a,0);
+  await assert.rejects(()=>W.liveIntercompany(D,env,"a","b",{...body,fy:1999}),/financial year/);
+});

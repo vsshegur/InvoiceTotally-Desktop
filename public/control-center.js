@@ -141,16 +141,18 @@ const GST_ITC=["itcIgst","itcCgst","itcSgst","itcCess"];
 async function companyGstControl(c,el){
   const d=new Date(),defaultPeriod=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
   const period=sessionStorage.getItem("it_gst_control_period_"+c.id)||defaultPeriod;
-  el.innerHTML='<div class="card" style="padding:16px">'+
-    '<p class="muted">Read sales and purchases from Tally, enter portal filing summary figures for GSTR-1 and 3B, and compare ITC against your existing GSTR-2B imports. Nothing is filed or posted.</p>'+
-    '<div class="field" style="max-width:220px"><label>GST return month</label><input id="ccGstMonth" type="month" class="in" value="'+esc(period)+'"></div>'+
+  el.innerHTML='<div class="gst-wrap">'+
+    '<div class="gst-head"><div><h2 style="margin:0">GST reconciliation</h2>'+
+    '<p class="muted small" style="margin:4px 0 0">Compare Tally sales and purchases with your GSTR-1, GSTR-3B and GSTR-2B. Nothing is filed or posted.</p></div>'+
+    '<label class="gst-month"><span class="small muted">Return month</span><input id="ccGstMonth" type="month" class="in" value="'+esc(period)+'"></label></div>'+
+    '<ol class="gst-steps"><li><b>1</b> Read Tally</li><li><b>2</b> Enter portal figures</li><li><b>3</b> Compare</li><li><b>4</b> Fix what differs</li></ol>'+
     '<div id="ccGstControl"></div></div>';
   $('#ccGstMonth').onchange=()=>{
     sessionStorage.setItem("it_gst_control_period_"+c.id,$('#ccGstMonth').value);companyGstControl(c,el);
   };
   const s=await api("/companies/"+c.id+"/gst-control/"+period);
   const inputForm=(kind,keys,values)=>{
-    return '<div class="card" style="flex:1;min-width:320px;padding:14px"><b>'+kind.toUpperCase()+' portal figures</b>'+
+    return '<div class="card gst-in"><b>'+kind.toUpperCase()+' portal figures</b>'+
       '<p class="muted small">Enter amounts from the official return summary for this exact month. Blank means unavailable, not zero.</p>'+
       '<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">'+keys.map(k=>
         '<label class="field"><span class="small">'+CC.field(k)+'</span><input class="in ccGstNum" data-kind="'+kind+
@@ -199,7 +201,9 @@ async function companyGstControl(c,el){
   };
   const comparison=(label,report,mode="")=>{
     if(!report)return "";
-    return '<div class="card" style="flex:1;min-width:300px;padding:14px"><b>'+label+'</b>'+
+    const vals=Object.values(report),bad=vals.filter(v=>v.status!=="matched"&&v.status!=="missing").length,miss=vals.filter(v=>v.status==="missing").length;
+    const pill=bad?'<span class="gst-pill bad">'+bad+' differ</span>':miss===vals.length?'<span class="gst-pill">Not available</span>':'<span class="gst-pill good">All matched</span>';
+    return '<div class="card gst-cmp"><div class="gst-ch"><b>'+label+'</b>'+pill+'</div>'+
       (mode?'<p class="muted small">'+(mode==="books"?
         'Tally purchase vouchers by booking date versus supplier invoices in this GSTR-2B filing month.':
         'Eligible GSTR-2B versus GSTR-3B claimed credit; adjustments cannot be identified from the summary alone.')+'</p>':"")+
@@ -212,22 +216,20 @@ async function companyGstControl(c,el){
   const r=s.result||{},b=s.gstr2b,ts=s.tally_sales,tp=s.tally_purchases;
   const oldSales=Boolean(ts&&ts.calculation_version!==2);
   const missingPurchaseEvidence=Boolean(tp&&!Array.isArray(tp.docs));
-  $('#ccGstControl').innerHTML='<div style="display:flex;flex-wrap:wrap;gap:12px;margin:16px 0">'+
-    inputForm("gstr1",GST_HEADERS,s.portal_gstr1)+inputForm("gstr3b",GST_HEADERS.concat(GST_ITC),s.portal_gstr3b)+'</div>'+
-    (oldSales?'<div class="alert warn" style="margin-bottom:12px"><b>Re-read Tally sales to apply the discount/freight correction.</b> The saved sales snapshot uses the older calculation; previous invoice mismatches are hidden until you click “Read Tally sales & purchases”, then “Compare all three returns”.</div>':"")+
+  $('#ccGstControl').innerHTML=(oldSales?'<div class="alert warn" style="margin-bottom:12px"><b>Re-read Tally sales to apply the discount/freight correction.</b> The saved sales snapshot uses the older calculation; previous invoice mismatches are hidden until you click “Read Tally sales & purchases”, then “Compare all three returns”.</div>':"")+
     (missingPurchaseEvidence?'<div class="alert warn" style="margin-bottom:12px"><b>Read Tally again for purchase invoice details.</b> Old purchase totals have no voucher-level breakdown, so the difference cannot yet be fully explained.</div>':"")+
-    '<div class="card" style="padding:14px;margin-bottom:12px"><b>Available Tally and GSTR-2B evidence</b>'+
-    '<div class="kv" style="margin:10px 0">'+
-      '<div><span>Sales taxable value</span><b>'+CC.amount(oldSales?null:ts?.taxable)+'</b></div>'+
-      '<div><span>Sales output GST</span><b>'+CC.amount(oldSales?null:ts?ts.igst+ts.cgst+ts.sgst+ts.cess:null)+'</b></div>'+
-      '<div><span>Purchase input GST</span><b>'+CC.amount(tp?tp.igst+tp.cgst+tp.sgst+tp.cess:null)+'</b></div>'+
-      '<div><span>GSTR-2B eligible ITC</span><b>'+CC.amount(b?.itc?
-        b.itc.igst+b.itc.cgst+b.itc.sgst+b.itc.cess:null)+'</b></div></div>'+
-    '<button class="btn" id="ccReadGst">⟳ Read Tally sales &amp; purchases</button> '+
-    '<button class="btn primary" id="ccReconcileGst">Compare all three returns</button> '+
-    '<a class="btn" href="#/c/'+c.id+'/gstr2b">Open GSTR-2B</a></div>'+
+    '<div class="gst-ev"><div class="out-sum">'+
+      '<div class="stat"><div class="k">Sales taxable value</div><div class="v">'+CC.amount(oldSales?null:ts?.taxable)+'</div><div class="s">from Tally</div></div>'+
+      '<div class="stat"><div class="k">Sales output GST</div><div class="v">'+CC.amount(oldSales?null:ts?ts.igst+ts.cgst+ts.sgst+ts.cess:null)+'</div><div class="s">from Tally</div></div>'+
+      '<div class="stat"><div class="k">Purchase input GST</div><div class="v">'+CC.amount(tp?tp.igst+tp.cgst+tp.sgst+tp.cess:null)+'</div><div class="s">from Tally</div></div>'+
+      '<div class="stat"><div class="k">GSTR-2B eligible ITC</div><div class="v">'+CC.amount(b?.itc?b.itc.igst+b.itc.cgst+b.itc.sgst+b.itc.cess:null)+'</div><div class="s">from your 2B import</div></div></div>'+
+    '<div class="gst-actions"><button class="btn" id="ccReadGst">⟳ 1 · Read Tally sales &amp; purchases</button> '+
+    '<button class="btn primary" id="ccReconcileGst">3 · Compare all three returns</button> '+
+    '<a class="btn" href="#/c/'+c.id+'/gstr2b">Open GSTR-2B</a></div></div>'+
+    '<details class="gst-portal"'+((s.portal_gstr1||s.portal_gstr3b)?'':' open')+'><summary><b>2 · Portal figures</b> <span class="muted small">GSTR-1 and GSTR-3B from the GST portal — type them in or import the file</span></summary>'+'<div class="gst-grid">'+
+    inputForm("gstr1",GST_HEADERS,s.portal_gstr1)+inputForm("gstr3b",GST_HEADERS.concat(GST_ITC),s.portal_gstr3b)+'</div>'+'</details>'+
     ((r.warnings||[]).length?'<div class="alert warn" style="margin:12px 0">'+r.warnings.map(esc).join(" · ")+'</div>':'')+
-    '<div style="display:flex;flex-wrap:wrap;gap:12px;margin:16px 0">'+
+    '<div class="gst-grid" style="margin:0">'+
       comparison("Tally Sales vs GSTR-1",oldSales?null:r.salesToPortal)+comparison("GSTR-1 vs GSTR-3B",r.portalTo3b)+
       comparison("GSTR-2B ITC vs GSTR-3B",r.itc2bVs3b,"portal")+comparison("Tally purchase ITC vs GSTR-2B",r.itcBooksVs2b,"books")+'</div>'+
     (!oldSales&&(r.invoices||[]).length?(()=>{

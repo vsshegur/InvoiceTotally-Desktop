@@ -6,7 +6,8 @@ import { newId, now, jload } from "./db.js";
 import * as T from "./tally.js";
 import * as TL from "../desktop/tally.mjs";
 import * as M from "./matching.js";
-import {narrationKey} from "../public/bankparse.js";
+import * as OUT from "./outstanding.js";
+import {narrationKey,partyNamesFrom} from "../public/bankparse.js";
 import { getCompany } from "./pipeline.js";
 
 export class BankError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
@@ -202,10 +203,15 @@ export async function partySuggestions(D, sid) {
   const rows = await D.all("SELECT id,narration,vtype FROM bank_lines WHERE statement_id=? AND status='ready'", sid);
   const out = {};
   for (const r of rows) {
-    const name = likelyPartyName(r.narration);
-    if (!name) continue;
-    const hits = await M.partyCandidates(D, st.company_id, r.vtype === "Payment" ? "Purchase" : "Sales", name, null, 3);
-    if (hits.length) out[r.id] = hits.map((h) => ({ name: h.name, score: h.score, tags: h.tags }));
+    const names = [...new Set([...partyNamesFrom(r.narration), likelyPartyName(r.narration)].filter(Boolean))];
+    if (!names.length) continue;
+    const best = new Map();
+    for (const name of names) {
+      const hits = await M.partyCandidates(D, st.company_id, r.vtype === "Payment" ? "Purchase" : "Sales", name, null, 3);
+      for (const h of hits) if (!best.has(h.name) || best.get(h.name).score < h.score) best.set(h.name, { name: h.name, score: h.score, tags: h.tags, from: name });
+    }
+    const list = [...best.values()].sort((a, b) => b.score - a.score).slice(0, 3);
+    if (list.length) out[r.id] = list;
   }
   return out;
 }
@@ -244,11 +250,14 @@ export async function outstandingBills(D, env, sid, body) {
     : /sundry creditors/i.test(master.primary_group || master.parent || "") ? "Sundry Creditors" : null;
   if (!group) throw new BankError(400, "Bill-wise allocation only applies to a Sundry Debtor or Sundry Creditor ledger");
   if (!env.TALLY?.readOnly) throw new BankError(503, "Tally read-only connection is unavailable");
-  const c = await getCompany(D, st.company_id);
-  const xml = await env.TALLY.readOnly(T.outstandingBillsRequest(c.tally_company || c.name, group));
-  const bills = TL.outstandingBillRows(xml).filter((b) => b.ledger.trim().toUpperCase() === master.name.trim().toUpperCase());
-  return { ledger: master.name, bills,
-    notice: "Freshly read from Tally just now. Not yet validated against a real Tally company — check a bill's amount there before relying on it." };
+  const o = body.fresh === true ? await OUT.readOutstanding(D, env, st.company_id) : await OUT.readOutstandingCached(D, env, st.company_id);
+  if (body.fresh === true) OUT.forgetOutstanding(st.company_id);
+  const side = o.sides[group === "Sundry Debtors" ? "receivable" : "payable"];
+  const party = side.parties.find((p) => p.ledger.trim().toUpperCase() === master.name.trim().toUpperCase());
+  const bills = (party ? party.bills : []).filter((b) => b.amount > 0 && b.kind === "bill").map((b) => ({ ledger: party.ledger, name: b.name, date: b.date, amount: b.amount, credit_days: b.credit_days, due: b.due, overdue_days: b.overdue_days }));
+  return { ledger: master.name, bills, source: o.source,
+    notice: o.source === "balances" ? "Tally gave only this party's balance, not its bills — the amount can only go On Account."
+      : o.source ? "Read from Tally just now (" + (o.source === "report" ? "Bills Receivable / Payable report" : "party bill details") + ")." : "Tally returned no bill information." };
 }
 
 /** Allocates one ready/failed transaction against specific open bills of a party ledger; any part of the
