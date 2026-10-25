@@ -199,7 +199,7 @@ const routes = [
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "overview")],
-  [/^#\/c\/(\w+)\/(overview|batches|ageing|settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|settlements|diagnostics)$/, viewCompany],
+  [/^#\/c\/(\w+)\/(overview|batches|ageing|settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|diagnostics)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
   [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
   [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
@@ -547,12 +547,12 @@ function companyModal() {
 const COMPANY_NAV = [
   [null, [["overview", "Overview", "⌂"], ["actions", "Action Center", "◎"]]],
   ["Post to Tally", [["batches", "Invoices", "▤"], ["bank", "Bank statements", "▥"], ["ecommerce", "E-Commerce → Tally", "⇄"]]],
-  ["Reconcile", [["gstr2b", "GSTR-2B", "§"], ["gstcontrol", "GST reconciliation", "≡"], ["intercompany", "Inter-company", "⇋"], ["settlements", "Settlements", "◍"]]],
+  ["Reconcile", [["gstr2b", "GSTR-2B", "§"], ["gstcontrol", "GST reconciliation", "≡"], ["intercompany", "Inter-company", "⇋"]]],
   ["Parties & bills", [["ageing", "Outstanding & ageing", "₹"], ["masters", "Masters", "☰"], ["smartmaps", "Smart matching", "✦"]]],
   ["System", [["jobs", "Tally log", "⟲"], ["settings", "Settings", "⚙"], ["diagnostics", "Diagnostics", "✚"]]],
 ];
 // Admin can switch features off per user (ME.licence.disabled_features); hidden here and refused by the API.
-const TAB_FEATURE = { batches: "invoices", bank: "bank", ecommerce: "ecommerce", settlements: "settlements", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
+const TAB_FEATURE = { batches: "invoices", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
 const featureOn = (k) => !k || !!ME?.licence?.admin || !(ME?.licence?.disabled_features || []).includes(k);
 const TAB_INFO = {
   overview: ["Overview", "Where things stand for this company, and where to start."],
@@ -563,7 +563,6 @@ const TAB_INFO = {
   gstr2b: ["GSTR-2B", "Compare the GST portal's purchase data with what is booked in Tally."],
   gstcontrol: ["GST reconciliation", "GSTR-1, GSTR-2B and GSTR-3B against your books."],
   intercompany: ["Inter-company reconciliation", "Check that two of your companies agree on what they owe each other."],
-  settlements: ["Settlements", "Marketplace payouts against the sales they settle."],
   ageing: ["Outstanding & ageing", "Who owes you and whom you owe, how old it is — and share it on WhatsApp or as a PDF."],
   masters: ["Masters", "Ledgers, stock items, groups and units read from Tally."],
   smartmaps: ["Smart matching", "What the app has learned about your ledgers and items."],
@@ -598,7 +597,7 @@ async function viewCompany(cid, tab) {
   if (upload) keymap.u = () => location.hash = `#/c/${cid}/${upload[0]}`;
   const el = $("#tab");
   if (tab === "overview") return companyOverview(c, el);
-  if (["actions", "intercompany", "settlements", "diagnostics"].includes(tab)) return companyAccounting(c, el, tab);
+  if (["actions", "intercompany", "diagnostics"].includes(tab)) return companyAccounting(c, el, tab);
   if (tab === "ageing") return renderOutstanding(c, el);
   if (tab === "batches") return companyBatches(c, el);
   if (tab === "masters") return companyMasters(c, el);

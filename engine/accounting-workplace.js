@@ -176,14 +176,13 @@ export async function liveIntercompany(D,env,cid,other,body){
 }
 
 async function actionCenter(D,cid){
-  const [invoices,bank,ec,purchase,gst,failedJobs,settlements]=await D.many([
+  const [invoices,bank,ec,purchase,gst,failedJobs]=await D.many([
     ["SELECT id,batch_id,status,substr(sync_error,1,220) error FROM invoices WHERE company_id=? AND status IN ('failed','review') ORDER BY created_at DESC LIMIT 80",cid],
     ["SELECT l.id,l.statement_id,l.status,l.sync_error FROM bank_lines l WHERE l.company_id=? AND l.status IN ('failed','uncertain','duplicate') ORDER BY l.date DESC LIMIT 80",cid],
     ["SELECT id,batch_id,status,error FROM ecommerce_vouchers WHERE company_id=? AND status IN ('failed','uncertain') LIMIT 80",cid],
     ["SELECT id,batch_id,status,error FROM gstr2b_purchase_vouchers WHERE company_id=? AND status IN ('review','blocked','uncertain') LIMIT 80",cid],
     ["SELECT d.id,d.return_id,d.status,d.num FROM gst_docs d WHERE d.company_id=? AND d.status IN ('missing','mismatch','probable') LIMIT 80",cid],
     ["SELECT id,kind,result FROM jobs WHERE company_id=? AND status='failed' ORDER BY updated_at DESC LIMIT 80",cid],
-    ["SELECT id,source_name,period,status,summary FROM settlement_batches WHERE company_id=? AND status='review' ORDER BY created_at DESC LIMIT 40",cid]
   ]);
   const items=[];
   function add(list,kind,make){for(const r of list)items.push({kind,...make(r)});}
@@ -193,10 +192,8 @@ async function actionCenter(D,cid){
   add(purchase,"gstr2b-purchase",r=>({id:r.id,label:"GSTR-2B purchase",description:r.error||r.status,link:"#/p2b/"+r.batch_id}));
   add(gst,"gstr2b",r=>({id:r.id,label:"Portal invoice "+(r.num||""),description:r.status,link:"#/g/"+r.return_id}));
   add(failedJobs,"tally",r=>({id:r.id,label:"Tally job "+r.kind,description:r.result||"Failed",link:"#/c/"+cid+"/jobs"}));
-  add(settlements,"settlement",r=>({id:r.id,label:"Review "+(r.source_name||"marketplace settlement"),
-    description:"Unbalanced or incomplete payout statement for "+r.period,link:"#/c/"+cid+"/settlements"}));
   return {items:items.slice(0,350),counts:{invoices:invoices.length,bank:bank.length,marketplace:ec.length,
-    purchases:purchase.length,gstr2b:gst.length,jobs:failedJobs.length,settlements:settlements.length},
+    purchases:purchase.length,gstr2b:gst.length,jobs:failedJobs.length},
     note:"A focused exception inbox using locally stored states; not a guarantee all bank/GST periods have been reconciled."};
 }
 

@@ -15,7 +15,6 @@ import * as GC from "./gst-control.js";
 import * as DASH from "./dashboard.js";
 import * as AW from "./accounting-workplace.js";
 import * as OUT from "./outstanding.js";
-import * as SET from "./marketplace-settlements.js";
 import {invoiceDateReview,fiscalYearStart,indiaDate,normalizeInvoiceDate} from "./invoice-period.js";
 
 class HttpError extends Error { constructor(status, msg, code) { super(msg); this.status = status; this.code = code; } }
@@ -730,7 +729,6 @@ SC.smartRoutes(route,authorizeCompany);
 DASH.dashboardRoutes(route,requireLicence,authorizeCompany);
 AW.accountingRoutes(route,authorizeCompany);
 OUT.outstandingRoutes(route,authorizeCompany);
-SET.settlementRoutes(route,authorizeCompany);
 GC.gstControlRoutes(route,authorizeCompany);
 // Read-only local recovery diagnostics: never exposes licence keys, raw bank data or invoice images.
 route("GET","/api/diagnostics",async({env,D})=>{
