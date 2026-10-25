@@ -97,6 +97,17 @@ export function groupParties(bills, groupOf, phones) {
   return parties.filter((p) => Math.abs(p.total) >= 0.005 || p.count);
 }
 
+const memo = new Map();
+/** A bank-statement review asks for the same company's bills once per transaction; a minute-old answer is fine for that. */
+export async function readOutstandingCached(D, env, cid, ttlMs = 60_000) {
+  const hit = memo.get(cid);
+  if (hit && Date.now() - hit.at < ttlMs) return hit.value;
+  const value = await readOutstanding(D, env, cid);
+  memo.set(cid, { at: Date.now(), value });
+  return value;
+}
+export function forgetOutstanding(cid) { memo.delete(cid); }
+
 export async function readOutstanding(D, env, cid, opts = {}) {
   const c = await company(D, cid);
   const read = env.TALLY?.readOnly;

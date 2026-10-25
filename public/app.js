@@ -199,7 +199,7 @@ const routes = [
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "overview")],
-  [/^#\/c\/(\w+)\/(overview|batches|ageing|settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|settlements|diagnostics)$/, viewCompany],
+  [/^#\/c\/(\w+)\/(overview|batches|ageing|settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|diagnostics)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
   [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
   [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
@@ -380,28 +380,31 @@ const AI_HELP = {
   groq: "Qwen on Groq's free tier. Free, but about 25 invoices a day and at most 3 pages per invoice.",
   claude: "Anthropic Claude. The most accurate, especially for handwritten bills; costs more.",
 };
+let ADMIN_FEATURES = [];
 async function viewAdmin() {
   if (!ME?.licence?.admin) { location.hash = "#/"; return; }
   const r = await api("/admin/users", { body: {} });
+  ADMIN_FEATURES = r.features || [];
   const keyNote = Object.entries(r.ai || {}).filter(([, ok]) => !ok).map(([k]) => ME.ai_labels[k] || k);
   app().innerHTML = topBar([["Admin"]]) + `<div class="page wide">
     <div class="bar" style="padding:0 0 14px;border:0"><h1>Users</h1><div class="spacer"></div><button class="btn primary" id="add">+ Add user</button></div>
     ${keyNote.length ? `<div class="alert warn" style="margin-bottom:12px">No API key on the service for: ${keyNote.map(esc).join(", ")}. Users given only these can't read invoices until the key is added in Cloudflare.</div>` : ""}
-    <table class="grid"><thead><tr><th>User</th><th class="num">Invoice credits</th><th class="num">Statement credits</th><th class="num">Companies</th><th>Posting</th><th>AI</th><th>Last seen</th></tr></thead><tbody>
+    <table class="grid"><thead><tr><th>User</th><th class="num">Invoice credits</th><th class="num">Statement credits</th><th class="num">Companies</th><th>Posting</th><th>AI</th><th>Features</th><th>Last seen</th></tr></thead><tbody>
     ${r.users.map((u) => `<tr class="click" data-href="#/admin/u/${encodeURIComponent(u.email)}"><td><b>${esc(u.name || u.email)}</b>${u.admin ? ' <span class="tag">admin</span>' : ""}${u.active ? "" : ' <span class="tag bad">off</span>'}<div class="muted small">${esc(u.email)}</div></td>
       <td class="num">${u.admin ? "∞" : u.invoice_credits.toLocaleString("en-IN")}${u.used?.invoice ? `<div class="muted small">${u.used.invoice.credits} used</div>` : ""}</td>
       <td class="num">${u.admin ? "∞" : u.statement_credits.toLocaleString("en-IN")}${u.used?.statement ? `<div class="muted small">${u.used.statement.credits} used</div>` : ""}</td>
       <td class="num">${u.companies} of ${u.admin ? "∞" : u.company_limit}</td><td>${u.admin || u.can_post ? '<span class="good">Allowed</span>' : '<span class="bad">Blocked</span>'}</td>
       <td class="small">${(u.admin ? Object.keys(AI_HELP) : u.ai_options).map((a) => esc(ME.ai_labels[a] || a)).join(", ")}</td>
+      <td class="small">${u.admin || !(u.disabled_features || []).length ? '<span class="good">All on</span>' : `<span class="warn">${u.disabled_features.length} off</span>`}</td>
       <td class="muted small">${u.last_seen ? ago(u.last_seen) : "not signed in yet"}</td></tr>`).join("")}</tbody></table>
     <p class="muted small" style="margin-top:12px">A user signs in with their Google account on their own PC. Give credits when they pay you; switch a user off to sign them out everywhere.</p></div>`;
   wireTop();
   $$("tr[data-href]").forEach((tr) => tr.onclick = () => location.hash = tr.dataset.href);
-  $("#add").onclick = () => userModal(null);
+  $("#add").onclick = () => userModal(null, ADMIN_FEATURES);
 }
 
-function userModal(u) {
-  const ai = u?.ai_options || ["gemini_lite"];
+function userModal(u, features = ADMIN_FEATURES) {
+  const ai = u?.ai_options || ["gemini_lite"], off = u?.disabled_features || [];
   modal(`<h2>${u ? "Edit " + esc(u.name || u.email) : "Add user"}</h2>
     <div class="field"><label>Google email</label><input class="in" name="email" type="email" value="${esc(u?.email || "")}" ${u ? "readonly" : "required"} placeholder="name@gmail.com"></div>
     <div class="field"><label>Name</label><input class="in" name="name" value="${esc(u?.name || "")}"></div>
@@ -412,11 +415,14 @@ function userModal(u) {
       <div class="field"><label>Invoice credits to start with</label><input class="in" name="invoice" type="number" min="0" value="0"></div>
       <div class="field"><label>Statement credits to start with</label><input class="in" name="statement" type="number" min="0" value="0"></div></div>`}
     <div class="field"><label>AI this user may use</label>${Object.keys(AI_HELP).map((k) => `<label class="check-row"><input type="checkbox" name="ai_${k}" ${ai.includes(k) ? "checked" : ""}> <span><b>${esc(ME.ai_labels[k])}</b> <span class="muted small">— ${esc(AI_HELP[k])}</span></span></label>`).join("")}</div>
+    ${u?.admin ? "" : `<div class="field"><label>Features this user can use <span class="muted small">— untick to hide and block</span></label>
+      <div class="feat-grid">${features.map((f) => `<label class="check-row"><input type="checkbox" name="feat_${f.key}" ${off.includes(f.key) ? "" : "checked"}> <span><b>${esc(f.label)}</b><span class="muted small"> — ${esc(f.help)}</span></span></label>`).join("")}</div></div>`}
     <div class="field"><label>Note (only you see it)</label><input class="in" name="note" value="${esc(u?.note || "")}" placeholder="e.g. paid ₹2,000 on 20 Oct by UPI"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${u ? "Save" : "Add user"}</button></div>`,
   async (d) => {
     const body = { email: d.email, name: d.name, company_limit: +d.company_limit, can_post: d.can_post === "1", note: d.note,
       ai_options: Object.keys(AI_HELP).filter((k) => d["ai_" + k]) };
+    if (!u?.admin) body.disabled_features = features.filter((f) => !d["feat_" + f.key]).map((f) => f.key);
     if (!body.ai_options.length) throw new Error("Tick at least one AI");
     await api("/admin/save-user", { body });
     if (!u && (+d.invoice || +d.statement)) await api("/admin/add-credits", { body: { email: d.email, invoice: +d.invoice || 0, statement: +d.statement || 0, note: d.note } });
@@ -429,6 +435,7 @@ async function viewAdminUser(email) {
   if (!ME?.licence?.admin) { location.hash = "#/"; return; }
   const r = await api("/admin/user-detail", { body: { email } });
   const u = r.user;
+  ADMIN_FEATURES = (await api("/admin/users", { body: {} })).features || [];
   const KIND = { invoice: "Invoice read", statement: "Statement saved", split: "Pages split", add_invoice: "Invoice credits added", add_statement: "Statement credits added" };
   app().innerHTML = topBar([["Admin", "#/admin"], [u.name || u.email]]) + `<div class="page wide">
     <div class="bar" style="padding:0 0 14px;border:0"><div><h1 style="margin:0">${esc(u.name || u.email)}</h1><div class="muted">${esc(u.email)}${u.note ? " · " + esc(u.note) : ""}</div></div><div class="spacer"></div>
@@ -439,6 +446,8 @@ async function viewAdminUser(email) {
       <div><div class="eyebrow">Statement credits</div><div class="v">${u.admin ? "∞" : u.statement_credits.toLocaleString("en-IN")}</div></div>
       <div><div class="eyebrow">Companies</div><div class="v">${u.companies} <span class="muted" style="font-size:14px">of ${u.admin ? "∞" : u.company_limit}</span></div></div>
       <div><div class="eyebrow">Posting to Tally</div><div class="v" style="font-size:18px">${u.admin || u.can_post ? '<span class="good">Allowed</span>' : '<span class="bad">Blocked</span>'}</div></div></div>
+    ${u.admin ? "" : `<div class="card" id="featCard" style="margin:14px 0"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b>Features</b><span class="muted small">Switch a feature off to hide it and block it for this user. Takes effect the next time their app checks the licence (within minutes while online).</span></div>
+      <div class="feat-grid" style="margin-top:10px">${ADMIN_FEATURES.map((f) => `<label class="check-row"><input type="checkbox" data-feat="${esc(f.key)}" ${(u.disabled_features || []).includes(f.key) ? "" : "checked"}> <span><b>${esc(f.label)}</b><span class="muted small"> — ${esc(f.help)}</span></span></label>`).join("")}</div></div>`}
     ${u.admin ? "" : `<form class="card" id="cr" style="margin:14px 0;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
       <div class="field" style="margin:0"><label>Invoice credits</label><input class="in" name="invoice" type="number" value="0" style="width:130px"></div>
       <div class="field" style="margin:0"><label>Statement credits</label><input class="in" name="statement" type="number" value="0" style="width:130px"></div>
@@ -454,7 +463,12 @@ async function viewAdminUser(email) {
         <td class="num ${x.credits > 0 ? "good" : ""}">${x.credits > 0 ? "+" : ""}${x.credits || "—"}</td></tr>`).join("")}</tbody></table>` : `<p class="muted">Nothing yet.</p>`}</div></div>
     ${u.admin ? "" : `<p style="margin-top:20px"><button class="btn danger sm" id="remove">Remove this user</button></p>`}</div>`;
   wireTop();
-  $("#edit").onclick = () => userModal(u);
+  $("#edit").onclick = () => userModal(u, ADMIN_FEATURES);
+  $$("[data-feat]").forEach((cb) => cb.onchange = async () => {
+    const off = $$("[data-feat]").filter((x) => !x.checked).map((x) => x.dataset.feat);
+    try { await api("/admin/save-user", { body: { email: u.email, disabled_features: off } }); u.disabled_features = off; toast(off.length ? `${off.length} feature${off.length === 1 ? "" : "s"} off for this user` : "All features on for this user"); }
+    catch (e) { cb.checked = !cb.checked; toast(e.message, true); }
+  });
   $("#toggle")?.addEventListener("click", async () => {
     if (u.active && !confirm(`Switch off ${u.email}? They are signed out on every PC and can't sign in until you switch them on.`)) return;
     await act(() => api("/admin/save-user", { body: { email: u.email, active: !u.active } }), u.active ? "Switched off" : "Switched on"); route();
@@ -533,10 +547,13 @@ function companyModal() {
 const COMPANY_NAV = [
   [null, [["overview", "Overview", "⌂"], ["actions", "Action Center", "◎"]]],
   ["Post to Tally", [["batches", "Invoices", "▤"], ["bank", "Bank statements", "▥"], ["ecommerce", "E-Commerce → Tally", "⇄"]]],
-  ["Reconcile", [["gstr2b", "GSTR-2B", "§"], ["gstcontrol", "GST reconciliation", "≡"], ["intercompany", "Inter-company", "⇋"], ["settlements", "Settlements", "◍"]]],
+  ["Reconcile", [["gstr2b", "GSTR-2B", "§"], ["gstcontrol", "GST reconciliation", "≡"], ["intercompany", "Inter-company", "⇋"]]],
   ["Parties & bills", [["ageing", "Outstanding & ageing", "₹"], ["masters", "Masters", "☰"], ["smartmaps", "Smart matching", "✦"]]],
   ["System", [["jobs", "Tally log", "⟲"], ["settings", "Settings", "⚙"], ["diagnostics", "Diagnostics", "✚"]]],
 ];
+// Admin can switch features off per user (ME.licence.disabled_features); hidden here and refused by the API.
+const TAB_FEATURE = { batches: "invoices", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
+const featureOn = (k) => !k || !!ME?.licence?.admin || !(ME?.licence?.disabled_features || []).includes(k);
 const TAB_INFO = {
   overview: ["Overview", "Where things stand for this company, and where to start."],
   actions: ["Action Center", "Everything that needs a decision, in one list."],
@@ -546,7 +563,6 @@ const TAB_INFO = {
   gstr2b: ["GSTR-2B", "Compare the GST portal's purchase data with what is booked in Tally."],
   gstcontrol: ["GST reconciliation", "GSTR-1, GSTR-2B and GSTR-3B against your books."],
   intercompany: ["Inter-company reconciliation", "Check that two of your companies agree on what they owe each other."],
-  settlements: ["Settlements", "Marketplace payouts against the sales they settle."],
   ageing: ["Outstanding & ageing", "Who owes you and whom you owe, how old it is — and share it on WhatsApp or as a PDF."],
   masters: ["Masters", "Ledgers, stock items, groups and units read from Tally."],
   smartmaps: ["Smart matching", "What the app has learned about your ledgers and items."],
@@ -556,12 +572,16 @@ const TAB_INFO = {
 };
 async function viewCompany(cid, tab) {
   tab = tab || "overview";
+  if (!featureOn(TAB_FEATURE[tab])) {
+    app().innerHTML = topBar([["Not available"]]) + `<div class="page"><div class="alert warn"><b>This feature is switched off for your account.</b> Ask the admin to turn it on.</div><p><a class="btn" href="#/c/${cid}">Back to overview</a></p></div>`;
+    wireTop(); return;
+  }
   const c = await api(`/companies/${cid}`);
   CURRENT.company = c;
   const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || (["overview", "batches", "actions"].includes(tab) ? ["upload", "⇪ Upload invoices"] : null);
   const info = TAB_INFO[tab] || [tab, ""];
   const st = tallyState(c);
-  const nav = COMPANY_NAV.map(([group, items]) => `<div class="grp">${group ? `<div class="gh">${group}</div>` : ""}${items.map(([k, l, ico]) =>
+  const nav = COMPANY_NAV.map(([group, items]) => [group, items.filter(([k]) => featureOn(TAB_FEATURE[k]))]).filter(([, items]) => items.length).map(([group, items]) => `<div class="grp">${group ? `<div class="gh">${group}</div>` : ""}${items.map(([k, l, ico]) =>
     `<a class="nav ${tab === k ? "on" : ""}" href="#/c/${cid}${k === "overview" ? "" : "/" + k}" ${tab === k ? 'aria-current="page"' : ""}><span class="ico" aria-hidden="true">${ico}</span>${l}</a>`).join("")}</div>`).join("");
   app().innerHTML = topBar([[c.name, `#/c/${cid}`]], c) + `<div class="shell">
       <aside class="side" aria-label="${esc(c.name)} sections">
@@ -577,7 +597,7 @@ async function viewCompany(cid, tab) {
   if (upload) keymap.u = () => location.hash = `#/c/${cid}/${upload[0]}`;
   const el = $("#tab");
   if (tab === "overview") return companyOverview(c, el);
-  if (["actions", "intercompany", "settlements", "diagnostics"].includes(tab)) return companyAccounting(c, el, tab);
+  if (["actions", "intercompany", "diagnostics"].includes(tab)) return companyAccounting(c, el, tab);
   if (tab === "ageing") return renderOutstanding(c, el);
   if (tab === "batches") return companyBatches(c, el);
   if (tab === "masters") return companyMasters(c, el);
@@ -604,12 +624,13 @@ async function companyOverview(c, el) {
     (!c.masters.ledger ? `<div class="alert warn" style="margin-bottom:14px">${c.pending_jobs ? "Reading your ledgers and stock items from Tally…" : "Masters aren't imported yet. Press <b>Import masters</b> (top right) so entries can be matched to your ledgers and stock items."}</div>` : "") +
     `<div class="eyebrow" style="margin-bottom:8px">Start something</div>
     <div class="tiles">
-      ${tile(`#/c/${c.id}/upload`, "▤", "Upload invoices", "PDF, photo or Excel purchase and sales invoices")}
-      ${tile(`#/c/${c.id}/bank/upload`, "▥", "Upload a bank statement", "Match it to ledgers and bills, then post")}
-      ${tile(`#/c/${c.id}/ageing`, "₹", "Outstanding & ageing", "Receivables and payables — share on WhatsApp or PDF")}
-      ${tile(`#/c/${c.id}/gstr2b-purchase`, "§", "GSTR-2B purchases", "Prepare purchase vouchers from the GST portal file")}
-      ${tile(`#/c/${c.id}/intercompany`, "⇋", "Inter-company check", "Do two of your companies agree?")}
-      ${tile(`#/c/${c.id}/gstcontrol`, "≡", "GST reconciliation", "GSTR-1, 2B and 3B against your books")}
+      ${[["invoices", `#/c/${c.id}/upload`, "▤", "Upload invoices", "PDF, photo or Excel purchase and sales invoices"],
+        ["bank", `#/c/${c.id}/bank/upload`, "▥", "Upload a bank statement", "Match it to ledgers and bills, then post"],
+        ["ageing", `#/c/${c.id}/ageing`, "₹", "Outstanding & ageing", "Receivables and payables — share on WhatsApp or PDF"],
+        ["gstr2b", `#/c/${c.id}/gstr2b-purchase`, "§", "GSTR-2B purchases", "Prepare purchase vouchers from the GST portal file"],
+        ["intercompany", `#/c/${c.id}/intercompany`, "⇋", "Inter-company check", "Do two of your companies agree?"],
+        ["gstcontrol", `#/c/${c.id}/gstcontrol`, "≡", "GST reconciliation", "GSTR-1, 2B and 3B against your books"]]
+        .filter((t) => featureOn(t[0])).map((t) => tile(...t.slice(1))).join("")}
     </div>
     <div class="cols-ov">
       <section><div class="eyebrow" style="margin:18px 0 8px">Needs attention ${todo ? `<span class="count">${todo}</span>` : ""}</div>
@@ -777,7 +798,10 @@ async function viewUpload(cid) {
   const c = await api(`/companies/${cid}`);
   const today=new Date();
   const st={type:null,source:null,files:[],period_mode:"month",
-    expected_period:today.getFullYear()+"-"+String(today.getMonth()+1).padStart(2,"0")};
+    months:[today.getFullYear()+"-"+String(today.getMonth()+1).padStart(2,"0")],mmYear:today.getFullYear()};
+  const pad2=(n)=>String(n).padStart(2,"0");
+  const monthKey=(y,i)=>y+"-"+pad2(i+1);
+  const monthName=(k)=>MONTHS[+k.slice(5)-1]+" "+k.slice(0,4);
   const render = () => {
     const step = !st.type ? 1 : !st.source ? 2 : 3;
     const ch = (key, val, title, sub) => `<div class="choice ${st[key] === val ? "on" : ""}" data-k="${key}" data-v="${val}"><div><div><b>${title}</b></div><div class="sub">${sub}</div></div>${st[key] === val ? "✓" : ""}</div>`;
@@ -798,11 +822,12 @@ async function viewUpload(cid) {
           ${ch("period_mode","mixed","Regular mixed invoices",
             "Different months allowed; dates outside the upload financial year require manual confirmation.")}
         </div>
-        ${st.period_mode==="month" ? `<div class="row" style="max-width:450px;margin:12px 0">
-          <div class="field"><label>Invoice month</label><select id="invoiceMonth" class="in">
-           ${MONTHS.map((m,i)=>`<option value="${String(i+1).padStart(2,"0")}" ${st.expected_period.slice(5)===String(i+1).padStart(2,"0")?"selected":""}>${m}</option>`).join("")}
-          </select></div>
-          <div class="field"><label>Invoice year</label><input id="invoiceYear" class="in mono" type="number" min="2000" max="2100" value="${esc(st.expected_period.slice(0,4))}"></div></div>`:
+        ${st.period_mode==="month" ? `<div class="mm" style="margin:12px 0">
+          <div class="mm-head"><button type="button" class="dp-nav" data-yr="-1" aria-label="Previous year">‹</button><b>${st.mmYear}</b><button type="button" class="dp-nav" data-yr="1" aria-label="Next year">›</button>
+            <div class="spacer"></div><button type="button" class="dp-link" data-mm="fy">This financial year</button><button type="button" class="dp-link" data-mm="last">Last month</button><button type="button" class="dp-link" data-mm="clear">Clear</button></div>
+          <div class="dp-grid">${MONTHS.map((m,i)=>`<button type="button" class="dp-c ${st.months.includes(monthKey(st.mmYear,i))?"sel":""}" data-mkey="${monthKey(st.mmYear,i)}" aria-pressed="${st.months.includes(monthKey(st.mmYear,i))}">${m}</button>`).join("")}</div>
+          <div class="mm-sel">${st.months.length?`<span class="muted small">Invoices dated in:</span> ${[...st.months].sort().map((k)=>`<span class="chip-x">${monthName(k)} <button type="button" data-mdrop="${k}" aria-label="Remove ${monthName(k)}">✕</button></span>`).join("")}`:`<span class="bad small">Choose at least one month.</span>`}</div>
+          <div class="muted small" style="margin-top:6px">Tap several months to upload invoices from more than one month together. Invoices dated in any other month go to Have a look.</div></div>`:
           `<div class="alert warn" style="margin:10px 0">Regular upload: invoices outside the financial year containing the upload date go into Have a look. Dates are never silently changed.</div>`}
         <div class="eyebrow" style="margin:12px 0">Choose invoice files</div>
 
@@ -813,10 +838,15 @@ async function viewUpload(cid) {
     </div>`;
     wireTop(c);
     $$(".choice").forEach((el) => el.onclick = () => { st[el.dataset.k] = el.dataset.v; render(); });
-    const periodSave=()=>{const year=Number($("#invoiceYear")?.value),month=$("#invoiceMonth")?.value;
-      if(Number.isInteger(year)&&year>=2000&&year<=2100&&month)st.expected_period=year+"-"+month;};
-    $("#invoiceMonth")?.addEventListener("change",periodSave);
-    $("#invoiceYear")?.addEventListener("change",periodSave);
+    $$("[data-yr]").forEach((b)=>b.onclick=()=>{st.mmYear=Math.min(2100,Math.max(2000,st.mmYear+(+b.dataset.yr)));render();});
+    $$("[data-mkey]").forEach((b)=>b.onclick=()=>{const k=b.dataset.mkey;st.months=st.months.includes(k)?st.months.filter((x)=>x!==k):[...st.months,k].sort();render();});
+    $$("[data-mdrop]").forEach((b)=>b.onclick=()=>{st.months=st.months.filter((x)=>x!==b.dataset.mdrop);render();});
+    $$("[data-mm]").forEach((b)=>b.onclick=()=>{
+      const t=new Date();
+      if(b.dataset.mm==="clear")st.months=[];
+      else if(b.dataset.mm==="last"){const d=new Date(t.getFullYear(),t.getMonth()-1,1);st.months=[monthKey(d.getFullYear(),d.getMonth())];st.mmYear=d.getFullYear();}
+      else{const fy=t.getMonth()>=3?t.getFullYear():t.getFullYear()-1;st.months=Array.from({length:12},(_,i)=>{const m=(i+3)%12,y=m>=3?fy:fy+1;return monthKey(y,m);}).filter((k)=>k<=monthKey(t.getFullYear(),t.getMonth()));st.mmYear=fy;}
+      render();});
     $$("[data-reset]").forEach((b) => b.onclick = () => { if (b.dataset.reset === "type") { st.type = null; } st.source = null; st.files = []; render(); });
     $$("[data-rm]").forEach((a) => a.onclick = (e) => { e.preventDefault(); st.files.splice(+a.dataset.rm, 1); render(); });
     const drop = $("#drop");
@@ -831,12 +861,7 @@ async function viewUpload(cid) {
   let busy = false;
   const upload = async () => {
     if (!st.files.length || busy) return;
-    if(st.period_mode==="month"){
-      const rawYear=$("#invoiceYear")?.value||"",rawMonth=$("#invoiceMonth")?.value||"";
-      if(!/^\d{4}$/.test(rawYear)||+rawYear<2000||+rawYear>2100||!/^(0[1-9]|1[0-2])$/.test(rawMonth))
-        return toast("Choose a valid invoice month and a year from 2000 to 2100.",true);
-      st.expected_period=rawYear+"-"+rawMonth;
-    }
+    if(st.period_mode==="month"&&!st.months.length)return toast("Choose at least one invoice month.",true);
     busy = true;
     const go = $("#go"), status = $(".bar .status");
     go.disabled = true;
@@ -850,7 +875,7 @@ async function viewUpload(cid) {
         else prepared.push({ f, pages: await Ingest.pages(f, (i, tot) => say(`Preparing ${f.name} — page ${i} of ${tot} (file ${n + 1} of ${st.files.length})`)) });
       }
       batch = await api(`/companies/${cid}/batches`, { body: { voucher_type: st.type, source: st.source,
-        period_mode:st.period_mode,expected_period:st.period_mode==="month"?st.expected_period:null,
+        period_mode:st.period_mode,expected_period:st.period_mode==="month"?[...st.months].sort().join(","):null,
         files: prepared.map((x) => ({ filename: x.f.name, pages: x.pages?.length || 0 })) } });
       const totalPages = prepared.reduce((a, x) => a + (x.pages?.length || 0), 0);
       let sent = 0;
@@ -909,7 +934,7 @@ async function viewBatch(bid) {
   const reviewable = b.invoices.filter((i) => i.status === "review" || i.status === "failed").length;
   const rechecked = b.invoices.filter((i) => i.rechecked).length;
   app().innerHTML = topBar([[c.name, `#/c/${c.id}/batches`], [b.name]], c) + `<div class="bar">
-      <span class="status">${b.period_mode==="month" ? "Month "+esc(b.expected_period)+" · " : b.period_mode==="mixed"?"Regular mixed invoices · ":""}${b.stage === "review" ? `${b.invoices.length} invoice(s) read — ${reviewable ? "ready to review" : "all done"}${rechecked ? ` · ${rechecked} double-checked by a second read` : ""}${b.ai_cost_usd ? ` · AI cost ≈ ₹${(b.ai_cost_usd * 88).toFixed(2)}` : ""}` : b.stage === "error" ? "Something went wrong" : "Working…"}</span><div class="spacer"></div>
+      <span class="status">${b.period_mode==="month" ? "Month"+(String(b.expected_period).includes(",")?"s ":" ")+esc(String(b.expected_period).split(",").join(", "))+" · " : b.period_mode==="mixed"?"Regular mixed invoices · ":""}${b.stage === "review" ? `${b.invoices.length} invoice(s) read — ${reviewable ? "ready to review" : "all done"}${rechecked ? ` · ${rechecked} double-checked by a second read` : ""}${b.ai_cost_usd ? ` · AI cost ≈ ₹${(b.ai_cost_usd * 88).toFixed(2)}` : ""}` : b.stage === "error" ? "Something went wrong" : "Working…"}</span><div class="spacer"></div>
       <button class="btn" id="refresh">⟳ Refresh <kbd>Alt+R</kbd></button><a class="btn" href="#/c/${c.id}/batches">Back <kbd>Esc</kbd></a>
       <button class="btn danger" id="del" title="Delete this batch from Vipul Workplace">🗑 Delete batch</button>
       ${!working && (b.invoices.some((i) => i.status === "error") || failedFiles.length) ? `<button class="btn" id="retry">↻ Retry failed</button>` : ""}

@@ -84,12 +84,14 @@ test("admin: signs in, adds a user with limits and credits, sets up a company fr
   assert.equal(me.licence.can_post, true);
   assert.deepEqual(me.licence.ai_options, ["gemini_lite", "gemini", "groq", "claude"]);
 
-  const u = await call("POST", "/admin/save-user", { email: USER, name: "Ramesh", company_limit: 1, can_post: false, ai_options: ["groq"] });
+  const u = await call("POST", "/admin/save-user", { email: USER, name: "Ramesh", company_limit: 1, can_post: false, ai_options: ["groq"], disabled_features: ["intercompany", "share", "not-a-feature"] });
   assert.equal(u.ok, true, JSON.stringify(u));
   const cr = await call("POST", "/admin/add-credits", { email: USER, invoice: 2, statement: 1, note: "Paid ₹500 by UPI" });
   assert.deepEqual([cr.user.invoice_credits, cr.user.statement_credits], [2, 1]);
   const list = await call("POST", "/admin/users", {});
   assert.equal(list.users.find((x) => x.email === USER).company_limit, 1);
+  assert.deepEqual(list.users.find((x) => x.email === USER).disabled_features, ["intercompany", "share"]);
+  assert.ok(list.features.some((f) => f.key === "gstcontrol"));
   assert.deepEqual(list.ai, { gemini_lite: true, gemini: false, groq: true, claude: true });
 
   const c = await call("POST", "/companies", { name: "Vipul Textiles", tally_company: "VIPUL TEXTILES", gstin: "27ACKPS3168H1Z6" });
@@ -285,6 +287,11 @@ test("user: own companies, company limit, credits counted, posting blocked", asy
 
   const c = await call("POST", "/companies", { name: "Ramesh Traders" });
   assert.equal(c.settings.ai, "groq");
+  assert.deepEqual(me.licence.disabled_features, ["intercompany", "share"], "unknown feature names are dropped");
+  const blocked = await call("POST", `/companies/${c.id}/intercompany/other/refresh`, {});
+  assert.equal(blocked.status, 403);
+  assert.match(blocked.error, /switched off/);
+  assert.equal((await call("GET", `/companies/${c.id}/masters?kind=ledger`)).status === 403, false, "other features keep working");
   const c2 = await call("POST", "/companies", { name: "Second Co" });
   assert.equal(c2.status, 403);
   assert.match(c2.error, /allows 1 company/);

@@ -167,8 +167,8 @@ test("frontend exposes both upload modes and working delete action without undef
   assert.match(js,/Specific month and year/);
   assert.match(js,/Regular mixed invoices/);
   assert.match(js,/Have a look/);
-  assert.match(js,/invoiceMonth/);
-  assert.match(js,/invoiceYear/);
+  assert.match(js,/data-mkey/);
+  assert.match(js,/data-yr/);
   assert.match(js,/\$\$\("\.choice"\)\.forEach/);
   assert.match(js,/api\(\`\/batches\/\$\{bid\}\`,\{method:"DELETE"\}\)/);
   assert.doesNotMatch(js,/DRIVERS\.get\(bid\)/);

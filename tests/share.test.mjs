@@ -25,10 +25,12 @@ test("a party message lists bills, overdue days, advances and the net total", ()
   assert.match(t, /\*Total: ₹1,26,000.50\*/);
 });
 
-test("a group message gives each party's total and a grand total", () => {
+test("a group message lists every party's bills and a grand total", () => {
   const t = S.groupText({ company: "Vipul", side: "receivable", asOf: "2026-10-25", groupName: "Sundry Debtors",
     parties: [{ ledger: "A", bills }, { ledger: "B", bills: [{ name: "x", amount: 10 }] }, { ledger: "Empty", bills: [] }] });
-  assert.match(t, /• A — ₹1,26,000.50 \(2 bills\)/);
+  assert.match(t, /\*A\* — ₹1,26,000.50/);
+  assert.match(t, /  • .* — ₹/);
+  for (const b of bills) assert.ok(t.includes(b.name), "bill " + b.name + " listed");
   assert.doesNotMatch(t, /Empty/);
   assert.match(t, /\*Total: ₹1,26,010.50\*/);
 });

@@ -9,6 +9,7 @@
 // service/licence.js in the invoicetotally-desktop repository — keep the two the same). Everything it needs is passed in.
 
 export const ADMIN_EMAIL = "vipulshegur@gmail.com";
+import { FEATURES, cleanDisabled } from "../engine/features.js";
 export const AI_CHOICES = ["gemini_lite", "gemini", "groq", "claude"];
 const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const SIGNIN_SECS = 10 * 60;
@@ -16,7 +17,7 @@ const SIGNIN_SECS = 10 * 60;
 export const LIC_SCHEMA = [
   `CREATE TABLE IF NOT EXISTS lic_users (email TEXT PRIMARY KEY, name TEXT, active INTEGER DEFAULT 1, company_limit INTEGER DEFAULT 1,
     can_post INTEGER DEFAULT 1, invoice_credits INTEGER DEFAULT 0, statement_credits INTEGER DEFAULT 0, ai_options TEXT DEFAULT '["gemini_lite"]',
-    note TEXT, created_at REAL, updated_at REAL)`,
+    note TEXT, created_at REAL, updated_at REAL, disabled_features TEXT DEFAULT '[]')`,
   `CREATE TABLE IF NOT EXISTS lic_devices (id TEXT PRIMARY KEY, email TEXT NOT NULL, secret_hash TEXT NOT NULL, name TEXT,
     created_at REAL, last_seen REAL, revoked INTEGER DEFAULT 0)`,
   `CREATE INDEX IF NOT EXISTS ix_lic_devices ON lic_devices(email)`,
@@ -48,7 +49,14 @@ const isAdmin = (env, email) => String(email).toLowerCase() === adminEmail(env);
 const ready = new WeakMap();
 async function init(env, D) {
   let p = ready.get(env.DB);
-  if (!p) { p = D.batch(LIC_SCHEMA.map((s) => D.stmt(s))).catch((e) => { ready.delete(env.DB); throw e; }); ready.set(env.DB, p); }
+  if (!p) {
+    p = (async () => {
+      await D.batch(LIC_SCHEMA.map((s) => D.stmt(s)));
+      // databases made before per-user features existed: add the column once (the error just means it is already there)
+      try { await D.run("ALTER TABLE lic_users ADD COLUMN disabled_features TEXT DEFAULT '[]'"); } catch { /* already there */ }
+    })().catch((e) => { ready.delete(env.DB); throw e; });
+    ready.set(env.DB, p);
+  }
   return p;
 }
 
@@ -97,6 +105,7 @@ async function licenceFor(env, D, u, deviceId) {
   return sign(D, { v: 1, email: u.email, name: u.name || "", admin: u.admin, active: !!u.active,
     company_limit: u.admin ? 999 : u.company_limit, can_post: u.admin || !!u.can_post,
     invoice_credits: u.invoice_credits, statement_credits: u.statement_credits, ai_options: u.ai_options,
+    disabled_features: u.admin ? [] : cleanDisabled(jl(u.disabled_features, [])),
     companies, device: deviceId, issued_at: Math.floor(now()) });
 }
 
@@ -292,6 +301,7 @@ export function licenceRoutes(route, { db, googleCheck, ai }) {
   const admin = async (env, D, req) => { const x = await device(env, D, req); if (!x.u.admin) throw new LicError(403, "Only the admin can do this."); return x; };
   const userRow = (u, companies = 0, env = null) => ({ email: u.email, name: u.name || "", active: !!u.active, company_limit: u.company_limit, can_post: !!u.can_post,
     invoice_credits: u.invoice_credits, statement_credits: u.statement_credits, ai_options: jl(u.ai_options, []), note: u.note || "",
+    disabled_features: cleanDisabled(jl(u.disabled_features, [])),
     companies, created_at: u.created_at, admin: isAdmin(env, u.email) });
 
   R("POST", "/api/lic/admin/users", async ({ env, D, req }) => {
@@ -302,7 +312,7 @@ export function licenceRoutes(route, { db, googleCheck, ai }) {
       D.all("SELECT email, kind, -sum(credits) n, sum(cost_usd) usd FROM lic_usage WHERE credits<=0 GROUP BY email, kind"),
       D.all("SELECT email, max(last_seen) seen, count(*) n FROM lic_devices WHERE revoked=0 GROUP BY email")]);
     const by = (rows, e) => rows.filter((r) => r.email === e);
-    return json({ admin: adminEmail(env), ai: ai.keys(env), users: users.map((u) => ({ ...userRow(u, by(comps, u.email)[0]?.n || 0),
+    return json({ admin: adminEmail(env), ai: ai.keys(env), features: FEATURES, users: users.map((u) => ({ ...userRow(u, by(comps, u.email)[0]?.n || 0),
       admin: isAdmin(env, u.email), used: Object.fromEntries(by(used, u.email).map((r) => [r.kind, { credits: r.n, usd: Math.round(r.usd * 1e4) / 1e4 }])),
       last_seen: by(devs, u.email)[0]?.seen || null, devices: by(devs, u.email)[0]?.n || 0 })) });
   });
@@ -320,12 +330,13 @@ export function licenceRoutes(route, { db, googleCheck, ai }) {
       can_post: "can_post" in body ? (body.can_post ? 1 : 0) : old ? old.can_post : 1,
       ai_options: JSON.stringify(ai_options.length ? ai_options : ["gemini_lite"]),
       note: "note" in body ? str(body.note, 300) : old?.note || "",
+      disabled_features: JSON.stringify("disabled_features" in body ? cleanDisabled(body.disabled_features) : cleanDisabled(jl(old?.disabled_features, []))),
     };
-    if (isAdmin(env, email)) Object.assign(row, { active: 1, can_post: 1, company_limit: 999, ai_options: JSON.stringify(AI_CHOICES) });
-    if (old) await D.run("UPDATE lic_users SET name=?, active=?, company_limit=?, can_post=?, ai_options=?, note=?, updated_at=? WHERE email=?",
-      row.name, row.active, row.company_limit, row.can_post, row.ai_options, row.note, now(), email);
-    else await D.run("INSERT INTO lic_users (email, name, active, company_limit, can_post, ai_options, note, invoice_credits, statement_credits, created_at, updated_at) VALUES (?,?,?,?,?,?,?,0,0,?,?)",
-      email, row.name, row.active, row.company_limit, row.can_post, row.ai_options, row.note, now(), now());
+    if (isAdmin(env, email)) Object.assign(row, { active: 1, can_post: 1, company_limit: 999, ai_options: JSON.stringify(AI_CHOICES), disabled_features: "[]" });
+    if (old) await D.run("UPDATE lic_users SET name=?, active=?, company_limit=?, can_post=?, ai_options=?, note=?, disabled_features=?, updated_at=? WHERE email=?",
+      row.name, row.active, row.company_limit, row.can_post, row.ai_options, row.note, row.disabled_features, now(), email);
+    else await D.run("INSERT INTO lic_users (email, name, active, company_limit, can_post, ai_options, note, invoice_credits, statement_credits, created_at, updated_at, disabled_features) VALUES (?,?,?,?,?,?,?,0,0,?,?,?)",
+      email, row.name, row.active, row.company_limit, row.can_post, row.ai_options, row.note, now(), now(), row.disabled_features);
     if (!row.active) await D.run("UPDATE lic_devices SET revoked=1 WHERE email=?", email); // switched off: every PC is signed out
     return json({ ok: true, user: userRow(await D.first("SELECT * FROM lic_users WHERE email=?", email), 0, env) });
   });

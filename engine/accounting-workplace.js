@@ -137,16 +137,22 @@ export async function intercompanyReview(D,aId,bId){
 export async function liveIntercompany(D,env,cid,other,body){
   if(cid===other)bad("Choose different companies");
   const [a,b]=await Promise.all([company(D,cid),company(D,other)]);
-  const period=String(body.period||"");
-  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))bad("Choose a valid month");
+  // Either one month ("2026-04") or a whole financial year (fy = the year it starts: 2026 → 1 Apr 2026 to 31 Mar 2027).
+  const fyRaw=body.fy;
+  const fy=fyRaw==null||fyRaw===""?null:Number(fyRaw);
+  let period=String(body.period||"");
+  if(fy!=null){if(!Number.isInteger(fy)||fy<2000||fy>2100)bad("Choose a valid financial year");}
+  else if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(period))bad("Choose a valid month");
   const ledgerA=String(body.ledger_a||"").trim(),ledgerB=String(body.ledger_b||"").trim();
   if(!ledgerA||!ledgerB)bad("Choose the reciprocal inter-company ledger in each Tally company");
   for(const [c,name] of [[a,ledgerA],[b,ledgerB]]){
     const known=await D.first("SELECT id FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND UPPER(name)=UPPER(?)",c.id,name);
     if(!known)bad("Inter-company ledger "+name+" does not exist in the imported masters for "+c.name);
   }
-  const yy=Number(period.slice(0,4)),mm=Number(period.slice(5,7));
-  const from=period+"-01",to=new Date(Date.UTC(yy,mm,0)).toISOString().slice(0,10);
+  let from,to,scopeLabel;
+  if(fy!=null){from=fy+"-04-01";to=(fy+1)+"-03-31";period=fy+"-"+String(fy+1).slice(2);scopeLabel="FY "+fy+"-"+String(fy+1).slice(2);}
+  else{const yy=Number(period.slice(0,4)),mm=Number(period.slice(5,7));
+    from=period+"-01";to=new Date(Date.UTC(yy,mm,0)).toISOString().slice(0,10);scopeLabel=period;}
   const names=env.TALLY?.state?.companies||[];
   if(names.length && (!names.some(n=>norm(n)===norm(tallyName(a))) || !names.some(n=>norm(n)===norm(tallyName(b)))))
     bad("Both target companies must be open in Tally for the live comparison",409);
@@ -165,19 +171,18 @@ export async function liveIntercompany(D,env,cid,other,body){
   const links=m.links.filter(l=>inMonth(l.a)||inMonth(l.b));
   const unmatched_a=m.unmatched_a.filter(u=>inMonth(u.row)),unmatched_b=m.unmatched_b.filter(inMonth);
   return {company_a:a.name,company_b:b.name,ledger_a:ledgerA,ledger_b:ledgerB,
-    period,rows_a:x.filter(inMonth).length,rows_b:y.filter(inMonth).length,links,unmatched_a,unmatched_b,notice:m.notice,
-    scope:"Fresh read-only ledger vouchers for the chosen month. Equal amounts must have opposite ledger signs and a matching invoice/reference. No entries or bank reconciliation dates are changed."};
+    period,fy,from,to,scope_label:scopeLabel,rows_a:x.filter(inMonth).length,rows_b:y.filter(inMonth).length,links,unmatched_a,unmatched_b,notice:m.notice,
+    scope:"Fresh read-only ledger vouchers for the chosen "+(fy!=null?"financial year":"month")+". Equal amounts must have opposite ledger signs and a matching invoice/reference. No entries or bank reconciliation dates are changed."};
 }
 
 async function actionCenter(D,cid){
-  const [invoices,bank,ec,purchase,gst,failedJobs,settlements]=await D.many([
+  const [invoices,bank,ec,purchase,gst,failedJobs]=await D.many([
     ["SELECT id,batch_id,status,substr(sync_error,1,220) error FROM invoices WHERE company_id=? AND status IN ('failed','review') ORDER BY created_at DESC LIMIT 80",cid],
     ["SELECT l.id,l.statement_id,l.status,l.sync_error FROM bank_lines l WHERE l.company_id=? AND l.status IN ('failed','uncertain','duplicate') ORDER BY l.date DESC LIMIT 80",cid],
     ["SELECT id,batch_id,status,error FROM ecommerce_vouchers WHERE company_id=? AND status IN ('failed','uncertain') LIMIT 80",cid],
     ["SELECT id,batch_id,status,error FROM gstr2b_purchase_vouchers WHERE company_id=? AND status IN ('review','blocked','uncertain') LIMIT 80",cid],
     ["SELECT d.id,d.return_id,d.status,d.num FROM gst_docs d WHERE d.company_id=? AND d.status IN ('missing','mismatch','probable') LIMIT 80",cid],
     ["SELECT id,kind,result FROM jobs WHERE company_id=? AND status='failed' ORDER BY updated_at DESC LIMIT 80",cid],
-    ["SELECT id,source_name,period,status,summary FROM settlement_batches WHERE company_id=? AND status='review' ORDER BY created_at DESC LIMIT 40",cid]
   ]);
   const items=[];
   function add(list,kind,make){for(const r of list)items.push({kind,...make(r)});}
@@ -187,10 +192,8 @@ async function actionCenter(D,cid){
   add(purchase,"gstr2b-purchase",r=>({id:r.id,label:"GSTR-2B purchase",description:r.error||r.status,link:"#/p2b/"+r.batch_id}));
   add(gst,"gstr2b",r=>({id:r.id,label:"Portal invoice "+(r.num||""),description:r.status,link:"#/g/"+r.return_id}));
   add(failedJobs,"tally",r=>({id:r.id,label:"Tally job "+r.kind,description:r.result||"Failed",link:"#/c/"+cid+"/jobs"}));
-  add(settlements,"settlement",r=>({id:r.id,label:"Review "+(r.source_name||"marketplace settlement"),
-    description:"Unbalanced or incomplete payout statement for "+r.period,link:"#/c/"+cid+"/settlements"}));
   return {items:items.slice(0,350),counts:{invoices:invoices.length,bank:bank.length,marketplace:ec.length,
-    purchases:purchase.length,gstr2b:gst.length,jobs:failedJobs.length,settlements:settlements.length},
+    purchases:purchase.length,gstr2b:gst.length,jobs:failedJobs.length},
     note:"A focused exception inbox using locally stored states; not a guarantee all bank/GST periods have been reconciled."};
 }
 

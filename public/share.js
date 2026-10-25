@@ -48,17 +48,22 @@ export function partyText(o) {
   return lines.join("\n");
 }
 
-/** One message for a whole group: each party's total, then the grand total. Details go in the PDF. */
+/** One message for a whole group: every party with its own bills (bill no., date, amount), then the grand total. */
 export function groupText(o) {
   const lines = [`*${o.groupName}*`, `${o.side === "payable" ? "Payables" : "Outstanding"} of ${o.company} as on ${niceDate(o.asOf)}`, ""];
   let grand = 0;
   for (const p of o.parties) {
-    const total = p.bills.reduce((s, b) => s + b.amount, 0);
     if (!p.bills.length) continue;
+    const total = p.bills.reduce((s, b) => s + b.amount, 0);
     grand += total;
-    lines.push(`• ${p.ledger} — ₹${inr(total)} (${p.bills.filter((b) => b.amount > 0).length} bills)`);
+    lines.push(`*${p.ledger}* — ₹${inr(total)}`);
+    for (const b of p.bills) {
+      const bits = [b.name, b.date ? niceDate(b.date) : ""].filter(Boolean).join(" · ");
+      lines.push(b.amount < 0 ? `  • ${bits} — less ₹${inr(-b.amount)} (advance/credit)` : `  • ${bits} — ₹${inr(b.amount)}${b.overdue_days > 0 ? ` (${b.overdue_days}d overdue)` : ""}`);
+    }
+    lines.push("");
   }
-  lines.push("", `*Total: ₹${inr(grand)}*`);
+  lines.push(`*Total: ₹${inr(grand)}*`);
   return lines.join("\n");
 }
 
