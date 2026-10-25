@@ -17,12 +17,17 @@
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --r: 6px;
+  /* Tells Chromium's own form-control chrome (date/month calendar icon, the select
+     dropdown arrow and its native options popup) to render in dark colors instead of
+     always defaulting to light, regardless of the rest of this page's own styling. */
+  color-scheme: dark;
 }
 :root[data-theme="light"] {
   --bg: #f6f7f8; --panel: #ffffff; --panel-2: #f1f3f5; --line: #e3e7ea; --line-2: #d4dade;
   --text: #13181b; --muted: #5b666e; --faint: #8a949b; --accent: #128a66; --accent-ink: #ffffff;
   --accent-soft: rgba(18, 138, 102, 0.1);
   --warn: #a8640a; --bad: #c53030; --good: #1d7f45; --info: #2f63c4;
+  color-scheme: light;
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 var(--sans); }
@@ -89,7 +94,21 @@ table.grid { width: 100%; border-collapse: collapse; }
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
 .field label { font-size: 12px; color: var(--muted); }
 input.in, select.in, textarea.in { background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r); padding: 7px 10px; width: 100%; }
-input.in:focus, select.in:focus, textarea.in:focus { outline: none; border-color: var(--accent); }
+input.in:focus, select.in:focus, textarea.in:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input.in:hover, select.in:hover, textarea.in:hover { border-color: var(--faint); }
+/* A bare <select> inherits whatever chrome the OS/browser feels like drawing — give it the
+   same pill look as every other control, with our own chevron instead of the native arrow. */
+select.in { appearance: none; -webkit-appearance: none; padding-right: 30px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238b979f' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; }
+select.in[multiple] { appearance: auto; -webkit-appearance: auto; padding-right: 10px; background-image: none; }
+/* The date/month calendar icon is tiny and easy to miss against the dark panel; give it a
+   visible hit target instead of leaving it to whatever the browser draws by default. */
+input.in[type="date"], input.in[type="month"] { cursor: pointer; }
+input.in[type="date"]::-webkit-calendar-picker-indicator, input.in[type="month"]::-webkit-calendar-picker-indicator {
+  padding: 3px; border-radius: 4px; cursor: pointer; opacity: 0.75; }
+input.in[type="date"]::-webkit-calendar-picker-indicator:hover, input.in[type="month"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1; background: var(--panel-2); }
 input.cell { background: transparent; border: 1px solid transparent; border-radius: 4px; padding: 3px 6px; width: 100%; }
 input.cell:hover { border-color: var(--line-2); }
 input.cell:focus { outline: none; border-color: var(--accent); background: var(--bg); }
@@ -315,9 +334,10 @@ tr.badrow td { background: color-mix(in srgb, var(--bad) 7%, transparent); }
 @media (max-width: 900px) { .cols2 { grid-template-columns: 1fr; } }
 .mapwrap { overflow: auto; max-height: 420px; border: 1px solid var(--line); border-radius: var(--r); margin-top: 8px; }
 table.map th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
-table.map select.in.sm { padding: 3px 6px; font-size: 12px; min-width: 120px; }
+table.map select.in.sm { padding: 3px 24px 3px 6px; font-size: 12px; min-width: 120px; background-position: right 7px center; }
 table.map tr.sel td { background: var(--accent-soft); font-weight: 600; }
 .in.sm { padding: 4px 8px; font-size: 13px; }
+select.in.sm { padding-right: 24px; background-position: right 7px center; }
 .tag.bad { color: var(--bad); border-color: var(--bad); }
 .banner.info { background: color-mix(in srgb, var(--info) 12%, var(--panel)); }
 .from-party { font-size: 12.5px; color: var(--info); margin: 1px 0 2px; }
