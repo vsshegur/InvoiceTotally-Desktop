@@ -1,22 +1,30 @@
 // Features the admin can switch on or off for each user. Everything is ON unless the admin turns it off, so a feature
 // added later is available to existing users automatically. The licence carries only the list of switched-off keys.
+// `group` only decides how the admin screen lays the switches out.
 export const FEATURES = [
-  { key: "invoices", label: "Purchase & sales invoices", help: "Upload invoices, review them and post to Tally." },
-  { key: "bank", label: "Bank statements", help: "Upload statements, match ledgers and bills, post entries." },
-  { key: "ecommerce", label: "E-Commerce → Tally", help: "Meesho, Flipkart and Amazon sales." },
-  { key: "gstr2b", label: "GSTR-2B", help: "Portal purchase data against Tally." },
-  { key: "gstcontrol", label: "GST reconciliation", help: "GSTR-1 / 3B / 2B against the books." },
-  { key: "intercompany", label: "Inter-company reconciliation", help: "Two of your companies agreeing with each other." },
-  { key: "ageing", label: "Outstanding & ageing", help: "Who owes what, and how old it is." },
-  { key: "share", label: "WhatsApp & PDF sharing", help: "Send outstanding statements to parties." },
+  { group: "Invoices", key: "invoices", label: "Invoices module", help: "The invoice list, review screens and posting. Turn off to hide invoices completely." },
+  { group: "Invoices", key: "invoice_images", label: "Upload PDFs & photos", help: "Scanned, photographed or handwritten invoices read by AI." },
+  { group: "Invoices", key: "invoice_excel", label: "Upload Excel / CSV registers", help: "A sheet of invoices read column by column." },
+  { group: "Invoices", key: "gstr2b_purchase", label: "Purchase vouchers from GSTR-2B", help: "Prepare Tally purchase vouchers from the GST portal file." },
+  { group: "Banking", key: "bank", label: "Bank statements", help: "Upload statements, match ledgers and bills, post entries." },
+  { group: "Banking", key: "ecommerce", label: "E-Commerce → Tally", help: "Meesho, Flipkart and Amazon sales." },
+  { group: "Reconcile", key: "gstr2b", label: "GSTR-2B reconciliation", help: "Portal purchase data against Tally." },
+  { group: "Reconcile", key: "gstcontrol", label: "GST reconciliation", help: "GSTR-1 / 3B / 2B against the books." },
+  { group: "Reconcile", key: "intercompany", label: "Inter-company reconciliation", help: "Two of your companies agreeing with each other." },
+  { group: "Parties & bills", key: "ageing", label: "Outstanding & ageing", help: "Who owes what, and how old it is." },
+  { group: "Parties & bills", key: "share", label: "WhatsApp & PDF sharing", help: "Send outstanding statements to parties." },
+  { group: "Parties & bills", key: "masters", label: "Masters screen", help: "Browse ledgers and stock items read from Tally." },
+  { group: "Parties & bills", key: "smartmaps", label: "Smart matching", help: "What the app has learned about ledgers and items." },
+  { group: "Other", key: "actions", label: "Action Center", help: "The list of things that need a decision." },
 ];
 export const FEATURE_KEYS = FEATURES.map((f) => f.key);
 /** Only known keys, no repeats. */
 export const cleanDisabled = (list) => [...new Set((Array.isArray(list) ? list : []).filter((k) => FEATURE_KEYS.includes(k)))];
 
-/** Which feature an API path belongs to, or "" when it is not feature-gated (overview, masters, settings, …). */
+/** Which feature an API path belongs to, or "" when it is not feature-gated (overview, settings, …). */
 export function featureForPath(path) {
   const p = String(path || "");
+  if (/gstr2b-purchase/.test(p)) return "gstr2b_purchase";
   if (/^\/api\/(batches|invoices)(\/|$)|^\/api\/companies\/[^/]+\/(batches|upload)(\/|$)/.test(p)) return "invoices";
   if (/^\/api\/bank(\/|$)|^\/api\/companies\/[^/]+\/bank(\/|$)/.test(p)) return "bank";
   if (/ecommerce/.test(p)) return "ecommerce";
@@ -24,5 +32,15 @@ export function featureForPath(path) {
   if (/gst-control/.test(p)) return "gstcontrol";
   if (/intercompany/.test(p)) return "intercompany";
   if (/\/outstanding(\/|$)|party-contacts|bill-ageing/.test(p)) return "ageing";
+  if (/smart-maps/.test(p)) return "smartmaps";
+  if (/action-center/.test(p)) return "actions";
   return "";
+}
+/** Features a request needs on top of its path: starting an invoice upload needs the matching source switched on. */
+export function featuresForRequest(method, path, body) {
+  const out = [];
+  const f = featureForPath(path);
+  if (f) out.push(f);
+  if (method === "POST" && /^\/api\/companies\/[^/]+\/batches$/.test(String(path))) out.push(body?.source === "excel" ? "invoice_excel" : "invoice_images");
+  return out;
 }

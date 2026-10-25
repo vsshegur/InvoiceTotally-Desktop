@@ -44,7 +44,7 @@ const runner = makeRunner(D, { log, canPost: async (c) => {
   const lic = await LIC.current();
   if (!lic) return "other";
   if (c.owner_email && c.owner_email !== lic.email) return "other";
-  return lic.can_post === true;
+  return lic.can_post === true && !lic.stale; // past the offline limit nothing is sent to Tally until the licence is verified online
 } });
 
 // Only the app window may use the API: it gets this key from the launcher (other programs and web pages don't have it).

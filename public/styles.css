@@ -546,3 +546,6 @@ tr.bill.adv td { color: var(--good); }
 .feat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:4px 16px}
 .dp-btn{background:var(--panel-2);color:var(--text);border:1px solid var(--line-2);border-radius:var(--r);padding:6px 10px;font:inherit}
 .dp-btn:hover{border-color:var(--accent)}
+.feat-tools{display:flex;gap:6px;margin:8px 0 2px}
+.feat-group{margin-top:10px}
+.feat-group .eyebrow{margin-bottom:4px}

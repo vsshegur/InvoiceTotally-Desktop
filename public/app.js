@@ -216,8 +216,18 @@ const routes = [
   [/^#\/b\/(\w+)\/review\/(party|stock|ledger|tax|sync)$/, viewReview],
   [/^#\/i\/(\w+)$/, viewInvoice],
 ];
+// Which admin-controlled feature a screen belongs to ("" = always available).
+function hashFeature(h) {
+  if (/^#\/c\/\w+\/gstr2b-purchase|^#\/p2b\//.test(h)) return "gstr2b_purchase";
+  if (/^#\/c\/\w+\/(bank)|^#\/(s|br)\//.test(h)) return "bank";
+  if (/^#\/c\/\w+\/ecommerce|^#\/e\//.test(h)) return "ecommerce";
+  if (/^#\/c\/\w+\/gstr2b|^#\/g\//.test(h)) return "gstr2b";
+  if (/^#\/c\/\w+\/(batches|upload)$|^#\/(b|i)\//.test(h)) return "invoices";
+  const m = /^#\/c\/\w+\/(\w+)$/.exec(h);
+  return m ? TAB_FEATURE[m[1]] || "" : "";
+}
 // One render at a time: a refresh asked for while rendering runs once more afterwards (no flicker, no stale overwrite).
-let routing = false, routeAgain = false, lastHash = null;
+let licWarned = false, routing = false, routeAgain = false, lastHash = null;
 async function route() {
   if (/[#&?]k=/.test(location.hash)) KEY = takeKey();
   if (!KEY) { showNoKey(); return; }
@@ -237,8 +247,13 @@ async function route() {
       try {
         if (!ME || navigating) ME = await api("/me", { quiet: true });
         if (!ME.signed_in && h !== "#/signin") { location.hash = "#/signin"; continue; }
+        const lv = ME.licence;
+        if (lv && !lv.admin && lv.valid_until && !licWarned && lv.valid_until - Date.now() / 1000 < 86400 && lv.valid_until > Date.now() / 1000) {
+          licWarned = true; toast("Connect to the internet within a day to verify your licence — the app pauses after that until it's verified.", true);
+        }
         const hit = routes.find(([re]) => re.test(h));
         if (!hit) { location.hash = "#/"; break; }
+        if (!featureOn(hashFeature(h))) { app().innerHTML = topBar([["Not available"]]) + `<div class="page"><div class="alert warn"><b>This feature is switched off for your account.</b> Ask the admin to turn it on.</div><p><a class="btn" href="#/">Home</a></p></div>`; wireTop(); app().classList.remove("dim"); break; }
         await hit[1](...hit[0].exec(h).slice(1));
       } catch (e) {
         if (!/sign in|Open Vipul Workplace from/.test(e.message)) {
@@ -380,6 +395,18 @@ const AI_HELP = {
   groq: "Qwen on Groq's free tier. Free, but about 25 invoices a day and at most 3 pages per invoice.",
   claude: "Anthropic Claude. The most accurate, especially for handwritten bills; costs more.",
 };
+// Feature switches grouped by area, with all-on / all-off shortcuts. `attr` is the checkbox attribute prefix.
+function featureBoxes(features, off, mk) {
+  const groups = [...new Set(features.map((f) => f.group || "Other"))];
+  return `<div class="feat-tools"><button type="button" class="btn sm" data-feat-all="1">All on</button> <button type="button" class="btn sm" data-feat-all="0">All off</button></div>` +
+    groups.map((g) => `<div class="feat-group"><div class="eyebrow">${esc(g)}</div><div class="feat-grid">${features.filter((f) => (f.group || "Other") === g).map((f) =>
+      `<label class="check-row"><input type="checkbox" ${mk(f)} ${off.includes(f.key) ? "" : "checked"}> <span><b>${esc(f.label)}</b><span class="muted small"> — ${esc(f.help)}</span></span></label>`).join("")}</div></div>`).join("");
+}
+function wireFeatureAll(root) {
+  $$("[data-feat-all]", root).forEach((b) => b.onclick = () => {
+    $$('input[type=checkbox][name^="feat_"], input[type=checkbox][data-feat]', root).forEach((cb) => { if (cb.checked !== (b.dataset.featAll === "1")) { cb.checked = b.dataset.featAll === "1"; cb.dispatchEvent(new Event("change", { bubbles: true })); } });
+  });
+}
 let ADMIN_FEATURES = [];
 async function viewAdmin() {
   if (!ME?.licence?.admin) { location.hash = "#/"; return; }
@@ -405,7 +432,7 @@ async function viewAdmin() {
 
 function userModal(u, features = ADMIN_FEATURES) {
   const ai = u?.ai_options || ["gemini_lite"], off = u?.disabled_features || [];
-  modal(`<h2>${u ? "Edit " + esc(u.name || u.email) : "Add user"}</h2>
+  const mbg = modal(`<h2>${u ? "Edit " + esc(u.name || u.email) : "Add user"}</h2>
     <div class="field"><label>Google email</label><input class="in" name="email" type="email" value="${esc(u?.email || "")}" ${u ? "readonly" : "required"} placeholder="name@gmail.com"></div>
     <div class="field"><label>Name</label><input class="in" name="name" value="${esc(u?.name || "")}"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -415,20 +442,21 @@ function userModal(u, features = ADMIN_FEATURES) {
       <div class="field"><label>Invoice credits to start with</label><input class="in" name="invoice" type="number" min="0" value="0"></div>
       <div class="field"><label>Statement credits to start with</label><input class="in" name="statement" type="number" min="0" value="0"></div></div>`}
     <div class="field"><label>AI this user may use</label>${Object.keys(AI_HELP).map((k) => `<label class="check-row"><input type="checkbox" name="ai_${k}" ${ai.includes(k) ? "checked" : ""}> <span><b>${esc(ME.ai_labels[k])}</b> <span class="muted small">— ${esc(AI_HELP[k])}</span></span></label>`).join("")}</div>
-    ${u?.admin ? "" : `<div class="field"><label>Features this user can use <span class="muted small">— untick to hide and block</span></label>
-      <div class="feat-grid">${features.map((f) => `<label class="check-row"><input type="checkbox" name="feat_${f.key}" ${off.includes(f.key) ? "" : "checked"}> <span><b>${esc(f.label)}</b><span class="muted small"> — ${esc(f.help)}</span></span></label>`).join("")}</div></div>`}
+    ${u?.admin ? "" : `<div class="field"><label>Offline limit <span class="muted small">— days the app may run without checking in online</span></label><input class="in" name="verify_days" type="number" min="1" max="30" value="${u?.verify_days ?? 3}" style="max-width:120px"></div>
+    <div class="field"><label>Features this user can use <span class="muted small">— untick to hide and block</span></label>${featureBoxes(features, off, (f) => `name="feat_${f.key}"`)}</div>`}
     <div class="field"><label>Note (only you see it)</label><input class="in" name="note" value="${esc(u?.note || "")}" placeholder="e.g. paid ₹2,000 on 20 Oct by UPI"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${u ? "Save" : "Add user"}</button></div>`,
   async (d) => {
     const body = { email: d.email, name: d.name, company_limit: +d.company_limit, can_post: d.can_post === "1", note: d.note,
       ai_options: Object.keys(AI_HELP).filter((k) => d["ai_" + k]) };
-    if (!u?.admin) body.disabled_features = features.filter((f) => !d["feat_" + f.key]).map((f) => f.key);
+    if (!u?.admin) { body.disabled_features = features.filter((f) => !d["feat_" + f.key]).map((f) => f.key); body.verify_days = +d.verify_days || 3; }
     if (!body.ai_options.length) throw new Error("Tick at least one AI");
     await api("/admin/save-user", { body });
     if (!u && (+d.invoice || +d.statement)) await api("/admin/add-credits", { body: { email: d.email, invoice: +d.invoice || 0, statement: +d.statement || 0, note: d.note } });
     toast(u ? "Saved" : "User added — they can sign in now");
     if (u) route(); else location.hash = `#/admin/u/${encodeURIComponent(d.email.toLowerCase())}`;
   });
+  wireFeatureAll(mbg);
 }
 
 async function viewAdminUser(email) {
@@ -445,9 +473,10 @@ async function viewAdminUser(email) {
       <div><div class="eyebrow">Invoice credits</div><div class="v">${u.admin ? "∞" : u.invoice_credits.toLocaleString("en-IN")}</div></div>
       <div><div class="eyebrow">Statement credits</div><div class="v">${u.admin ? "∞" : u.statement_credits.toLocaleString("en-IN")}</div></div>
       <div><div class="eyebrow">Companies</div><div class="v">${u.companies} <span class="muted" style="font-size:14px">of ${u.admin ? "∞" : u.company_limit}</span></div></div>
+      <div><div class="eyebrow">Must go online every</div><div class="v" style="font-size:18px">${u.admin ? "—" : (u.verify_days ?? 3) + " days"}</div></div>
       <div><div class="eyebrow">Posting to Tally</div><div class="v" style="font-size:18px">${u.admin || u.can_post ? '<span class="good">Allowed</span>' : '<span class="bad">Blocked</span>'}</div></div></div>
     ${u.admin ? "" : `<div class="card" id="featCard" style="margin:14px 0"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b>Features</b><span class="muted small">Switch a feature off to hide it and block it for this user. Takes effect the next time their app checks the licence (within minutes while online).</span></div>
-      <div class="feat-grid" style="margin-top:10px">${ADMIN_FEATURES.map((f) => `<label class="check-row"><input type="checkbox" data-feat="${esc(f.key)}" ${(u.disabled_features || []).includes(f.key) ? "" : "checked"}> <span><b>${esc(f.label)}</b><span class="muted small"> — ${esc(f.help)}</span></span></label>`).join("")}</div></div>`}
+      <div style="margin-top:10px">${featureBoxes(ADMIN_FEATURES, u.disabled_features || [], (f) => `data-feat="${esc(f.key)}"`)}</div></div>`}
     ${u.admin ? "" : `<form class="card" id="cr" style="margin:14px 0;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
       <div class="field" style="margin:0"><label>Invoice credits</label><input class="in" name="invoice" type="number" value="0" style="width:130px"></div>
       <div class="field" style="margin:0"><label>Statement credits</label><input class="in" name="statement" type="number" value="0" style="width:130px"></div>
@@ -464,6 +493,7 @@ async function viewAdminUser(email) {
     ${u.admin ? "" : `<p style="margin-top:20px"><button class="btn danger sm" id="remove">Remove this user</button></p>`}</div>`;
   wireTop();
   $("#edit").onclick = () => userModal(u, ADMIN_FEATURES);
+  wireFeatureAll($("#featCard") || document);
   $$("[data-feat]").forEach((cb) => cb.onchange = async () => {
     const off = $$("[data-feat]").filter((x) => !x.checked).map((x) => x.dataset.feat);
     try { await api("/admin/save-user", { body: { email: u.email, disabled_features: off } }); u.disabled_features = off; toast(off.length ? `${off.length} feature${off.length === 1 ? "" : "s"} off for this user` : "All features on for this user"); }
@@ -546,13 +576,13 @@ function companyModal() {
 // The company's navigation, grouped by what the person is doing. Diagnostics is deliberately the last item.
 const COMPANY_NAV = [
   [null, [["overview", "Overview", "⌂"], ["actions", "Action Center", "◎"]]],
-  ["Post to Tally", [["batches", "Invoices", "▤"], ["bank", "Bank statements", "▥"], ["ecommerce", "E-Commerce → Tally", "⇄"]]],
+  ["Post to Tally", [["batches", "Invoices", "▤"], ["gstr2b-purchase", "GSTR-2B purchases", "§"], ["bank", "Bank statements", "▥"], ["ecommerce", "E-Commerce → Tally", "⇄"]]],
   ["Reconcile", [["gstr2b", "GSTR-2B", "§"], ["gstcontrol", "GST reconciliation", "≡"], ["intercompany", "Inter-company", "⇋"]]],
   ["Parties & bills", [["ageing", "Outstanding & ageing", "₹"], ["masters", "Masters", "☰"], ["smartmaps", "Smart matching", "✦"]]],
   ["System", [["jobs", "Tally log", "⟲"], ["settings", "Settings", "⚙"], ["diagnostics", "Diagnostics", "✚"]]],
 ];
 // Admin can switch features off per user (ME.licence.disabled_features); hidden here and refused by the API.
-const TAB_FEATURE = { batches: "invoices", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
+const TAB_FEATURE = { "gstr2b-purchase": "gstr2b_purchase", actions: "actions", masters: "masters", smartmaps: "smartmaps", batches: "invoices", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
 const featureOn = (k) => !k || !!ME?.licence?.admin || !(ME?.licence?.disabled_features || []).includes(k);
 const TAB_INFO = {
   overview: ["Overview", "Where things stand for this company, and where to start."],
@@ -578,7 +608,7 @@ async function viewCompany(cid, tab) {
   }
   const c = await api(`/companies/${cid}`);
   CURRENT.company = c;
-  const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || (["overview", "batches", "actions"].includes(tab) ? ["upload", "⇪ Upload invoices"] : null);
+  const upload = { bank: ["bank/upload", "⇪ Upload bank statement"], gstr2b: ["gstr2b/upload", "⇪ Upload GSTR-2B"], ecommerce: ["ecommerce/upload", "⇪ Upload marketplace GST"] }[tab] || (["overview", "batches", "actions"].includes(tab) && featureOn("invoices") && (featureOn("invoice_images") || featureOn("invoice_excel")) ? ["upload", "⇪ Upload invoices"] : null);
   const info = TAB_INFO[tab] || [tab, ""];
   const st = tallyState(c);
   const nav = COMPANY_NAV.map(([group, items]) => [group, items.filter(([k]) => featureOn(TAB_FEATURE[k]))]).filter(([, items]) => items.length).map(([group, items]) => `<div class="grp">${group ? `<div class="gh">${group}</div>` : ""}${items.map(([k, l, ico]) =>
@@ -627,7 +657,7 @@ async function companyOverview(c, el) {
       ${[["invoices", `#/c/${c.id}/upload`, "▤", "Upload invoices", "PDF, photo or Excel purchase and sales invoices"],
         ["bank", `#/c/${c.id}/bank/upload`, "▥", "Upload a bank statement", "Match it to ledgers and bills, then post"],
         ["ageing", `#/c/${c.id}/ageing`, "₹", "Outstanding & ageing", "Receivables and payables — share on WhatsApp or PDF"],
-        ["gstr2b", `#/c/${c.id}/gstr2b-purchase`, "§", "GSTR-2B purchases", "Prepare purchase vouchers from the GST portal file"],
+        ["gstr2b_purchase", `#/c/${c.id}/gstr2b-purchase`, "§", "GSTR-2B purchases", "Prepare purchase vouchers from the GST portal file"],
         ["intercompany", `#/c/${c.id}/intercompany`, "⇋", "Inter-company check", "Do two of your companies agree?"],
         ["gstcontrol", `#/c/${c.id}/gstcontrol`, "≡", "GST reconciliation", "GSTR-1, 2B and 3B against your books"]]
         .filter((t) => featureOn(t[0])).map((t) => tile(...t.slice(1))).join("")}
@@ -658,12 +688,12 @@ async function companyBatches(c, el) {
   else if (help && c.pending_jobs) el.insertAdjacentHTML("beforebegin", `<div class="alert warn" style="margin-bottom:12px">${help} ${plural(c.pending_jobs, "entry is", "entries are")} waiting to go to Tally.</div>`);
   const stageLbl = { find: "Finding invoices…", split: "Checking the split…", read: "Reading…", review: "", error: "Failed" };
   const choices='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:18px">'+
-    '<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/upload">'+
+    (!featureOn("invoice_images")&&!featureOn("invoice_excel")?'':'<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/upload">'+
     '<h3 style="margin:0 0 5px">1. Upload Invoices</h3><p class="muted small">Existing PDF, photo and Excel invoice reader. Supports purchase/sales, item lines, discounts and freight.</p>'+
-    '<span class="btn sm">Upload invoices →</span></a>'+
-    '<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/gstr2b-purchase">'+
+    '<span class="btn sm">Upload invoices →</span></a>')+
+    (!featureOn("gstr2b_purchase")?'':'<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/gstr2b-purchase">'+
     '<h3 style="margin:0 0 5px">2. Upload GSTR-2B</h3><p class="muted small">Prepare Purchase vouchers from GST portal GSTR-2B with fixed PURCHASE-GSTR2B ledger, review, then post to Tally.</p>'+
-    '<span class="btn sm primary">Upload GSTR-2B →</span></a></div>';
+    '<span class="btn sm primary">Upload GSTR-2B →</span></a>')+'</div>';
   el.innerHTML = choices + (rows.length ? `<table class="grid"><thead><tr><th>Batch</th><th>Type</th><th>Uploaded</th><th class="num">Invoices</th><th>Progress</th></tr></thead><tbody>
     ${rows.map((b) => { const n = b.counts || {}; const done = n.synced || 0;
       return `<tr class="click" data-href="#/b/${b.id}"><td><b>${esc(b.name)}</b></td><td>${esc(b.voucher_type)}</td><td class="muted">${ago(b.created_at)}</td>
@@ -803,6 +833,7 @@ async function viewUpload(cid) {
   const monthKey=(y,i)=>y+"-"+pad2(i+1);
   const monthName=(k)=>MONTHS[+k.slice(5)-1]+" "+k.slice(0,4);
   const render = () => {
+    if (st.type && !st.source) { const a = featureOn("invoice_images"), b = featureOn("invoice_excel"); if (a !== b) st.source = a ? "pdf" : "excel"; }
     const step = !st.type ? 1 : !st.source ? 2 : 3;
     const ch = (key, val, title, sub) => `<div class="choice ${st[key] === val ? "on" : ""}" data-k="${key}" data-v="${val}"><div><div><b>${title}</b></div><div class="sub">${sub}</div></div>${st[key] === val ? "✓" : ""}</div>`;
     const done = (n, title, val, key) => `<div class="wstep"><div class="head"><span class="check">✓</span><b>${title}</b><div class="spacer"></div><span class="muted">${val}</span><button class="btn sm" data-reset="${key}">Change</button></div></div>`;
@@ -812,8 +843,8 @@ async function viewUpload(cid) {
       ${step > 1 ? done(1, "What are these invoices?", `Booked as ${st.type}`, "type") : `<div class="wstep active"><div class="head"><span class="n">1</span><b>What are these invoices?</b></div><div class="choices">
         ${ch("type", "Purchase", "Purchase", "Bills from your suppliers — booked as Purchase vouchers")}${ch("type", "Sales", "Sales", "Invoices you issued — booked as Sales vouchers")}</div></div>`}
       ${step > 2 ? done(2, "Where do they come from?", st.source === "pdf" ? "PDFs or photos" : "Excel / CSV", "source") : `<div class="wstep ${step === 2 ? "active" : ""}"><div class="head"><span class="n">2</span><b>Where do they come from?</b></div>${step === 2 ? `<div class="choices">
-        ${ch("source", "pdf", "PDFs or photos", "Scanned, photographed, Tally-printed or handwritten — split and read for you · PDF, PNG, JPEG")}
-        ${ch("source", "excel", "Excel or CSV register", "Any sheet of invoices — its columns are understood automatically · .xlsx or .csv")}</div>` : ""}</div>`}
+        ${featureOn("invoice_images") ? ch("source", "pdf", "PDFs or photos", "Scanned, photographed, Tally-printed or handwritten — split and read for you · PDF, PNG, JPEG") : ""}
+        ${featureOn("invoice_excel") ? ch("source", "excel", "Excel or CSV register", "Any sheet of invoices — its columns are understood automatically · .xlsx or .csv") : ""}</div>` : ""}</div>`}
       <div class="wstep ${step === 3 ? "active" : ""}"><div class="head"><span class="n">3</span><b>Invoice period and files</b></div>${step === 3 ? `
         <div class="eyebrow" style="margin:10px 0">How should these invoice dates be checked?</div>
         <div class="choices">

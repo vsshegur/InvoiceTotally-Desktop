@@ -7,7 +7,8 @@
 import crypto from "node:crypto";
 import os from "node:os";
 
-const OFFLINE_DAYS = 30; // a licence older than this needs one online check
+const DEFAULT_VERIFY_DAYS = 3; // the app must reach the service at least this often (the admin can change it per user)
+const CLOCK_SLACK = 10 * 60; // seconds the PC clock may differ before we think it was turned back
 export class LicenceError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 
 export function licenceClient({ D, serviceUrl, fetchImpl = fetch }) {
@@ -38,7 +39,7 @@ export function licenceClient({ D, serviceUrl, fetchImpl = fetch }) {
     } finally { clearTimeout(timer); }
     online = true; lastError = "";
     const j = await r.json().catch(() => ({}));
-    if (j.licence) await store(j.licence, j.pubkey);
+    if (j.licence) { await store(j.licence, j.pubkey); const t = verify(j.licence, JSON.parse((await cfgGet("lic_pubkey")) || "null")); if (t?.issued_at) await cfgSet("lic_clock", t.issued_at); }
     if (r.status === 401 && auth) { await forget(); throw new LicenceError(401, j.error || "Signed out — please sign in again."); }
     if (!r.ok) throw new LicenceError(r.status, j.error || `Service error ${r.status}`);
     return j;
@@ -59,7 +60,15 @@ export function licenceClient({ D, serviceUrl, fetchImpl = fetch }) {
     const pub = JSON.parse((await cfgGet("lic_pubkey")) || "null");
     const p = verify(lic, pub);
     if (!p) return null;
-    p.stale = Date.now() / 1000 > (p.issued_at || 0) + OFFLINE_DAYS * 86400;
+    const nowS = Date.now() / 1000;
+    // The newest time this PC has ever seen: a clock turned back to stretch the offline window is caught here.
+    const seen = Number(await cfgGet("lic_clock")) || 0;
+    const rolledBack = seen - nowS > CLOCK_SLACK;
+    if (nowS > seen) await cfgSet("lic_clock", Math.floor(nowS));
+    const days = Math.max(1, Math.min(30, Number(p.verify_days) || DEFAULT_VERIFY_DAYS));
+    p.valid_until = (p.issued_at || 0) + days * 86400;
+    p.stale = nowS > p.valid_until || rolledBack;
+    p.clock_rolled_back = rolledBack;
     return p;
   }
 
