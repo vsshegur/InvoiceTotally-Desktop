@@ -15,6 +15,11 @@ export const FEATURES = [
   { group: "Parties & bills", key: "share", label: "WhatsApp & PDF sharing", help: "Send outstanding statements to parties." },
   { group: "Parties & bills", key: "masters", label: "Masters screen", help: "Browse ledgers and stock items read from Tally." },
   { group: "Parties & bills", key: "smartmaps", label: "Smart matching", help: "What the app has learned about ledgers and items." },
+  { group: "Actions", key: "create_masters", label: "Create ledgers & stock items in Tally", help: "Let the app add a missing party, ledger or stock item while posting." },
+  { group: "Actions", key: "delete_data", label: "Delete invoices, batches, statements & companies", help: "Removes them from this app (never from Tally)." },
+  { group: "Actions", key: "company_settings", label: "Change company settings", help: "Names, defaults and invoice readers for a company." },
+  { group: "Actions", key: "backup_restore", label: "Backups & restore", help: "Make, verify and restore backups of the app's data." },
+  { group: "Actions", key: "export_xml", label: "Download Tally XML", help: "Save the XML of an invoice or statement." },
   { group: "Other", key: "actions", label: "Action Center", help: "The list of things that need a decision." },
 ];
 export const FEATURE_KEYS = FEATURES.map((f) => f.key);
@@ -37,10 +42,16 @@ export function featureForPath(path) {
   return "";
 }
 /** Features a request needs on top of its path: starting an invoice upload needs the matching source switched on. */
-export function featuresForRequest(method, path, body) {
+export function featuresForRequest(method, path, body, createsMaster = false) {
   const out = [];
   const f = featureForPath(path);
   if (f) out.push(f);
+  const p = String(path || "");
+  if (method === "DELETE") out.push("delete_data");
+  if (method === "PATCH" && /^\/api\/companies\/[^/]+$/.test(p)) out.push("company_settings");
+  if (/^\/api\/backups?(\/|$)/.test(p)) out.push("backup_restore");
+  if (/\/xml$/.test(p)) out.push("export_xml");
+  if (createsMaster || /\/(ensure-ledger|create-supplier)$/.test(p)) out.push("create_masters");
   if (method === "POST" && /^\/api\/companies\/[^/]+\/batches$/.test(String(path))) out.push(body?.source === "excel" ? "invoice_excel" : "invoice_images");
   return out;
 }

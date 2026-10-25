@@ -6,6 +6,7 @@ import * as T from "./tally.js";
 import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
 import { parseAmount } from "./num.js";
 import {normalizeInvoiceDate,invoiceDateReview} from "./invoice-period.js";
+import {normalizePurchase} from "./line-normalize.js";
 
 const STALE = 240; // seconds before a claimed unit is considered abandoned
 const TRIES = 4;   // a file or invoice is tried this many times, then shown as failed with the reason (never endless)
@@ -169,10 +170,19 @@ export async function applyExtraction(D, invId, data) {
   if (h.ai && prev.ai_split_cost) h.ai.cost_usd = Math.round((h.ai.cost_usd + prev.ai_split_cost) * 1e5) / 1e5;
   const dup = await findDuplicate(D, inv.company_id, invId, h.number, h.party_gstin, h.party_name);
   if (dup) h.warnings.push(`Possible duplicate: invoice ${h.number} from this party is already ${dup.status === "synced" ? "in Tally" : "uploaded"} (batch ${dup.batch_name}).`);
+  // Purchase bills: dozen → pieces, and a separate discount line → discount % on every item (see line-normalize.js).
+  let itemLines = data.lines || [], chargeLines = data.charges || [];
+  if (vt === "Purchase") {
+    const nz = normalizePurchase(data);
+    itemLines = nz.lines; chargeLines = nz.charges;
+    h.conversions = nz.notes;
+    h.unit_review = nz.review;
+    h.unit_ack = false;
+  }
   const stmts = [D.stmt("DELETE FROM lines WHERE invoice_id=?", invId)];
   let idx = 0;
-  for (const l of data.lines || []) stmts.push(D.insertStmt("lines", lineRow(invId, idx++, "item", l)));
-  for (const c of data.charges || []) stmts.push(D.insertStmt("lines", lineRow(invId, idx++, "ledger", c)));
+  for (const l of itemLines) stmts.push(D.insertStmt("lines", lineRow(invId, idx++, "item", l)));
+  for (const c of chargeLines) stmts.push(D.insertStmt("lines", lineRow(invId, idx++, "ledger", c)));
   stmts.push(D.updateStmt("invoices", invId, { data: JSON.stringify(h), status: "review", tax_lines: null, party_ledger: null,
     party_method: null, party_proposed: null, sync_error: null }));
   await D.batch(stmts);
@@ -292,6 +302,7 @@ export function stepStatus(inv) {
   if (!h.number) blockers.push("invoice number is missing");
   if (!dateReview.date) blockers.push(`date '${h.date || ""}' isn't valid`);
   for(const reason of dateReview.needs_review||dateReview.hard_mismatch ? dateReview.reasons : [])blockers.push(reason);
+  if ((h.unit_review || []).length && !h.unit_ack) blockers.push("check the unit / discount lines marked for review and tick “I checked these against the bill”");
   if (!totalOk) blockers.push(`lines + taxes = ₹${computed.toFixed(2)} but the invoice total is ₹${(+h.total).toFixed(2)}`);
   return { party, stock, ledger, tax, total_ok: totalOk, date_ok: dateOk,date_review:dateReview, blockers, ready: blockers.length === 0 };
 }

@@ -157,7 +157,7 @@ export function voucher(company, vtype, inv, partyLedger, lines, taxLines, { sen
     let qty = "";
     if (l.qty) {
       const q = qtyStr(l.qty);
-      qty = (l.rate ? `<RATE>${(+l.rate).toFixed(2)}/${esc(unit)}</RATE>` : "") +
+      qty = (l.rate ? `<RATE>${rateStr(l.rate)}/${esc(unit)}</RATE>` : "") +
         `<ACTUALQTY> ${q} ${esc(unit)}</ACTUALQTY><BILLEDQTY> ${q} ${esc(unit)}</BILLEDQTY>`;
     }
     const disc = l.discount_pct ? `<DISCOUNT>${qtyStr(l.discount_pct)}</DISCOUNT>` : "";
@@ -174,6 +174,9 @@ export function voucher(company, vtype, inv, partyLedger, lines, taxLines, { sen
   x += "</VOUCHER>";
   return envelope("Vouchers", company, x);
 }
+
+/** Rate with up to 4 decimals (7.0833 per piece), trailing zeros kept to 2 (85.00). */
+const rateStr = (v) => { const s = (Math.round(+v * 10000) / 10000).toFixed(4); return s.replace(/(\.\d\d)0{1,2}$/, "$1"); };
 
 /** "Ashoka paper 4000 × 0.75 = 3,000.00; 9½/5½ packet 1000 × 2.50 = 2,500.00" — what an accounting voucher would otherwise lose. */
 export function lineNarration(lines) {

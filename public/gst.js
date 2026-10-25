@@ -308,7 +308,7 @@ async function viewGst(rid) {
       <button class="btn" id="g-tally" title="Read the purchase register from Tally again">⟳ Read Tally again</button>
       <button class="btn" id="g-sup" ${count.books ? "" : "disabled"}>Message suppliers</button>
       <button class="btn" id="g-xl">Export Excel</button>
-      <button class="btn" id="g-del">Delete</button></div>
+      ${featureOn("delete_data") ? `<button class="btn" id="g-del">Delete</button>` : ""}</div>
     <div class="gsthead">
       ${card("ITC as per GSTR-2B", sm.b2b, "lead", sm.itcNo.n ? ` · ${money(sm.itcNo.tax)} not available` : "")}
       ${card("Matched", { n: sm.matched.n + sm.accepted.n, tax: sm.matched.tax + sm.accepted.tax }, "good")}
@@ -332,7 +332,7 @@ async function viewGst(rid) {
   keymap.arrowup = () => { GST_UI.sel = Math.max(0, GST_UI.sel - 1); route(); };
   $("#g-tol").onchange = async (e) => { await act(() => api(`/gstr2b/${rid}/tolerance`, { body: { tol: +e.target.value } }), "Matching again…"); route(); };
   $("#g-tally").onclick = async () => { await act(() => api(`/gstr2b/${rid}/tally`, { body: {} }), c.tally_status === "ok" ? "Reading from Tally…" : "Queued — runs when TallyPrime is open"); refresh(); };
-  $("#g-del").onclick = async () => { if (confirm(`Delete GSTR-2B ${label} here? Nothing in Tally changes.`)) { await api(`/gstr2b/${rid}`, { method: "DELETE" }); location.hash = `#/c/${c.id}/gstr2b`; } };
+  if ($("#g-del")) $("#g-del").onclick = async () => { if (confirm(`Delete GSTR-2B ${label} here? Nothing in Tally changes.`)) { await api(`/gstr2b/${rid}`, { method: "DELETE" }); location.hash = `#/c/${c.id}/gstr2b`; } };
   $("#g-xl").onclick = () => gstExport({ c, s, r, sm, label, GM, XW });
   $("#g-sup").onclick = () => gstSuppliers({ c, r, label, GM });
   if (reading) every(4000, refresh);

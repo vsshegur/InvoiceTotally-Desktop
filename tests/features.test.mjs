@@ -21,3 +21,16 @@ test("invoice upload needs its source switch as well as the invoices module", ()
   assert.deepEqual(featuresForRequest("GET", "/api/companies/c1/batches", {}), ["invoices"]);
   assert.deepEqual(featuresForRequest("GET", "/api/companies/c1/masters", {}), []);
 });
+
+test("action permissions: delete, settings, backups, XML and creating masters", () => {
+  assert.ok(featuresForRequest("DELETE", "/api/invoices/i1", {}).includes("delete_data"));
+  assert.ok(featuresForRequest("DELETE", "/api/companies/c1", {}).includes("delete_data"));
+  assert.deepEqual(featuresForRequest("PATCH", "/api/companies/c1", {}), ["company_settings"]);
+  assert.ok(!featuresForRequest("PATCH", "/api/invoices/i1", {}).includes("company_settings"));
+  assert.ok(featuresForRequest("POST", "/api/backups/restore", {}).includes("backup_restore"));
+  assert.ok(featuresForRequest("POST", "/api/backup", {}).includes("backup_restore"));
+  assert.ok(featuresForRequest("GET", "/api/invoices/i1/xml", {}).includes("export_xml"));
+  assert.ok(featuresForRequest("POST", "/api/batches/b1/party", {}, true).includes("create_masters"));
+  assert.ok(featuresForRequest("POST", "/api/gstr2b-purchases/p1/ensure-ledger", {}).includes("create_masters"));
+  assert.deepEqual(featuresForRequest("POST", "/api/batches/b1/party", {}, false), ["invoices"]);
+});

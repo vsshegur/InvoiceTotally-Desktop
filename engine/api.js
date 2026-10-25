@@ -686,6 +686,7 @@ route("PATCH", "/api/invoices/:iid", async ({ D, p, body }) => {
     h.date_verified_value=P.normDate(h.date);
     h.date_verified_at=now();
   }
+  if(body.confirm_units===true)h.unit_ack=true;
   h.warnings = (h.warnings||[]).filter(w=>!/^GSTIN .* fails the checksum/.test(w));
   if (h.party_gstin && !gstinValid(h.party_gstin)) h.warnings.push(`GSTIN ${h.party_gstin} fails the checksum — check for a misread character.`);
   h.edited = true;
@@ -783,7 +784,7 @@ async function handleApi(req, env, url) {
     if (req.method !== "GET" && req.method !== "DELETE") { try { body = await req.json(); } catch { body = {}; } }
     if (lic && !lic.admin) {
       const off = cleanDisabled(lic.disabled_features);
-      if (featuresForRequest(req.method, url.pathname, body).some((f) => off.includes(f)))
+      if (featuresForRequest(req.method, url.pathname, body, !!(r.createPosts && body.create)).some((f) => off.includes(f)))
         throw new HttpError(403, "This feature is switched off for your account. Ask the admin to turn it on.", "feature");
     }
     if (r.post || (r.createPosts && body.create)) await requirePosting(env);

@@ -338,7 +338,7 @@ async function viewAccount() {
     ${l.admin ? `<div class="card" style="margin-top:12px"><b>Admin</b><p class="muted" style="margin:4px 0 10px">Add the people who may use Vipul Workplace, set their limits and give them credits.</p>
       <a class="btn primary" href="#/admin">Open the admin panel</a></div>` : ""}
     <h2 style="margin-top:26px">This PC</h2>
-    <form class="card" id="bk">
+    ${featureOn("backup_restore") ? `    <form class="card" id="bk">
       <div class="field"><label>Daily backup folder</label>
         <input class="in" name="backup_dir" value="${esc(s.backup_dir)}" placeholder="${esc(s.data_dir ? s.data_dir + "\\backups" : "")}">
         <div class="muted small" style="margin-top:4px">A copy of everything is saved here once a day (the last 14 days are kept). A Google Drive or OneDrive folder on this PC is ideal — then a copy is also kept online.</div></div>
@@ -351,14 +351,14 @@ async function viewAccount() {
         ${backups.backups.map(b => `<tr><td class="mono">${esc(b.name)}</td><td>${b.bytes? (b.bytes/1024/1024).toFixed(2)+" MB":"—"}</td>
           <td class="${b.valid?"good":"bad"}">${b.valid?"Passed":"Failed"} ${b.checked?"· SHA-256":""} ${b.encrypted?"· Encrypted":""}</td>
           <td>${l.admin?`<button type="button" class="btn sm" data-restore="${esc(b.name)}" ${b.valid?"":"disabled"}>Restore</button>`:"Admin only"}</td></tr>`).join("")}
-      </tbody></table></div>`:'<div class="muted small" style="margin-top:10px">No backups yet. Select “Back up now” to create the first verified version.</div>'}</div>
+      </tbody></table></div>`:'<div class="muted small" style="margin-top:10px">No backups yet. Select “Back up now” to create the first verified version.</div>'}</div>` : ""}
     <div class="kv muted small" style="margin-top:14px"><div><span>App version</span><b>${esc(ME.version)}</b></div><div><span>Data folder</span><b class="mono">${esc(s.data_dir)}</b></div>
       <div><span>Tally</span><b>${esc(ME.tally.detail || ME.tally.status)}${ME.tally.companies?.length ? ` — open: ${ME.tally.companies.map(esc).join(", ")}` : ""}</b></div></div>
   </div>`;
   wireTop();
   $("#signout").onclick = async () => { if (!confirm("Sign out on this PC? Work that is waiting stays here for when you sign in again.")) return; await api("/signout", { body: {} }); ME = null; location.hash = "#/signin"; };
-  $("#bk").onsubmit = async (e) => { e.preventDefault(); await act(() => api("/settings", { body: { backup_dir: e.target.backup_dir.value } }), "Saved"); route(); };
-  $("#bknow").onclick = async () => { const r = await act(() => api("/backup", { body: {} })); if (r.error) toast(r.error, true); else toast("Verified backup saved"); route(); };
+  if ($("#bk")) $("#bk").onsubmit = async (e) => { e.preventDefault(); await act(() => api("/settings", { body: { backup_dir: e.target.backup_dir.value } }), "Saved"); route(); };
+  if ($("#bknow")) $("#bknow").onclick = async () => { const r = await act(() => api("/backup", { body: {} })); if (r.error) toast(r.error, true); else toast("Verified backup saved"); route(); };
   $("#encryptedNow")?.addEventListener("click",()=>{
     modal('<h2>Encrypted portable backup</h2><p class="muted small">The database is encrypted locally with AES-256-GCM. The password is not stored or sent online. Keep it safely; losing the password makes this backup unrecoverable.</p>'+
       '<div class="field"><label>Passphrase (12+ characters)</label><input class="in" type="password" name="passphrase" minlength="12" required autocomplete="new-password"></div>'+
@@ -398,11 +398,32 @@ const AI_HELP = {
 // Feature switches grouped by area, with all-on / all-off shortcuts. `attr` is the checkbox attribute prefix.
 function featureBoxes(features, off, mk) {
   const groups = [...new Set(features.map((f) => f.group || "Other"))];
-  return `<div class="feat-tools"><button type="button" class="btn sm" data-feat-all="1">All on</button> <button type="button" class="btn sm" data-feat-all="0">All off</button></div>` +
+  return `<div class="feat-tools"><select class="in" data-feat-preset style="max-width:300px"><option value="">Quick setup: choose a role…</option>${FEATURE_PRESETS.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join("")}</select>
+    <button type="button" class="btn sm" data-feat-all="1">All on</button> <button type="button" class="btn sm" data-feat-all="0">All off</button></div>` +
     groups.map((g) => `<div class="feat-group"><div class="eyebrow">${esc(g)}</div><div class="feat-grid">${features.filter((f) => (f.group || "Other") === g).map((f) =>
       `<label class="check-row"><input type="checkbox" ${mk(f)} ${off.includes(f.key) ? "" : "checked"}> <span><b>${esc(f.label)}</b><span class="muted small"> — ${esc(f.help)}</span></span></label>`).join("")}</div></div>`).join("");
 }
+// Ready-made sets of switches. `on` lists what is allowed ("*" = everything); `except` removes some from "*".
+const FEATURE_PRESETS = [
+  { name: "Everything", on: "*" },
+  { name: "Accountant — everything except delete, backups & settings", on: "*", except: ["delete_data", "backup_restore", "company_settings"] },
+  { name: "GSTR-2B only", on: ["gstr2b", "gstr2b_purchase", "create_masters"] },
+  { name: "Invoice upload via GSTR-2B only", on: ["gstr2b_purchase", "create_masters"] },
+  { name: "Invoices from photos / PDFs only", on: ["invoices", "invoice_images", "create_masters"] },
+  { name: "Invoices from Excel / CSV only", on: ["invoices", "invoice_excel", "create_masters"] },
+  { name: "Bank statements only", on: ["bank", "create_masters"] },
+  { name: "Reports only (outstanding, GST, inter-company)", on: ["ageing", "share", "gstcontrol", "gstr2b", "intercompany", "masters"] },
+];
 function wireFeatureAll(root) {
+  $$("[data-feat-preset]", root).forEach((sel) => sel.onchange = () => {
+    const p = FEATURE_PRESETS[+sel.value]; if (!p) return;
+    const allow = (k) => p.on === "*" ? !(p.except || []).includes(k) : p.on.includes(k);
+    $$('input[type=checkbox][name^="feat_"], input[type=checkbox][data-feat]', root).forEach((cb) => {
+      const k = cb.name ? cb.name.slice(5) : cb.dataset.feat, want = allow(k);
+      if (cb.checked !== want) { cb.checked = want; cb.dispatchEvent(new Event("change", { bubbles: true })); }
+    });
+    sel.value = "";
+  });
   $$("[data-feat-all]", root).forEach((b) => b.onclick = () => {
     $$('input[type=checkbox][name^="feat_"], input[type=checkbox][data-feat]', root).forEach((cb) => { if (cb.checked !== (b.dataset.featAll === "1")) { cb.checked = b.dataset.featAll === "1"; cb.dispatchEvent(new Event("change", { bubbles: true })); } });
   });
@@ -494,10 +515,14 @@ async function viewAdminUser(email) {
   wireTop();
   $("#edit").onclick = () => userModal(u, ADMIN_FEATURES);
   wireFeatureAll($("#featCard") || document);
-  $$("[data-feat]").forEach((cb) => cb.onchange = async () => {
-    const off = $$("[data-feat]").filter((x) => !x.checked).map((x) => x.dataset.feat);
-    try { await api("/admin/save-user", { body: { email: u.email, disabled_features: off } }); u.disabled_features = off; toast(off.length ? `${off.length} feature${off.length === 1 ? "" : "s"} off for this user` : "All features on for this user"); }
-    catch (e) { cb.checked = !cb.checked; toast(e.message, true); }
+  let featTimer = null;
+  $$("[data-feat]").forEach((cb) => cb.onchange = () => {
+    clearTimeout(featTimer);
+    featTimer = setTimeout(async () => {   // one save after a burst of clicks (a quick-setup role flips many at once)
+      const off = $$("[data-feat]").filter((x) => !x.checked).map((x) => x.dataset.feat);
+      try { await api("/admin/save-user", { body: { email: u.email, disabled_features: off } }); u.disabled_features = off; toast(off.length ? `Saved — ${off.length} feature${off.length === 1 ? "" : "s"} off for this user` : "Saved — all features on for this user"); }
+      catch (e) { toast(e.message, true); route(); }
+    }, 350);
   });
   $("#toggle")?.addEventListener("click", async () => {
     if (u.active && !confirm(`Switch off ${u.email}? They are signed out on every PC and can't sign in until you switch them on.`)) return;
@@ -582,7 +607,7 @@ const COMPANY_NAV = [
   ["System", [["jobs", "Tally log", "⟲"], ["settings", "Settings", "⚙"], ["diagnostics", "Diagnostics", "✚"]]],
 ];
 // Admin can switch features off per user (ME.licence.disabled_features); hidden here and refused by the API.
-const TAB_FEATURE = { "gstr2b-purchase": "gstr2b_purchase", actions: "actions", masters: "masters", smartmaps: "smartmaps", batches: "invoices", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
+const TAB_FEATURE = { settings: "company_settings", "gstr2b-purchase": "gstr2b_purchase", actions: "actions", masters: "masters", smartmaps: "smartmaps", batches: "invoices", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
 const featureOn = (k) => !k || !!ME?.licence?.admin || !(ME?.licence?.disabled_features || []).includes(k);
 const TAB_INFO = {
   overview: ["Overview", "Where things stand for this company, and where to start."],
@@ -785,7 +810,7 @@ async function companySettings(c, el) {
     <div class="field"><label>Default sales ledger</label><select class="in" name="default_sales_ledger">${opts("Sales Accounts", s.default_sales_ledger)}</select></div>
     <label style="display:flex;gap:8px;margin:8px 0"><input type="checkbox" name="send_descriptions" ${s.send_descriptions !== false ? "checked" : ""}> Send the invoice's item description under each stock item</label>
     <label style="display:flex;gap:8px;margin:8px 0 16px"><input type="checkbox" name="round_off" ${s.round_off !== false ? "checked" : ""}> Round the bill to the nearest rupee</label>
-    <button class="btn primary">Save</button> <button type="button" class="btn danger" id="del" style="margin-left:8px">Delete company</button></form>`;
+    <button class="btn primary">Save</button> ${featureOn("delete_data") ? `<button type="button" class="btn danger" id="del" style="margin-left:8px">Delete company</button>` : ""}</form>`;
   const drawOrder = () => {
     $("#aiOrder").innerHTML = aiOrderHtml(order, aiOpts);
     $$("#aiOrder .airow").forEach((row) => {
@@ -818,7 +843,7 @@ async function companySettings(c, el) {
         ai_order: order } } }), "Saved");
     route();
   };
-  $("#del").onclick = async () => { if (confirm(`Delete ${c.name} and all its data in this app? (Nothing in Tally is touched. It still counts towards your company limit.)`)) { await api(`/companies/${c.id}`, { method: "DELETE" }); location.hash = "#/"; } };
+  if ($("#del")) $("#del").onclick = async () => { if (confirm(`Delete ${c.name} and all its data in this app? (Nothing in Tally is touched. It still counts towards your company limit.)`)) { await api(`/companies/${c.id}`, { method: "DELETE" }); location.hash = "#/"; } };
 }
 
 // ---------------------------------------------------------------------------
@@ -967,7 +992,7 @@ async function viewBatch(bid) {
   app().innerHTML = topBar([[c.name, `#/c/${c.id}/batches`], [b.name]], c) + `<div class="bar">
       <span class="status">${b.period_mode==="month" ? "Month"+(String(b.expected_period).includes(",")?"s ":" ")+esc(String(b.expected_period).split(",").join(", "))+" · " : b.period_mode==="mixed"?"Regular mixed invoices · ":""}${b.stage === "review" ? `${b.invoices.length} invoice(s) read — ${reviewable ? "ready to review" : "all done"}${rechecked ? ` · ${rechecked} double-checked by a second read` : ""}${b.ai_cost_usd ? ` · AI cost ≈ ₹${(b.ai_cost_usd * 88).toFixed(2)}` : ""}` : b.stage === "error" ? "Something went wrong" : "Working…"}</span><div class="spacer"></div>
       <button class="btn" id="refresh">⟳ Refresh <kbd>Alt+R</kbd></button><a class="btn" href="#/c/${c.id}/batches">Back <kbd>Esc</kbd></a>
-      <button class="btn danger" id="del" title="Delete this batch from Vipul Workplace">🗑 Delete batch</button>
+      ${featureOn("delete_data") ? `<button class="btn danger" id="del" title="Delete this batch from Vipul Workplace">🗑 Delete batch</button>` : ""}
       ${!working && (b.invoices.some((i) => i.status === "error") || failedFiles.length) ? `<button class="btn" id="retry">↻ Retry failed</button>` : ""}
       ${b.stage === "review" && reviewable ? `<a class="btn primary" href="#/b/${bid}/review/party">Bulk review <kbd>R</kbd></a>` : ""}</div>
     <div class="pipe">${b.source === "excel"
@@ -995,7 +1020,7 @@ async function viewBatch(bid) {
   $("#refresh").onclick = route; keymap["Alt+r"] = route;
   keymap.Escape = () => location.hash = `#/c/${c.id}/batches`;
   keymap.r = () => b.stage === "review" && (location.hash = `#/b/${bid}/review/party`);
-  $("#del").onclick=async()=>{
+  if($("#del"))$("#del").onclick=async()=>{
     if(!confirm("DELETE "+b.name+" from Vipul Workplace? This removes its invoice files and drafts. Vouchers already in Tally will NOT be deleted.\n\nThis action cannot be undone."))return;
     try{await api(`/batches/${bid}`,{method:"DELETE"});
       toast("Batch deleted. Entries already posted in Tally were not changed.");
@@ -1434,13 +1459,16 @@ async function viewInvoice(iid) {
   app().innerHTML = topBar([[c.name, `#/c/${c.id}/batches`], [b.name, `#/b/${b.id}`], [`Invoice ${h.number || ""}`]], c) + `<div class="bar">
       <span class="status"><b class="${inv.status === "synced" ? "good" : inv.status === "failed" || inv.status === "error" ? "bad" : ""}">${statusLbl}</b> · ${b.voucher_type} · steps: ${["party", "stock", "ledger", "tax"].map((s) => `${s} ${inv.steps[s] ? '<span class="good">✓</span>' : '<span class="faint">○</span>'}`).join(" ")}</span>
       <div class="spacer"></div><button class="btn" onclick="history.back()">Back <kbd>Esc</kbd></button>
-      ${editable ? `<button class="btn danger" id="del">Delete invoice</button>${inv.pages.length ? `<button class="btn" id="reread" title="Read this invoice again from the image (your edits are replaced)">↻ Read again</button>` : ""}<button class="btn" id="save">Save changes <kbd>Ctrl+S</kbd></button>` : `<button class="btn" id="back">Send back to review</button>`}
-      ${inv.steps.ready && ME.licence?.can_post ? `<a class="btn" href="/api/invoices/${iid}/xml?k=${encodeURIComponent(KEY)}">Tally XML</a>` : ""}
+      ${editable && featureOn("delete_data") ? `<button class="btn danger" id="del">Delete invoice</button>${inv.pages.length ? `<button class="btn" id="reread" title="Read this invoice again from the image (your edits are replaced)">↻ Read again</button>` : ""}<button class="btn" id="save">Save changes <kbd>Ctrl+S</kbd></button>` : `<button class="btn" id="back">Send back to review</button>`}
+      ${inv.steps.ready && ME.licence?.can_post && featureOn("export_xml") ? `<a class="btn" href="/api/invoices/${iid}/xml?k=${encodeURIComponent(KEY)}">Tally XML</a>` : ""}
       ${editable ? `<a class="btn" href="#/b/${b.id}/review/${["party", "stock", "ledger", "tax"].find((s) => !inv.steps[s]) || "sync"}">Resolve in review</a>` : ""}
       ${editable && inv.steps.ready && ME.licence?.can_post ? `<button class="btn primary" id="push">Push to Tally</button>` : ""}</div>
     <div class="inv-layout"><div>${pageViewer(inv.pages)}</div><div>
       ${inv.sync_error ? `<div class="alert bad" style="margin-bottom:10px">${esc(inv.sync_error)}</div>` : ""}
       ${(h.warnings || []).map((w) => `<div class="alert warn" style="margin-bottom:6px">⚠ ${esc(w)}</div>`).join("")}
+      ${(h.conversions || []).length ? `<div class="alert info" style="margin-bottom:8px"><b>Adjusted for Tally</b> (amounts, taxable value and GST are as on the bill)<ul style="margin:6px 0 0 18px">${h.conversions.map((n) => `<li class="small">${esc(n)}</li>`).join("")}</ul></div>` : ""}
+      ${(h.unit_review || []).length ? `<div class="alert ${h.unit_ack ? "ok" : "bad"}" style="margin-bottom:10px"><b>${h.unit_ack ? "✓ Checked against the bill" : "Have a look — unit / discount needs checking"}</b><ul style="margin:6px 0 0 18px">${h.unit_review.map((n) => `<li class="small">${esc(n)}</li>`).join("")}</ul>
+        ${editable && !h.unit_ack ? `<label style="display:block;margin-top:8px"><input type="checkbox" id="confirmUnits"> <b>I checked these lines against the original bill.</b></label>` : ""}</div>` : ""}
       ${dateReview.needs_review?`<div class="alert bad" style="margin-bottom:10px">
         <b>Have a look — invoice DATE needs manual verification.</b>
         <div class="small">${esc((dateReview.reasons||[]).join("; "))}</div>
@@ -1483,7 +1511,7 @@ async function viewInvoice(iid) {
     const data = {};
     $$("[data-h]").forEach((el) => { const k = el.dataset.h; let v = el.value.trim(); if (["cgst", "sgst", "igst", "cess", "round_off", "total"].includes(k)) v = v === "" ? null : Number(v.replace(/,/g, "")); data[k] = v; });
     const lines = $$("#lines tr").map((tr) => { const o = { id: tr.dataset.line || undefined, kind: tr.dataset.kind }; $$("[data-l]", tr).forEach((el) => o[el.dataset.l] = el.value.trim()); return o; });
-    return { data, lines, confirm_date:$("#verifyDate")?.checked===true };
+    return { data, lines, confirm_date:$("#verifyDate")?.checked===true, confirm_units:$("#confirmUnits")?.checked===true };
   };
   const save=async()=>{
     try{await act(()=>api(`/invoices/${iid}`,{method:"PATCH",body:collect()}),
@@ -1506,7 +1534,7 @@ async function viewInvoice(iid) {
   });
   const addRow = (kind) => { $("#lines").insertAdjacentHTML("beforeend", lineRow({ kind, description: "", amount: "", stock_state: "suspense", ledger_state: "suspense" }, -1)); $("#lines tr:last-child input").focus(); };
   $("#addLine").onclick = () => addRow("item"); $("#addCharge").onclick = () => addRow("ledger");
-  $("#del").onclick = async () => { if (confirm("Delete this invoice from the batch?")) { await api(`/invoices/${iid}`, { method: "DELETE" }); location.hash = `#/b/${b.id}`; } };
+  if ($("#del")) $("#del").onclick = async () => { if (confirm("Delete this invoice from the batch?")) { await api(`/invoices/${iid}`, { method: "DELETE" }); location.hash = `#/b/${b.id}`; } };
   $("#reread")?.addEventListener("click", async () => {
     if (!confirm("Read this invoice again from the image? Your edits on this invoice will be replaced.")) return;
     await act(() => api(`/invoices/${iid}/reread`, { method: "POST" }), "Reading again…");
