@@ -253,6 +253,24 @@ test("admin: GST control, multi-company balances, smart mapping and safe posting
   assert.ok(backups.backups.some(x=>x.valid&&!x.encrypted));
 });
 
+test("admin: outstanding bills come from Tally's bills report, party WhatsApp numbers are kept on this PC", async () => {
+  const o = await call("GET", `/companies/${cid}/outstanding?as_of=2026-10-25`);
+  assert.equal(o.status, 200);
+  assert.equal(o.source, "report", JSON.stringify(o.diagnostics));
+  const abc = o.sides.receivable.parties.find((p) => p.ledger === "ABCABC");
+  assert.ok(abc, "the debtor from Tally's report is listed");
+  assert.equal(abc.bills.length, 2);
+  assert.equal(abc.total, 7500);
+  assert.equal(o.sides.payable.parties[0].total, 11800);
+  const old = await call("GET", `/companies/${cid}/bill-ageing`);
+  assert.equal(old.bills.length, 3, "the older flat endpoint still answers");
+  assert.equal((await call("PUT", `/companies/${cid}/party-contacts`, { ledger: "ABCABC", phone: "98765 43210" })).phone, "919876543210");
+  assert.equal((await call("PUT", `/companies/${cid}/party-contacts`, { ledger: "ABCABC", phone: "12" })).status, 400);
+  const again = await call("GET", `/companies/${cid}/outstanding?as_of=2026-10-25`);
+  assert.equal(again.sides.receivable.parties.find((p) => p.ledger === "ABCABC").phone, "919876543210");
+  assert.equal((await call("PUT", `/companies/${cid}/party-contacts`, { ledger: "ABCABC", phone: "" })).phone, "");
+});
+
 test("user: own companies, company limit, credits counted, posting blocked", async () => {
   await call("POST", "/signout", {});
   assert.equal((await call("GET", "/me")).signed_in, false);

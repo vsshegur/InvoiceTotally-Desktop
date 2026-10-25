@@ -8,7 +8,7 @@ async function companyAccounting(c,el,tab){
   if(tab==="actions"){
     const data=await api("/companies/"+c.id+"/action-center");
     const labels={invoices:"Invoice reviews",bank:"Bank issues",marketplace:"Marketplace",purchases:"GSTR-2B purchases",gstr2b:"GST differences",jobs:"Tally errors",settlements:"Settlement reviews"};
-    el.innerHTML='<h2>Accounting Action Center</h2>'+AW_NOTICE+
+    el.innerHTML=AW_NOTICE+
       '<div class="card"><div class="stats" style="display:flex;gap:18px;flex-wrap:wrap">'+
       Object.entries(data.counts).map(([k,v])=>'<div><b>'+v+'</b><div class="muted small">'+esc(labels[k]||k)+'</div></div>').join("")+
       '</div></div><h3>Needs attention</h3>'+
@@ -19,50 +19,18 @@ async function companyAccounting(c,el,tab){
       '<p class="muted small">'+esc(data.note)+'</p>';
     return;
   }
-  if(tab==="ageing"){
-    const data=await api("/companies/"+c.id+"/bill-ageing");
-    const parties=[...new Set(data.bills.map(b=>b.ledger))].sort();
-    el.innerHTML='<h2>Bill-wise Ageing</h2>'+AW_NOTICE+
-      '<p class="muted small">'+esc(data.notice)+' As of '+fmtDate(data.as_of)+'.</p>'+
-      (parties.length?'<div class="card"><b>Omit parties from this view</b><div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">'+
-        parties.map(p=>'<label class="small"><input type="checkbox" class="omit-party" value="'+esc(p)+'"> '+esc(p)+'</label>').join("")+
-        '</div></div>':"")+
-      '<div class="card" id="ageingSummary"></div>'+
-      (data.bills.length?'<table class="grid" id="ageingTable"><thead><tr><th>Party</th><th>Type</th><th>Bill</th><th>Date</th>'+
-        '<th class="num">Open amount</th><th class="num">Days old</th><th class="num">Overdue by</th></tr></thead><tbody>'+
-      data.bills.map(b=>'<tr data-party="'+esc(b.ledger)+'"><td>'+esc(b.ledger)+'</td><td>'+
-        (b.group==="Sundry Debtors"?"Receivable":"Payable")+'</td><td>'+esc(b.name)+'</td><td>'+fmtDate(b.date)+'</td>'+
-        '<td class="num">'+AW_MONEY(b.amount)+'</td><td class="num">'+(b.days_old??"—")+'</td>'+
-        '<td class="num">'+(b.overdue_days>0?'<span class="bad">'+b.overdue_days+'</span>':(b.overdue_days===0?"0":"—"))+'</td></tr>').join("")+
-      '</tbody></table>':'<div class="card empty">No open bills were found under Sundry Debtors or Sundry Creditors.</div>');
-    function refreshAgeing(){
-      const hidden=new Set($$(".omit-party",el).filter(cb=>cb.checked).map(cb=>cb.value));
-      $$("#ageingTable tbody tr",el).forEach(tr=>{tr.style.display=hidden.has(tr.dataset.party)?"none":"";});
-      let shown=0,totalOpen=0,totalOverdue=0,overdueCount=0;
-      for(const b of data.bills){
-        if(hidden.has(b.ledger))continue;
-        shown++;totalOpen+=b.amount;
-        if(b.overdue_days>0){totalOverdue+=b.amount;overdueCount++;}
-      }
-      $("#ageingSummary",el).innerHTML='<b>'+shown+' open bill'+(shown===1?"":"s")+' shown</b> · Total open '+AW_MONEY(totalOpen)+
-        ' · '+overdueCount+' overdue bill'+(overdueCount===1?"":"s")+' totalling '+AW_MONEY(totalOverdue);
-    }
-    refreshAgeing();
-    $$(".omit-party",el).forEach(cb=>cb.onchange=refreshAgeing);
-    return;
-  }
   if(tab==="intercompany"){
     const companies=(await api("/companies")).filter(x=>x.id!==c.id);
-    el.innerHTML='<h2>Live Inter-Company Ledger Reconciliation</h2>'+AW_NOTICE+
-      '<p>Open <b>both</b> companies in Tally. Choose the reciprocal party or current-account ledger in each firm, then compare all vouchers for one month.</p>'+
-      '<div class="card"><div style="display:flex;flex-wrap:wrap;gap:12px;align-items:end">'+
-      '<label>Other company <select id="partner" class="in" style="max-width:300px"><option value="">Choose company</option>'+
+    el.innerHTML=
+      '<p class="muted">Open <b>both</b> companies in Tally. Pick the ledger each keeps for the other, then compare one month. Entries are paired by reference, amount (within ₹1 for round-off) and date (within 10 days); anything left over is listed with the reason.</p>'+
+      '<div class="card"><div class="ic-form">'+
+      '<label class="field"><span>Other company</span><select id="partner" class="in"><option value="">Choose company</option>'+
       companies.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.name)+'</option>').join("")+'</select></label>'+
-      '<label>Month <input type="month" class="in" id="interMonth"></label>'+
-      '<label>In '+esc(c.name)+': other company ledger <input class="in" id="interLedgerA" list="interListA" placeholder="Find exact Tally ledger"><datalist id="interListA"></datalist></label>'+
-      '<label>In other company: '+esc(c.name)+' ledger <input class="in" id="interLedgerB" list="interListB" placeholder="Find exact Tally ledger"><datalist id="interListB"></datalist></label>'+
-      '<button class="btn primary" id="compare">Read Tally & compare</button></div></div>'+
-      '<div id="interResult"></div>';
+      '<label class="field"><span>Month</span><input type="month" class="in" id="interMonth"></label>'+
+      '<label class="field"><span>In '+esc(c.name)+': the other company\'s ledger</span><input class="in" id="interLedgerA" list="interListA" placeholder="Start typing the ledger name"><datalist id="interListA"></datalist></label>'+
+      '<label class="field"><span>In the other company: '+esc(c.name)+'\'s ledger</span><input class="in" id="interLedgerB" list="interListB" placeholder="Start typing the ledger name"><datalist id="interListB"></datalist></label>'+
+      '<div class="field" style="grid-column:1/-1"><button class="btn primary" id="compare" style="align-self:flex-start">Read Tally &amp; compare</button></div></div></div>'+
+      '<div id="interResult" style="margin-top:14px"></div>';
     const previous=new Date();previous.setMonth(previous.getMonth()-1);
     $("#interMonth",el).value=previous.toISOString().slice(0,7);
     const fill=async(companyId,text,listId)=>{
@@ -76,36 +44,45 @@ async function companyAccounting(c,el,tab){
     $("#interLedgerA",el).oninput=debounce(()=>fill(c.id,$("#interLedgerA",el).value,"interListA"),220);
     $("#interLedgerB",el).oninput=debounce(()=>fill($("#partner",el).value,$("#interLedgerB",el).value,"interListB"),220);
     fill(c.id,"","interListA").catch(()=>{});
+    const REASON={no_entry_with_this_amount:"No entry for this amount on the other side",
+      same_amount_but_reference_differs:"Same amount on the other side, but the references differ and several dates or entries compete — check by hand",
+      same_amount_but_date_too_far:"Same amount exists on the other side, but more than 10 days apart"};
     $("#compare",el).onclick=async()=>{
       const other=$("#partner",el).value;
-      if(!other){toast("Choose another company",true);return;}
+      if(!other){toast("Choose the other company",true);return;}
       const body={period:$("#interMonth",el).value,ledger_a:$("#interLedgerA",el).value,ledger_b:$("#interLedgerB",el).value};
       try{
         const d=await api("/companies/"+c.id+"/intercompany/"+other+"/refresh",{body});
-        $("#interResult",el).innerHTML='<div class="card"><b>Possible reciprocal vouchers:</b> '+d.links.length+
-          ' · Unmatched in '+esc(d.company_a)+': <b>'+d.unmatched_a.length+'</b> · Unmatched in '+
-          esc(d.company_b)+': <b>'+d.unmatched_b.length+'</b>'+
-          '<p class="muted small">'+esc(d.scope)+'</p></div>'+
-         (d.links.length?'<table class="grid"><tr><th>First company voucher</th><th>Second company voucher</th><th>Amount</th></tr>'+
-         d.links.map(x=>'<tr><td>'+esc(x.a.number)+' ('+fmtDate(x.a.date)+')</td><td>'+
-          esc(x.b.number)+' ('+fmtDate(x.b.date)+')</td><td>'+AW_MONEY(x.a.amount)+'</td></tr>').join("")+'</table>':"")+
-         (d.unmatched_a.length||d.unmatched_b.length?'<h3>Unmatched source entries</h3><table class="grid">'+
-          [...d.unmatched_a.map(x=>({company:d.company_a,row:x.row})),
-           ...d.unmatched_b.map(x=>({company:d.company_b,row:x}))].slice(0,100).map(x=>
-            '<tr><td>'+esc(x.company)+'</td><td>'+esc(x.row.number)+'</td><td>'+fmtDate(x.row.date)+
-            '</td><td>'+AW_MONEY(x.row.amount)+'</td></tr>').join("")+'</table>':"");
+        const ua=d.unmatched_a.length,ub=d.unmatched_b.length;
+        const row=(company,r,why)=>'<tr><td>'+esc(company)+'</td><td>'+esc(r.number||"")+(r.reference?'<div class="muted small">ref '+esc(r.reference)+'</div>':'')+'</td><td>'+fmtDate(r.date)+
+          '</td><td class="num">'+AW_MONEY(r.amount)+'</td><td class="small">'+esc(REASON[why]||why||"")+'</td></tr>';
+        $("#interResult",el).innerHTML=
+          '<div class="out-sum" style="grid-template-columns:repeat(3,1fr)">'+
+          '<div class="stat"><div class="k">Agreeing pairs</div><div class="v good">'+d.links.length+'</div><div class="s">'+d.links.filter(l=>l.confidence==="high").length+' by exact reference</div></div>'+
+          '<div class="stat"><div class="k">Only in '+esc(d.company_a)+'</div><div class="v '+(ua?"bad":"")+'">'+ua+'</div><div class="s">of '+d.rows_a+' entries this month</div></div>'+
+          '<div class="stat"><div class="k">Only in '+esc(d.company_b)+'</div><div class="v '+(ub?"bad":"")+'">'+ub+'</div><div class="s">of '+d.rows_b+' entries this month</div></div></div>'+
+          (d.links.length?'<h3>Agreeing pairs</h3><div class="card flush"><table class="grid"><thead><tr><th>'+esc(d.company_a)+'</th><th>'+esc(d.company_b)+'</th><th class="num">Amount</th><th>How paired</th></tr></thead><tbody>'+
+           d.links.map(x=>'<tr><td>'+esc(x.a.number)+' <span class="muted small">'+fmtDate(x.a.date)+'</span></td><td>'+esc(x.b.number)+' <span class="muted small">'+fmtDate(x.b.date)+'</span></td><td class="num">'+AW_MONEY(x.a.amount)+
+             (x.amount_diff?'<div class="small warn">differs by '+AW_MONEY(x.amount_diff)+'</div>':'')+'</td><td><span class="conf '+esc(x.confidence)+'">'+esc(x.confidence)+'</span> <span class="muted small">'+
+             esc({reference:"same reference",reference_tidied:"reference, ignoring prefix/year/zeros",amount_date:"same amount and date, no reference"}[x.method]||x.method)+'</span></td></tr>').join("")+'</tbody></table></div>':"")+
+          (ua||ub?'<h3>Not paired</h3><div class="card flush"><table class="grid"><thead><tr><th>Company</th><th>Voucher</th><th>Date</th><th class="num">Amount</th><th>Why</th></tr></thead><tbody>'+
+           [...d.unmatched_a.map(u=>row(d.company_a,u.row,u.reason)),...d.unmatched_b.map(r=>row(d.company_b,r,""))].slice(0,200).join("")+'</tbody></table></div>':
+           (d.rows_a+d.rows_b?'<div class="alert ok">Every entry in the month has a partner.</div>':'<div class="alert warn">No entries were found in this month for these two ledgers. Check the month and that you picked the right ledger in each company.</div>'))+
+          '<p class="muted small" style="margin-top:10px">'+esc(d.scope)+'</p>';
       }catch(e){toast(e.message,true);}
     };
     return;
   }
   if(tab==="diagnostics"){
     const d=await api("/diagnostics");
-    el.innerHTML='<h2>Startup & Recovery Diagnostics</h2>'+AW_NOTICE+
-      '<div class="card"><b>Application:</b> '+esc(d.version)+' · <b>Database:</b> '+esc(d.database)+
-      ' · <b>Tally:</b> '+esc(d.tally_status)+'<div class="small muted">'+esc(d.tally_detail)+'</div>'+
-      '<p><b>Pending:</b> '+d.jobs.pending+' · <b>Uncertain:</b> '+d.jobs.uncertain+
-      ' · <b>Failed:</b> '+d.jobs.failed+'</p><p>Backup: '+esc(d.backup_status)+'</p></div>'+
-      '<p class="muted">If the database or Tally is unavailable, use the existing verified backup/restore option in This PC. No automatic database reset or replay will occur.</p>';
+    const tone=d.tally_status==="ok"?"good":"bad";
+    el.innerHTML=
+      '<div class="out-sum" style="grid-template-columns:repeat(4,1fr)">'+
+      '<div class="stat"><div class="k">Application</div><div class="v" style="font-size:17px">'+esc(d.version)+'</div><div class="s">Database: '+esc(d.database)+'</div></div>'+
+      '<div class="stat"><div class="k">Tally</div><div class="v '+tone+'" style="font-size:17px">'+esc(d.tally_status==="ok"?"Connected":d.tally_status)+'</div><div class="s">'+esc(d.tally_detail||"")+'</div></div>'+
+      '<div class="stat"><div class="k">Entries to send</div><div class="v" style="font-size:15px">'+d.jobs.pending+' waiting · '+d.jobs.uncertain+' uncertain</div><div class="s">'+d.jobs.failed+' failed</div></div>'+
+      '<div class="stat"><div class="k">Backup</div><div class="v" style="font-size:14px">'+esc(d.backup_status)+'</div></div></div>'+
+      '<p class="muted">If the database or Tally is unavailable, use the verified backup and restore option under <a href="#/account"><u>This PC</u></a>. Nothing is reset or replayed automatically.</p>';
     return;
   }
 }
@@ -272,7 +249,7 @@ function openBillAllocationModal(sid,line,ledger,bills,notice){
 async function companySettlements(c,el){
   let sheets=[],body=null;
   const previous=await api("/companies/"+c.id+"/settlements");
-  el.innerHTML='<h2>Meesho / Flipkart Settlement Reconciliation</h2>'+
+  el.innerHTML=
     '<div class="alert info">Offline settlement review: select the exact report columns yourself. Marketplace files differ between versions. '+
     'Nothing is posted to Tally; you can compare payout groups with imported bank transactions.</div>'+
     '<div class="card"><h3>1. Select settlement workbook</h3>'+

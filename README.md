@@ -353,3 +353,11 @@ in an audit of the recent accounting modules:
   no job driving it. It's now marked "uncertain" (the same "verify in Tally before any
   manual retry" state e-commerce already used) so it surfaces for review instead of
   getting stuck silently.
+
+## Version 4.0.0 — redesign, Outstanding & ageing, sharing, Inter-company fixes
+
+- **New navigation.** Each company has a left sidebar grouped by what you are doing: Overview and Action Center; *Post to Tally* (Invoices, Bank statements, E-Commerce); *Reconcile* (GSTR-2B, GST reconciliation, Inter-company, Settlements); *Parties & bills* (Outstanding & ageing, Masters, Smart matching); *System* (Tally log, Settings, **Diagnostics last**). Every page has the same title/description header. On narrow windows the sidebar becomes a scrolling strip.
+- **Outstanding & ageing** (also under *Masters → Outstanding & share*). Read live from Tally's own Bills Receivable / Bills Payable reports; if a Tally setup does not answer those it falls back to each party's bill allocations, then to ledger balances. A "What Tally answered" panel shows which step worked, and parties whose bills do not add up to their ledger balance are flagged. Tick/untick parties and individual bills; filter by group, party or "as on" date.
+- **Share by WhatsApp or PDF**, per party, for the ticked parties, or one summary message per group. WhatsApp opens with the message ready (a link cannot attach a file, so download the PDF and attach it in the chat). Numbers are stored on this PC only (not in Tally).
+- **Inter-company matching** now pairs by reference ignoring prefixes, year tails and zero padding, allows ₹1 round-off, reads 10 days either side of the month so month-end entries are not reported as unmatched, ranks pairs so repeated amounts cannot steal each other's partner, and says why anything is left unpaired.
+- Nothing in these features writes to Tally: all reads are Export requests.

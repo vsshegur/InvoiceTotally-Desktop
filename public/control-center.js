@@ -42,7 +42,7 @@ async function viewDashboard(){
 async function companySmartMappings(c,el){
   const data=await api("/companies/"+c.id+"/smart-maps");
   const rows=data.pending||[];
-  el.innerHTML='<div class="card" style="margin-bottom:16px;padding:16px"><h2 style="margin:0 0 6px">Smart ledger &amp; stock matching</h2>'+
+  el.innerHTML='<div class="card" style="margin-bottom:16px;padding:16px">'+
     '<p class="muted">Suggested by name, GSTIN, HSN, GST rate and units. Hard conflicts cannot be approved. Every decision is reviewed and remembered only for this company; no master is created or altered in Tally.</p>'+
     '<div class="muted small">'+data.unresolved+' unresolved entries · '+data.learned+' learned mappings · '+(data.posted_learned||0)+' remembered from confirmed Tally posts</div>'+
     '<button class="btn sm" id="ccExportMappings" style="margin-top:9px">Download remembered mappings CSV</button> '+
@@ -141,7 +141,7 @@ const GST_ITC=["itcIgst","itcCgst","itcSgst","itcCess"];
 async function companyGstControl(c,el){
   const d=new Date(),defaultPeriod=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
   const period=sessionStorage.getItem("it_gst_control_period_"+c.id)||defaultPeriod;
-  el.innerHTML='<div class="card" style="padding:16px"><h2 style="margin:0 0 8px">GSTR-1 / GSTR-2B / GSTR-3B reconciliation</h2>'+
+  el.innerHTML='<div class="card" style="padding:16px">'+
     '<p class="muted">Read sales and purchases from Tally, enter portal filing summary figures for GSTR-1 and 3B, and compare ITC against your existing GSTR-2B imports. Nothing is filed or posted.</p>'+
     '<div class="field" style="max-width:220px"><label>GST return month</label><input id="ccGstMonth" type="month" class="in" value="'+esc(period)+'"></div>'+
     '<div id="ccGstControl"></div></div>';

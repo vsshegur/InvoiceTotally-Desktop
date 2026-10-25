@@ -117,6 +117,9 @@ export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS gst_ledger_rules (company_id TEXT NOT NULL, ledger_name TEXT NOT NULL, role TEXT NOT NULL, updated_at REAL NOT NULL, PRIMARY KEY(company_id,ledger_name))`,
   `CREATE INDEX IF NOT EXISTS ix_gst_ledger_rules_company ON gst_ledger_rules(company_id)`,
 
+  `CREATE TABLE IF NOT EXISTS party_contacts (
+    company_id TEXT NOT NULL, ledger TEXT NOT NULL, phone TEXT, updated_at REAL,
+    PRIMARY KEY(company_id, ledger))`,
   `CREATE TABLE IF NOT EXISTS bank_rules (
     company_id TEXT NOT NULL,bank_ledger TEXT NOT NULL,key TEXT NOT NULL,ledger TEXT NOT NULL,approved_at REAL NOT NULL,
     PRIMARY KEY(company_id,bank_ledger,key))`,
