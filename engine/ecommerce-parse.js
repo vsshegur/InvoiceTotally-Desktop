@@ -185,6 +185,124 @@ export async function parseMeesho({ salesFile, returnFile, taxInvoiceFile, clien
   return { operatorGstin, files: [salesFile.name, returnFile.name, taxInvoiceFile?.name].filter(Boolean), vouchers, hsnSummary: [...hsnTotals.values()].filter(item => Math.abs(item.taxable) >= 0.005), documentCount, b2cLarge: [], source: 'meesho-tcs', updatedAt: Date.now() };
 }
 
+// Amazon Seller Central GST Merchant Tax Reports (GST_MTR_B2B / GST_MTR_B2C), downloaded as
+// .xlsx from Reports > Tax Document Library. Column names below are Amazon's own SP-API
+// "tax-reports-attributes" field names (Seller Gstin, Invoice Number, Transaction Type,
+// Hsn/sac, Tax Exclusive Gross, Cgst/Sgst/Igst Rate/Tax, Bill To State / Ship To State).
+// Amazon Seller Services Private Limited's PAN (AAICA3918J) is confirmed across its
+// state-wise GSTINs (e.g. 07AAICA3918J1CV, 27AAICA3918J1C...), the same way Flipkart's and
+// Meesho's TCS GSTIN is derived below.
+function isAmazonReturn(transactionType) {
+  return /refund|return|cancel/i.test(String(transactionType || ""));
+}
+function amazonInvoiceMonth(value) {
+  const s = String(value ?? '').trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/); // ISO
+  if (m) return { year: +m[1], month: +m[2] };
+  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/); // DD-MM-YYYY or DD/MM/YYYY
+  if (m) return { year: +m[3], month: +m[2] };
+  return null;
+}
+function parseAmazonTable(table, sellerState, sellerGstinRef, info, problems) {
+  const idx = {
+    gstin: columnIndex(table.map, ['seller gstin']),
+    type: columnIndex(table.map, ['transaction type']),
+    hsn: columnIndex(table.map, ['hsn sac', 'hsn']),
+    qty: columnIndex(table.map, ['quantity']),
+    taxable: columnIndex(table.map, ['tax exclusive gross', 'taxable value', 'taxable amount']),
+    state: columnIndex(table.map, ['ship to state', 'bill to state', 'customer state']),
+    date: columnIndex(table.map, ['invoice date']),
+    cgstRate: columnIndex(table.map, ['cgst rate']), cgstTax: columnIndex(table.map, ['cgst tax', 'cgst tax amount']),
+    sgstRate: columnIndex(table.map, ['sgst rate']), sgstTax: columnIndex(table.map, ['sgst tax', 'sgst tax amount']),
+    igstRate: columnIndex(table.map, ['igst rate']), igstTax: columnIndex(table.map, ['igst tax', 'igst tax amount']),
+    invoice: columnIndex(table.map, ['invoice amount']),
+  };
+  const groups = new Map(), hsnTotals = new Map(), stateOrder = [];
+  let detectedGstin = '';
+  for (const row of table.rows.slice(table.rowIndex + 1)) {
+    const taxableRaw = num(row[idx.taxable]);
+    if (!taxableRaw) continue;
+    const state = canonicalState(row[idx.state]), hsn = String(row[idx.hsn] ?? '').trim();
+    if (!state) continue; // footer/summary rows carry no ship/bill-to state
+    detectedGstin ||= asGstin(row[idx.gstin]);
+    if (idx.date >= 0) {
+      const when = amazonInvoiceMonth(row[idx.date]);
+      if (when && (when.year !== info.year || when.month !== info.month))
+        problems.push(`Invoice dated ${row[idx.date]} falls outside ${info.month}/${info.year}`);
+    }
+    const sign = isAmazonReturn(row[idx.type]) ? -1 : 1;
+    const taxable = round2(sign * Math.abs(taxableRaw));
+    const cgstRate = num(row[idx.cgstRate]), sgstRate = num(row[idx.sgstRate]), igstRate = num(row[idx.igstRate]);
+    const rate = round2(igstRate || (cgstRate + sgstRate));
+    const cgstTax = round2(sign * Math.abs(num(row[idx.cgstTax])));
+    const sgstTax = round2(sign * Math.abs(num(row[idx.sgstTax])));
+    const igstTax = round2(sign * Math.abs(num(row[idx.igstTax])));
+    const qty = sign * Math.abs(num(row[idx.qty]));
+    if (!stateOrder.includes(state)) stateOrder.push(state);
+    const key = `${state}|${rate}`, group = groups.get(key) || { state, rate, taxable: 0, cgst: 0, sgst: 0, igst: 0, qty: 0 };
+    group.taxable = round2(group.taxable + taxable); group.cgst = round2(group.cgst + cgstTax);
+    group.sgst = round2(group.sgst + sgstTax); group.igst = round2(group.igst + igstTax);
+    group.qty += qty; groups.set(key, group);
+    if (hsn) {
+      const hkey = `${hsn}|${rate}`, item = hsnTotals.get(hkey) || { hsn, rate, taxable: 0, qty: 0 };
+      item.taxable = round2(item.taxable + taxable); item.qty += qty; hsnTotals.set(hkey, item);
+    }
+  }
+  if (detectedGstin && sellerGstinRef && detectedGstin !== sellerGstinRef)
+    throw new Error(`Amazon report GSTIN ${detectedGstin} does not match client ${sellerGstinRef}.`);
+  return { groups, hsnTotals, stateOrder, detectedGstin };
+}
+
+export async function parseAmazon({ b2bFile, b2cFile, client, info }) {
+  if (!b2bFile && !b2cFile) throw new Error('Upload at least one Amazon GST report (B2B and/or B2C)');
+  const sellerState = stateFromGstin(client.gstin);
+  const required = ['seller gstin', 'hsn sac', 'tax exclusive gross', 'transaction type'];
+  const groups = new Map(), hsnTotals = new Map(), stateOrder = [];
+  let detectedGstin = '', documentCount = 0;
+  const files = [], problems = [];
+  for (const f of [b2bFile, b2cFile]) {
+    if (!f) continue;
+    files.push(f.name);
+    const workbook = await readWorkbook(f);
+    const table = findTable(workbook, required);
+    if (!table) throw new Error(`${f.name}: could not find Amazon's GST report columns (Seller Gstin, Hsn/sac, Tax Exclusive Gross, Transaction Type)`);
+    const parsed = parseAmazonTable(table, sellerState, client.gstin, info, problems);
+    detectedGstin ||= parsed.detectedGstin;
+    for (const state of parsed.stateOrder) if (!stateOrder.includes(state)) stateOrder.push(state);
+    for (const [key, g] of parsed.groups) {
+      const existing = groups.get(key) || { state: g.state, rate: g.rate, taxable: 0, cgst: 0, sgst: 0, igst: 0, qty: 0 };
+      existing.taxable = round2(existing.taxable + g.taxable); existing.cgst = round2(existing.cgst + g.cgst);
+      existing.sgst = round2(existing.sgst + g.sgst); existing.igst = round2(existing.igst + g.igst);
+      existing.qty += g.qty; groups.set(key, existing);
+    }
+    for (const [key, h] of parsed.hsnTotals) {
+      const existing = hsnTotals.get(key) || { hsn: h.hsn, rate: h.rate, taxable: 0, qty: 0 };
+      existing.taxable = round2(existing.taxable + h.taxable); existing.qty += h.qty; hsnTotals.set(key, existing);
+    }
+    try { documentCount += await countDocumentInvoices(f); } catch (error) { console.warn('Amazon document summary could not be read.', error); }
+  }
+  if (problems.length) throw new Error('Amazon report needs correction: ' + problems.slice(0, 5).join('; '));
+  if (detectedGstin && detectedGstin !== client.gstin) throw new Error(`Amazon report GSTIN ${detectedGstin} does not match client ${client.gstin}.`);
+
+  const vouchers = [];
+  stateOrder.forEach(state => {
+    const stateGroups = [...groups.values()].filter(g => g.state === state && Math.abs(g.taxable) >= 0.005);
+    stateGroups.forEach(g => {
+      const component = round2(g.taxable + g.igst + g.cgst + g.sgst), invoice = component >= 0 ? Math.round(component) : -Math.ceil(Math.abs(component));
+      vouchers.push({ state, rate: g.rate, taxable: g.taxable, igst: g.igst, cgst: g.cgst, sgst: g.sgst, cess: 0, invoice, roundOff: round2(invoice - component),
+        items: [{ state, rate: g.rate, taxable: g.taxable, qty: g.qty, name: `HSN items @ ${rateLabel(g.rate)}%`, hsn: '' }] });
+    });
+  });
+  if (!vouchers.length) throw new Error('No taxable Amazon sales groups were found. Check the uploaded GST report(s) and selected period.');
+
+  // Amazon's own operator GSTIN (Amazon Seller Services Pvt Ltd), derived from its PAN the
+  // same deterministic way Flipkart's and Meesho's TCS GSTIN are derived above — confirmed
+  // against Amazon Seller Services' real published state-wise GSTINs.
+  const operatorGstin = deriveTcsGstin(client.gstin, 'AAICA3918J');
+  return { operatorGstin, files, vouchers, hsnSummary: [...hsnTotals.values()].filter(item => Math.abs(item.taxable) >= 0.005),
+    documentCount, b2cLarge: [], source: 'amazon-mtr', updatedAt: Date.now() };
+}
+
 export async function parseFlipkart({ file, client, info }) {
   const workbook = await readWorkbook(file), sellerState = stateFromGstin(client.gstin), groups = new Map(), stateOrder = [], b2cLarge = [];
   let detectedGstin = '', documentCount = 0, sourceTaxable = 0;

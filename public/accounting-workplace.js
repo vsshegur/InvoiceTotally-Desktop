@@ -19,6 +19,38 @@ async function companyAccounting(c,el,tab){
       '<p class="muted small">'+esc(data.note)+'</p>';
     return;
   }
+  if(tab==="ageing"){
+    const data=await api("/companies/"+c.id+"/bill-ageing");
+    const parties=[...new Set(data.bills.map(b=>b.ledger))].sort();
+    el.innerHTML='<h2>Bill-wise Ageing</h2>'+AW_NOTICE+
+      '<p class="muted small">'+esc(data.notice)+' As of '+fmtDate(data.as_of)+'.</p>'+
+      (parties.length?'<div class="card"><b>Omit parties from this view</b><div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">'+
+        parties.map(p=>'<label class="small"><input type="checkbox" class="omit-party" value="'+esc(p)+'"> '+esc(p)+'</label>').join("")+
+        '</div></div>':"")+
+      '<div class="card" id="ageingSummary"></div>'+
+      (data.bills.length?'<table class="grid" id="ageingTable"><thead><tr><th>Party</th><th>Type</th><th>Bill</th><th>Date</th>'+
+        '<th class="num">Open amount</th><th class="num">Days old</th><th class="num">Overdue by</th></tr></thead><tbody>'+
+      data.bills.map(b=>'<tr data-party="'+esc(b.ledger)+'"><td>'+esc(b.ledger)+'</td><td>'+
+        (b.group==="Sundry Debtors"?"Receivable":"Payable")+'</td><td>'+esc(b.name)+'</td><td>'+fmtDate(b.date)+'</td>'+
+        '<td class="num">'+AW_MONEY(b.amount)+'</td><td class="num">'+(b.days_old??"—")+'</td>'+
+        '<td class="num">'+(b.overdue_days>0?'<span class="bad">'+b.overdue_days+'</span>':(b.overdue_days===0?"0":"—"))+'</td></tr>').join("")+
+      '</tbody></table>':'<div class="card empty">No open bills were found under Sundry Debtors or Sundry Creditors.</div>');
+    function refreshAgeing(){
+      const hidden=new Set($$(".omit-party",el).filter(cb=>cb.checked).map(cb=>cb.value));
+      $$("#ageingTable tbody tr",el).forEach(tr=>{tr.style.display=hidden.has(tr.dataset.party)?"none":"";});
+      let shown=0,totalOpen=0,totalOverdue=0,overdueCount=0;
+      for(const b of data.bills){
+        if(hidden.has(b.ledger))continue;
+        shown++;totalOpen+=b.amount;
+        if(b.overdue_days>0){totalOverdue+=b.amount;overdueCount++;}
+      }
+      $("#ageingSummary",el).innerHTML='<b>'+shown+' open bill'+(shown===1?"":"s")+' shown</b> · Total open '+AW_MONEY(totalOpen)+
+        ' · '+overdueCount+' overdue bill'+(overdueCount===1?"":"s")+' totalling '+AW_MONEY(totalOverdue);
+    }
+    refreshAgeing();
+    $$(".omit-party",el).forEach(cb=>cb.onchange=refreshAgeing);
+    return;
+  }
   if(tab==="intercompany"){
     const companies=(await api("/companies")).filter(x=>x.id!==c.id);
     el.innerHTML='<h2>Live Inter-Company Ledger Reconciliation</h2>'+AW_NOTICE+
@@ -83,13 +115,28 @@ async function viewBankReconciliation(sid){
   const c=await api("/companies/"+d.statement.company_id);
   CURRENT.company=c;
   const byId=new Map(d.matches.map(m=>[m.id,m]));
-  const [masters,suggestions]=await Promise.all([
+  const [masters,suggestions,partySugg,patterns]=await Promise.all([
     api("/companies/"+c.id+"/masters?kind=ledger"),
-    api("/bank/"+sid+"/suggestions")
+    api("/bank/"+sid+"/suggestions"),
+    api("/bank/"+sid+"/party-suggestions"),
+    api("/bank/"+sid+"/patterns")
   ]);
   const suggestedById=new Map(suggestions.suggestions.map(x=>[x.id,x.suggested]));
+  // A single combined lookup for the row-level "Select" button: a remembered narration rule
+  // wins over a fuzzy party-name match, since the rule was explicitly approved before.
+  const pickFor=id=>suggestedById.get(id)||partySugg[id]?.[0]?.name||null;
   const ledgerNames=masters.items.map(x=>x.name).sort();
   const options='<option value="">Select a ledger</option>'+ledgerNames.map(x=>'<option value="'+esc(x)+'">'+esc(x)+'</option>').join("");
+  const patternsHtml=patterns.length?
+    '<div class="card"><b>Detected recurring patterns</b> — the same counterparty narration, seen more than once in this statement. '+
+    'Pick a ledger once and assign every matching transaction together, instead of one at a time.'+
+    '<table class="grid"><thead><tr><th>Pattern</th><th class="num">Count</th><th class="num">Total</th><th>Ledger</th><th></th><th></th></tr></thead><tbody>'+
+    patterns.map((g,i)=>'<tr data-group="'+i+'"><td class="small">'+esc(g.sample)+'</td><td class="num">'+g.ids.length+
+      '</td><td class="num">'+AW_MONEY(g.total)+'</td><td><select class="in group-ledger" style="min-width:200px">'+options+'</select></td>'+
+      '<td class="small"><label><input type="checkbox" class="group-onacct"> On Account</label><br>'+
+      '<label><input type="checkbox" class="group-remember" checked> Remember</label></td>'+
+      '<td><button class="btn sm" data-assign-group="'+i+'">Assign group ('+g.ids.length+')</button></td></tr>').join("")+
+    '</tbody></table></div>':"";
   app().innerHTML=topBar([[c.name,"#/c/"+c.id+"/bank"],[d.statement.name,"#/s/"+sid],["Reconciliation"]],c)+
     '<div class="page wide"><div class="bar"><h1>Bank Reconciliation</h1><div class="spacer"></div>'+
     '<button class="btn" id="recheck">Read Tally again</button><a class="btn" href="#/s/'+sid+'">Back to statement</a></div>'+
@@ -97,6 +144,7 @@ async function viewBankReconciliation(sid){
     ' suggested · '+d.counts.unmatched+' unmatched · '+d.counts.ambiguous+' ambiguous</div>'+
     '<p class="muted small">A matched row is compared in this app only. Reconciliation dates are not written into Tally. '+
     'For entries that already exist, do not post again.</p>'+
+    patternsHtml+
     '<div class="card"><b>Assign a reviewed ledger</b> to one selected ready bank transaction. This is a local draft only. '+
     'It does not create a voucher until you separately approve posting from the Bank Statement page.'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px">'+
@@ -105,21 +153,28 @@ async function viewBankReconciliation(sid){
 
     '<label><input type="checkbox" id="onAccount"> Explicitly On Account</label>'+
     '<label><input type="checkbox" id="rememberRule"> Remember narration rule</label>'+
-    '<button class="btn primary" id="assign">Assign selected transaction</button></div></div>'+
+    '<button class="btn primary" id="assign">Assign selected transaction</button>'+
+    '<button class="btn" id="allocateBills">Allocate to open bills…</button></div></div>'+
     (d.lines.length?'<table class="grid"><thead><tr><th></th><th>Date</th><th>Reference / narration</th><th class="num">Amount</th><th>Match</th><th>Ledger</th></tr></thead><tbody>'+
     d.lines.slice(0,1000).map(l=>{
       const m=byId.get(l.id)||{};
       const status=m.status||"—";
+      const pick=pickFor(l.id);
       return '<tr><td><input type="radio" name="bankPick" value="'+esc(l.id)+'" '+
         (["ready","failed"].includes(l.status)?"":"disabled")+'></td><td>'+fmtDate(l.date)+'</td>'+
         '<td class="small"><b>'+esc(l.ref)+'</b> '+esc(l.narration)+'</td><td class="num">'+
         AW_MONEY(l.credit?l.credit:-l.debit)+'</td><td>'+esc(status)+'<div class="muted small">'+esc(m.reason||"")+'</div>'+(l.status==="uncertain"?'<button class="btn sm" data-release="'+esc(l.id)+'">Manually verify absent</button>':'')+'</td>'+
         '<td>'+esc(l.ledger||"")+(l.method==="manual"?" <span class=good>Reviewed</span>":"")+
-          (suggestedById.get(l.id)?'<div class="small">Suggest: '+esc(suggestedById.get(l.id))+
+          (pick?'<div class="small">'+(suggestedById.get(l.id)?"Suggest":"Party match")+': '+esc(pick)+
             ' <button class="btn sm" data-use="'+esc(l.id)+'">Select</button></div>':"")+'</td></tr>';
     }).join("")+'</tbody></table>':'<p>No rows.</p>')+
     '<p class="muted small">Ledger options show the first 200 masters. Use search for other masters.</p></div>';
   wireTop(c);
+  patterns.forEach((g,i)=>{
+    if(!g.suggested_ledger)return;
+    const sel=$('tr[data-group="'+i+'"] .group-ledger');
+    if(sel&&[...sel.options].some(o=>o.value===g.suggested_ledger))sel.value=g.suggested_ledger;
+  });
   $("#recheck").onclick=()=>route();
   $$("[data-release]").forEach(bt=>bt.onclick=async()=>{
     const phrase=prompt("Open the correct company in Tally and verify this bank voucher was NOT created. Type CHECKED IN TALLY to explicitly release it:");
@@ -134,10 +189,25 @@ async function viewBankReconciliation(sid){
     const row=bt.closest("tr");
     const radio=row?.querySelector('input[name="bankPick"]');
     if(radio && !radio.disabled)radio.checked=true;
-    const name=suggestedById.get(bt.dataset.use);
+    const name=pickFor(bt.dataset.use);
     const sel=$("#assignLedger");
     if(![...sel.options].some(o=>o.value===name))sel.add(new Option(name,name));
     sel.value=name;
+  });
+
+  $$("[data-assign-group]").forEach(bt=>bt.onclick=async()=>{
+    const i=Number(bt.dataset.assignGroup);
+    const g=patterns[i];
+    const row=bt.closest("tr");
+    const ledger=row.querySelector(".group-ledger").value;
+    if(!ledger){toast("Choose a ledger for this group",true);return;}
+    if(!confirm("Assign all "+g.ids.length+" transactions in this group to \""+ledger+"\"?"))return;
+    try{
+      await act(()=>api("/bank/"+sid+"/assign",{body:{ids:g.ids,ledger,
+        on_account:row.querySelector(".group-onacct").checked,
+        remember:row.querySelector(".group-remember").checked}}),"Group of "+g.ids.length+" assigned to "+ledger);
+      route();
+    }catch(e){toast(e.message,true);}
   });
 
   $("#ledgerSearch").oninput=debounce(async()=>{
@@ -156,6 +226,46 @@ async function viewBankReconciliation(sid){
       remember:$("#rememberRule").checked}}),"Ledger assigned");
     route();
   };
+  $("#allocateBills").onclick=async()=>{
+    const selected=$('input[name="bankPick"]:checked');
+    const ledger=$("#assignLedger").value;
+    if(!selected||!ledger){toast("Select one ready bank entry and a party ledger first",true);return;}
+    const line=d.lines.find(x=>x.id===selected.value);
+    let read;
+    try{read=await api("/bank/"+sid+"/outstanding-bills",{body:{ledger}});}
+    catch(e){toast(e.message,true);return;}
+    openBillAllocationModal(sid,line,ledger,read.bills,read.notice);
+  };
+}
+
+// Live bill-wise allocation: pick which open bill(s) of a party ledger a receipt/payment settles,
+// leaving any uncovered amount On Account (matches bankVoucher()'s own Agst Ref / On Account split).
+function openBillAllocationModal(sid,line,ledger,bills,notice){
+  const amount=line.credit?line.credit:line.debit;
+  const rows=bills.map((b,i)=>'<tr><td><input type="checkbox" class="bill-use" data-i="'+i+'"></td>'+
+    '<td>'+esc(b.name)+'</td><td>'+fmtDate(b.date)+'</td><td class="num">'+money(b.amount)+'</td>'+
+    '<td><input class="in bill-amt" data-i="'+i+'" style="width:100px" value="'+Math.min(b.amount,amount).toFixed(2)+'"></td></tr>').join("");
+  let box;
+  box=modal('<h2>Allocate against open bills — '+esc(ledger)+'</h2>'+
+    '<p class="muted small">Transaction amount: '+money(amount)+'. '+esc(notice)+'</p>'+
+    (bills.length?'<table class="grid"><thead><tr><th></th><th>Bill</th><th>Date</th><th class="num">Open</th><th>Allocate</th></tr></thead><tbody>'+rows+'</tbody></table>':
+      '<p class="muted">No open bills were found for this ledger.</p>')+
+    '<p class="muted small">Any part of the transaction not allocated to a bill above is posted On Account, same as today.</p>'+
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">'+
+    '<button type="button" class="btn" data-close>Cancel</button><button class="btn primary">Allocate</button></div>',
+    async()=>{
+      const picked=[];
+      $$(".bill-use",box).forEach(cb=>{
+        if(!cb.checked)return;
+        const i=Number(cb.dataset.i);
+        const amt=Number($('.bill-amt[data-i="'+i+'"]',box)?.value||0);
+        if(amt>0)picked.push({name:bills[i].name,amount:amt});
+      });
+      if(!picked.length)throw new Error("Select at least one bill and enter an amount");
+      const r=await api("/bank/"+sid+"/allocate-bills",{body:{id:line.id,ledger,bills:picked}});
+      toast("Allocated "+money(r.allocated)+(r.residual>0.004?"; "+money(r.residual)+" left On Account":""));
+      route();
+    });
 }
 
 

@@ -114,18 +114,30 @@ export function tallyTotals(vouchers,masters,mode,rulesInput=[]){
       continue;
     }
     let salesLedger=0,adjustments=0;
+    const unclassifiedLines=[];
     for(const [name,raw] of v.e||[]){
       const m=lookup.get(normName(name)),group=normName(m?.primary_group||m?.parent);
       const amount=Number(raw)||0,role=gstRole(name,rules);
       if(role==="ignore")continue;
       const head=taxHeads.includes(role)?role:taxHead(name);
       if(head&&(taxHeads.includes(role)||/duties|tax/i.test(group)||/\bgst\b/i.test(name))){
-        total[head]+=mode==="sales"?amount:-amount;
-      }else if(["discount","freight","other_charge"].includes(role)){
-        adjustments-=amount;
-      }else if(role==="base"||group==="purchase accounts"){
-        salesLedger-=amount;
+        total[head]+=-amount;continue; // mode is always "purchases" in this branch
       }
+      // The supplier/party ledger line is the invoice total, not an added taxable charge.
+      if(normName(name)===normName(v.party)||/sundry debtors|sundry creditors/.test(group))continue;
+      // An unmapped freight/discount/other-charge ledger must be classified by name the
+      // same way sales vouchers are (salesLineKind), not silently dropped from the total.
+      const kind=role==="auto"?(group==="purchase accounts"?null:salesLineKind(name)):role;
+      if(kind==="round_off")continue; // immaterial; excluded from taxable like the sales side
+      // Reporting totals are a positive magnitude either way; freight/other charges on a
+      // purchase are naturally debited (negative), a discount received is naturally
+      // credited (positive) — the opposite of the sales side's discount-on-sales debit.
+      if(kind==="discount"){adjustments-=amount;total.discount+=amount;continue;}
+      if(kind==="freight"){adjustments-=amount;total.freight+=-amount;continue;}
+      if(kind==="other_charge"){adjustments-=amount;total.other_charges+=-amount;continue;}
+      if(kind==="base"||group==="purchase accounts"){salesLedger-=amount;continue;}
+      // Do not silently drop an unrecognised purchase ledger line from the taxable total.
+      unclassifiedLines.push({name,amount:r2(amount),kind:"unclassified"});
     }
     // Inventoried invoices carry taxable values in ALLINVENTORYENTRIES; avoid
     // double counting if an accounting ledger also represents the same sale.
@@ -133,6 +145,7 @@ export function tallyTotals(vouchers,masters,mode,rulesInput=[]){
     if(Math.abs(inventory)>0.005)total.taxable+=-inventory+adjustments;
     else if(Math.abs(salesLedger)>0.005)total.taxable+=salesLedger+adjustments;
     else total.unclassified.push({number:v.number,date:v.date,type:v.vtype});
+    if(unclassifiedLines.length)total.review.push({number:v.number,ledgers:unclassifiedLines});
   }
   for(const k of [...heads,"discount","freight","other_charges"])total[k]=r2(total[k]);
   return total;

@@ -240,16 +240,22 @@ test("restoring a backup freezes old pending Tally imports before the restored r
       .run("pending-ec","restore-co","import_ecommerce","restore-ec","a posting request","sent",101);
     db.sql.prepare("INSERT INTO ecommerce_vouchers(id,batch_id,company_id,status,number) VALUES(?,?,?,?,?)")
       .run("restore-ec","batch-a","restore-co","queued","EC-RESTORE");
+    db.sql.prepare("INSERT INTO jobs(id,company_id,kind,invoice_id,payload,status,created_at) VALUES(?,?,?,?,?,?,?)")
+      .run("pending-g2b","restore-co","import_gstr2b_purchase","restore-g2b","a posting request","pending",102);
+    db.sql.prepare("INSERT INTO gstr2b_purchase_vouchers(id,batch_id,company_id,doc_id,source_key,status) VALUES(?,?,?,?,?,?)")
+      .run("restore-g2b","batch-a","restore-co","doc-a","27ABCPA1234C1ZL|INV1|2026-04-01","queued");
     const backup=createBackup(db.sql,bdir,{force:true});
     db.close();
     scheduleRestore(bdir,data,path.basename(backup.file));
     assert.equal(applyPendingRestore(data,filename).restored,true);
     const reread=makeD1(filename);
     const jobs=reread.sql.prepare("SELECT status,result FROM jobs WHERE company_id='restore-co'").all();
-    assert.equal(jobs.length,2);
+    assert.equal(jobs.length,3);
     assert.ok(jobs.every(x=>x.status==="failed"&&/Check in Tally/.test(x.result)));
     assert.equal(reread.sql.prepare("SELECT status FROM invoices WHERE id='restore-inv'").get().status,"failed");
     assert.equal(reread.sql.prepare("SELECT status FROM ecommerce_vouchers WHERE id='restore-ec'").get().status,"uncertain");
+    assert.equal(reread.sql.prepare("SELECT status,error FROM gstr2b_purchase_vouchers WHERE id='restore-g2b'").get().status,"uncertain",
+      "a restored backup must not leave a GSTR-2B purchase voucher permanently stuck as queued with no job driving it");
     reread.close();
   }finally{fs.rmSync(temp,{force:true,recursive:true});}
 });

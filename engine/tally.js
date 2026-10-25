@@ -201,6 +201,24 @@ export function bankEntriesRequest(company, ledger, from, to) {
     "</COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>";
 }
 
+/**
+ * Bill-wise outstanding for every ledger under one group (Sundry Debtors or Sundry
+ * Creditors), so a bank receipt/payment can be allocated against a real open bill
+ * instead of only "On Account". Read-only; filtered to the exact party ledger on
+ * the client side, so no ledger-name string needs escaping into a TDL formula.
+ * NOT YET VALIDATED against a real TallyPrime company — verify the reply shape
+ * (BILLALLOCATIONS.LIST under each LEDGER) before relying on it for posting.
+ */
+export function outstandingBillsRequest(company, group) {
+  return "<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE>" +
+    "<ID>ITOutstandingBills</ID></HEADER><BODY><DESC><STATICVARIABLES>" +
+    `<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT>${companyVar(company)}</STATICVARIABLES>` +
+    `<TDL><TDLMESSAGE><COLLECTION NAME="ITOutstandingBills" ISMODIFY="No"><TYPE>Ledger</TYPE><CHILDOF>${esc(group)}</CHILDOF>` +
+    "<NATIVEMETHOD>Name</NATIVEMETHOD>" +
+    "<FETCH>BillAllocations.Name,BillAllocations.BillDate,BillAllocations.OpeningBalance,BillAllocations.ClosingBalance,BillAllocations.BillCreditPeriod</FETCH>" +
+    "</COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>";
+}
+
 // ------------------------------------------------------------ GSTR-2B reconciliation
 /**
  * Inward vouchers between two dates for the GSTR-2B check: purchases and debit notes, plus

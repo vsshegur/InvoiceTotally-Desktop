@@ -1,6 +1,7 @@
 // Local-first bank, settlement and inter-company read-only accounting integrations.
 import * as T from "./tally.js";
 import * as R from "./accounting-reconcile.js";
+import * as TL from "../desktop/tally.mjs";
 import {newId,now,jload} from "./db.js";
 import {bankVouchers} from "./accounting-reconcile.js";
 
@@ -186,6 +187,28 @@ async function actionCenter(D,cid){
     note:"A focused exception inbox using locally stored states; not a guarantee all bank/GST periods have been reconciled."};
 }
 
+/** Live bill-wise ageing across every Sundry Debtor and Sundry Creditor ledger, read fresh from Tally
+ *  (reuses the same read already built for single-party bill allocation in bank.js). Age is measured
+ *  from the bill's own date; "overdue" additionally needs the bill's own credit period to be set. */
+export async function billAgeing(D,env,cid){
+  const c=await company(D,cid),read=ensureTally(env);
+  const today=new Date().toISOString().slice(0,10);
+  const todayMs=Date.parse(today+"T00:00:00Z");
+  const bills=[];
+  for(const group of ["Sundry Debtors","Sundry Creditors"]){
+    const xml=await read(T.outstandingBillsRequest(tallyName(c),group));
+    for(const b of TL.outstandingBillRows(xml)){
+      const billMs=Date.parse((b.date||"")+"T00:00:00Z");
+      const days_old=Number.isFinite(billMs)?Math.max(0,Math.round((todayMs-billMs)/86400000)):null;
+      const overdue_days=(days_old!=null&&b.credit_days!=null)?Math.max(0,days_old-b.credit_days):null;
+      bills.push({...b,group,days_old,overdue_days});
+    }
+  }
+  bills.sort((a,b)=>(b.overdue_days??b.days_old??-1)-(a.overdue_days??a.days_old??-1));
+  return {as_of:today,bills,
+    notice:"Freshly read from Tally just now, across every Sundry Debtor and Sundry Creditor ledger. Not yet validated against a real Tally company — check a bill's amount there before relying on it."};
+}
+
 export function accountingRoutes(route,authorize){
   async function auth(ctx,cid){await authorize(ctx.D,ctx.env,cid);}
   route("POST","/api/bank/:sid/reconcile",async ctx=>{
@@ -213,5 +236,8 @@ export function accountingRoutes(route,authorize){
   });
   route("GET","/api/companies/:cid/action-center",async ctx=>{
     await auth(ctx,ctx.p.cid);return json(await actionCenter(ctx.D,ctx.p.cid));
+  });
+  route("GET","/api/companies/:cid/bill-ageing",async ctx=>{
+    await auth(ctx,ctx.p.cid);return json(await billAgeing(ctx.D,ctx.env,ctx.p.cid));
   });
 }

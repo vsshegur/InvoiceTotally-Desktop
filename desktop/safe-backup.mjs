@@ -166,11 +166,13 @@ export function applyPendingRestore(dataDir,dbPath){
         const tables=new Set(snapshot.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x=>x.name));
         for(const item of stale) {
           if(!item.invoice_id)continue;
-          const which={"import_voucher":"invoices","import_bank":"bank_lines","import_ecommerce":"ecommerce_vouchers"}[item.kind];
+          const which={"import_voucher":"invoices","import_bank":"bank_lines",
+            "import_ecommerce":"ecommerce_vouchers","import_gstr2b_purchase":"gstr2b_purchase_vouchers"}[item.kind];
           if(!which||!tables.has(which))continue;
           const field=which==="invoices"?"sync_error":which==="bank_lines"?"sync_error":"error";
+          const uncertainTable=which==="ecommerce_vouchers"||which==="gstr2b_purchase_vouchers";
           snapshot.prepare("UPDATE "+which+" SET status=?, "+field+"=? WHERE id=?").run(
-            which==="ecommerce_vouchers"?"uncertain":"failed",reason,item.invoice_id);
+            uncertainTable?"uncertain":"failed",reason,item.invoice_id);
         }
       }
       snapshot.exec("COMMIT");
