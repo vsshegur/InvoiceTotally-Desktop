@@ -102,6 +102,23 @@ test("live bill-wise outstanding is read for the chosen party, and a transaction
   assert.equal(row.method,"manual");
 });
 
+test("bill ageing reads live open bills across debtors and creditors, with age and overdue computed",async()=>{
+  const fixture=(name,daysOld,creditDays)=>{
+    const d=new Date(Date.now()-daysOld*86400000).toISOString().slice(0,10).replace(/-/g,"");
+    return '<LEDGER NAME="'+name+'"><BILLALLOCATIONS.LIST><NAME>B-1</NAME><BILLDATE>'+d+'</BILLDATE>'+
+      '<CLOSINGBALANCE>-1000.00</CLOSINGBALANCE><BILLCREDITPERIOD>'+creditDays+'</BILLCREDITPERIOD></BILLALLOCATIONS.LIST></LEDGER>';
+  };
+  const ageEnv={TALLY:{readOnly:async(xml)=>'<ENVELOPE>'+(xml.includes("Sundry Debtors")?
+    fixture("Sri Sai Hand Looms",45,30):fixture("Ramesh Suppliers",10,30))+'</ENVELOPE>'}};
+  const r=await W.billAgeing(D,ageEnv,"a");
+  assert.equal(r.bills.length,2,"one bill read from each of the two groups");
+  const debtor=r.bills.find(b=>b.ledger==="Sri Sai Hand Looms"),creditor=r.bills.find(b=>b.ledger==="Ramesh Suppliers");
+  assert.deepEqual([debtor.group,debtor.days_old,debtor.overdue_days],["Sundry Debtors",45,15]);
+  assert.deepEqual([creditor.group,creditor.days_old,creditor.overdue_days],["Sundry Creditors",10,0],
+    "not yet past its own credit period, so not counted overdue");
+  assert.equal(r.bills[0].ledger,"Sri Sai Hand Looms","the more overdue bill sorts first");
+});
+
 test("reciprocal company voucher matching is source-linked and read-only",async()=>{
  await D.insert("tally_gst_vouchers",{company_id:"a",mid:"1",date:"2026-10-10",number:"A-1",ref:"",
    party:"Vijayalaxmi Textiles",gstin:"27BBBBBBBBB1Z1",inv:0,e:JSON.stringify([["Vijayalaxmi Textiles",1180]]),vtype:"Sales"});

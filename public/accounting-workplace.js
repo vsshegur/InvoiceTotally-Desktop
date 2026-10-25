@@ -19,6 +19,38 @@ async function companyAccounting(c,el,tab){
       '<p class="muted small">'+esc(data.note)+'</p>';
     return;
   }
+  if(tab==="ageing"){
+    const data=await api("/companies/"+c.id+"/bill-ageing");
+    const parties=[...new Set(data.bills.map(b=>b.ledger))].sort();
+    el.innerHTML='<h2>Bill-wise Ageing</h2>'+AW_NOTICE+
+      '<p class="muted small">'+esc(data.notice)+' As of '+fmtDate(data.as_of)+'.</p>'+
+      (parties.length?'<div class="card"><b>Omit parties from this view</b><div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px">'+
+        parties.map(p=>'<label class="small"><input type="checkbox" class="omit-party" value="'+esc(p)+'"> '+esc(p)+'</label>').join("")+
+        '</div></div>':"")+
+      '<div class="card" id="ageingSummary"></div>'+
+      (data.bills.length?'<table class="grid" id="ageingTable"><thead><tr><th>Party</th><th>Type</th><th>Bill</th><th>Date</th>'+
+        '<th class="num">Open amount</th><th class="num">Days old</th><th class="num">Overdue by</th></tr></thead><tbody>'+
+      data.bills.map(b=>'<tr data-party="'+esc(b.ledger)+'"><td>'+esc(b.ledger)+'</td><td>'+
+        (b.group==="Sundry Debtors"?"Receivable":"Payable")+'</td><td>'+esc(b.name)+'</td><td>'+fmtDate(b.date)+'</td>'+
+        '<td class="num">'+AW_MONEY(b.amount)+'</td><td class="num">'+(b.days_old??"—")+'</td>'+
+        '<td class="num">'+(b.overdue_days>0?'<span class="bad">'+b.overdue_days+'</span>':(b.overdue_days===0?"0":"—"))+'</td></tr>').join("")+
+      '</tbody></table>':'<div class="card empty">No open bills were found under Sundry Debtors or Sundry Creditors.</div>');
+    function refreshAgeing(){
+      const hidden=new Set($$(".omit-party",el).filter(cb=>cb.checked).map(cb=>cb.value));
+      $$("#ageingTable tbody tr",el).forEach(tr=>{tr.style.display=hidden.has(tr.dataset.party)?"none":"";});
+      let shown=0,totalOpen=0,totalOverdue=0,overdueCount=0;
+      for(const b of data.bills){
+        if(hidden.has(b.ledger))continue;
+        shown++;totalOpen+=b.amount;
+        if(b.overdue_days>0){totalOverdue+=b.amount;overdueCount++;}
+      }
+      $("#ageingSummary",el).innerHTML='<b>'+shown+' open bill'+(shown===1?"":"s")+' shown</b> · Total open '+AW_MONEY(totalOpen)+
+        ' · '+overdueCount+' overdue bill'+(overdueCount===1?"":"s")+' totalling '+AW_MONEY(totalOverdue);
+    }
+    refreshAgeing();
+    $$(".omit-party",el).forEach(cb=>cb.onchange=refreshAgeing);
+    return;
+  }
   if(tab==="intercompany"){
     const companies=(await api("/companies")).filter(x=>x.id!==c.id);
     el.innerHTML='<h2>Live Inter-Company Ledger Reconciliation</h2>'+AW_NOTICE+
