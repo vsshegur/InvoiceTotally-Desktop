@@ -126,3 +126,33 @@ test("GSTR-1 ignores round-off and unknown ledgers while flagging unclassified c
       breakdown:{unclassified:summary.review[0].ledgers}}])[0];
   assert.equal(review.status,"review_unclassified");
 });
+test("Purchases pick up an unmapped freight/discount ledger by name, matching sales-side classification, instead of silently dropping it",()=>{
+  const masters=[
+    {name:"ABC SUPPLIERS",primary_group:"Sundry Creditors"},
+    {name:"Purchase Accounts",primary_group:"Purchase Accounts"},
+    {name:"Freight Inward",primary_group:"Direct Expenses"},
+    {name:"Discount Received",primary_group:"Indirect Income"},
+    {name:"Round Off",primary_group:"Indirect Expenses"},
+    {name:"CGST",primary_group:"Duties & Taxes"},
+    {name:"SGST",primary_group:"Duties & Taxes"}
+  ];
+  // Tally's native sign convention: credit positive, debit negative.
+  const rows=[{vtype:"Purchase",number:"P-1",date:"2026-09-01",party:"ABC SUPPLIERS",inv:0,e:[
+    ["ABC SUPPLIERS",1130],["Purchase Accounts",-1000],["Freight Inward",-100],
+    ["Discount Received",20],["Round Off",-0.5],["CGST",-24.75],["SGST",-24.75]
+  ]}];
+  const summary=GST.tallyTotals(rows,masters,"purchases");
+  assert.equal(summary.taxable,1080,"freight (-100) must be added and discount (+20) subtracted, not dropped");
+  assert.equal(summary.freight,100);
+  assert.equal(summary.discount,20);
+  assert.deepEqual([summary.cgst,summary.sgst],[24.75,24.75]);
+  assert.equal(summary.review.length,0,"recognised-by-name adjustment ledgers are not flagged for review");
+
+  const unknown=[{vtype:"Purchase",number:"P-2",date:"2026-09-02",party:"ABC SUPPLIERS",inv:0,e:[
+    ["ABC SUPPLIERS",1050],["Purchase Accounts",-1000],["Mystery Service Charge",-50]
+  ]}];
+  const flagged=GST.tallyTotals(unknown,masters,"purchases");
+  assert.equal(flagged.taxable,1000,"a genuinely unrecognised ledger must not be silently added to taxable");
+  assert.equal(flagged.review.length,1);
+  assert.deepEqual(flagged.review[0].ledgers,[{name:"Mystery Service Charge",amount:-50,kind:"unclassified"}]);
+});

@@ -1,6 +1,6 @@
 // Local-only Meesho/Flipkart monthly sales batches. No remote APIs or AI.
 import { newId, now } from "./db.js";
-import { parseMeesho, parseFlipkart } from "./ecommerce-parse.js";
+import { parseMeesho, parseFlipkart, parseAmazon } from "./ecommerce-parse.js";
 import { ecommerceNumber, ecommerceVoucher, ecommerceExistingRequest, parseExistingVouchers } from "./ecommerce-tally.js";
 import { stateFromGstin, round2, validGstin } from "./ecommerce-core.js";
 import { parseImportResponse } from "./tally.js";
@@ -18,11 +18,12 @@ async function batch(D,id) { return must(await D.first("SELECT * FROM ecommerce_
 async function company(D,cid) { return must(await D.first("SELECT * FROM companies WHERE id=?", cid), "Company not found"); }
 
 function validateFiles(files, platform) {
-  const required = platform === "ME" ? ["sales","returns"] : ["flipkart"];
+  const required = platform === "ME" ? ["sales","returns"] : platform === "FL" ? ["flipkart"] : [];
   for (const name of required) if (!files?.[name]) throw new EcommerceError("Missing " + name + " workbook");
+  if (platform === "AZ" && !files?.b2b && !files?.b2c) throw new EcommerceError("Upload at least one Amazon GST report (B2B and/or B2C)");
   let count = 0;
   for (const [key,f] of Object.entries(files || {})) {
-    if (!["sales","returns","invoice","flipkart"].includes(key) || !f ||
+    if (!["sales","returns","invoice","flipkart","b2b","b2c"].includes(key) || !f ||
         typeof f.name !== "string" || !/\.xlsx$/i.test(f.name) || !Array.isArray(f.sheets) || !f.sheets.length ||
         f.sheets.length > 50) throw new EcommerceError("Invalid .xlsx workbook: " + key);
     for (const s of f.sheets) {
@@ -38,7 +39,7 @@ function validateFiles(files, platform) {
 export async function prepare(D,cid,body) {
   const c = await company(D,cid), platform = String(body.platform || "").toUpperCase();
   const year = +body.year, month = +body.month;
-  if (!["ME","FL"].includes(platform) || !Number.isInteger(year) || year < 2018 || year > 2100 ||
+  if (!["ME","FL","AZ"].includes(platform) || !Number.isInteger(year) || year < 2018 || year > 2100 ||
       !Number.isInteger(month) || month < 1 || month > 12) throw new EcommerceError("Select a valid platform and month");
   const gstin = String(c.gstin || "").trim().toUpperCase();
   if (!validGstin(gstin) || !stateFromGstin(gstin)) throw new EcommerceError("Set this company's valid GSTIN first");
@@ -47,7 +48,9 @@ export async function prepare(D,cid,body) {
   const client = { gstin, tradeName: c.name, partyName: c.name };
   const result = platform === "ME"
     ? await parseMeesho({ salesFile:body.files.sales, returnFile:body.files.returns, taxInvoiceFile:body.files.invoice || null, client, info })
-    : await parseFlipkart({ file:body.files.flipkart, client, info });
+    : platform === "FL"
+    ? await parseFlipkart({ file:body.files.flipkart, client, info })
+    : await parseAmazon({ b2bFile:body.files.b2b || null, b2cFile:body.files.b2c || null, client, info });
   if (!validGstin(result.operatorGstin) || !result.vouchers.length)
     throw new EcommerceError("Cannot validate operator GSTIN or find sales vouchers");
   if (result.vouchers.length > 1000) throw new EcommerceError("Too many monthly GST groups");

@@ -7,14 +7,14 @@ const EC = {
       choices.map(x => '<option value="' + esc(x.name) + '"' + (x.name === selected ? ' selected' : '') + '>' +
         esc(x.name) + (x.primary_group ? ' · ' + esc(x.primary_group) : '') + '</option>').join('');
   },
-  label(platform) { return platform === "ME" ? "Meesho" : "Flipkart"; },
+  label(platform) { return { ME:"Meesho", FL:"Flipkart", AZ:"Amazon" }[platform] || platform; },
   status(s) { return {ready:"Ready",queued:"Waiting for Tally",synced:"In Tally",failed:"Failed",duplicate:"Already in Tally",uncertain:"Check in Tally"}[s] || s; }
 };
 
 async function companyEcommerce(c, el) {
   const rows = await api('/companies/' + c.id + '/ecommerce');
   el.innerHTML =
-    '<div class="card" style="margin:0 0 18px;padding:18px"><h2 style="margin:0 0 8px">Offline Meesho &amp; Flipkart → Tally</h2>' +
+    '<div class="card" style="margin:0 0 18px;padding:18px"><h2 style="margin:0 0 8px">Offline Meesho, Flipkart &amp; Amazon → Tally</h2>' +
     '<p class="muted">Read marketplace GST Excel files locally, review consolidated monthly sales and GST, map ledgers from this company, then post individual vouchers straight to TallyPrime. No AI or internet API is used for conversion.</p>' +
     '<p class="muted small">Monthly consolidated accounting, not one voucher per order. Marketplace settlement, commissions and payouts are separate.</p>' +
     '<a class="btn primary" href="#/c/' + c.id + '/ecommerce/upload">⇪ Import marketplace files</a></div>' +
@@ -40,7 +40,7 @@ async function viewEcommerceUpload(cid) {
     '<div class="page" style="max-width:980px"><h1>Import marketplace GST Excel</h1>' +
     '<p class="muted">All spreadsheets are read on this PC. No AI, cloud conversion or network upload. Existing InvoiceTotally sign-in rules remain unchanged.</p>' +
     '<div class="box"><div class="bb">' +
-    '<div class="field"><label>Marketplace</label><select class="in" id="ecPlatform"><option value="ME">Meesho</option><option value="FL">Flipkart</option></select></div>' +
+    '<div class="field"><label>Marketplace</label><select class="in" id="ecPlatform"><option value="ME">Meesho</option><option value="FL">Flipkart</option><option value="AZ">Amazon</option></select></div>' +
     '<div class="grid-2" style="display:flex;gap:12px;flex-wrap:wrap">' +
     '<div class="field" style="min-width:200px"><label>Month</label><select class="in" id="ecMonth">'+options+'</select></div>' +
     '<div class="field" style="min-width:145px"><label>Year</label><select class="in" id="ecYear">'+years+'</select></div></div>' +
@@ -52,20 +52,28 @@ async function viewEcommerceUpload(cid) {
     '</div></div></div>';
   wireTop(c);
   const fields = () => {
-    $('#ecFields').innerHTML = $('#ecPlatform').value==='ME'
+    const platform=$('#ecPlatform').value;
+    $('#ecFields').innerHTML = platform==='ME'
       ? '<div class="field"><label>Meesho TCS Sales (.xlsx)</label><input class="in" id="ecSales" type="file" accept=".xlsx" required></div>' +
         '<div class="field"><label>Meesho TCS Sales Return (.xlsx)</label><input class="in" id="ecReturns" type="file" accept=".xlsx" required></div>' +
         '<div class="field"><label>Meesho tax invoice summary (optional .xlsx)</label><input class="in" id="ecInvoice" type="file" accept=".xlsx"></div>'
-      : '<div class="field"><label>Flipkart GSTR-1 GST report (.xlsx, includes Section 7/5B)</label>' +
-        '<input class="in" id="ecFlipkart" type="file" accept=".xlsx" required></div>';
+      : platform==='FL'
+      ? '<div class="field"><label>Flipkart GSTR-1 GST report (.xlsx, includes Section 7/5B)</label>' +
+        '<input class="in" id="ecFlipkart" type="file" accept=".xlsx" required></div>'
+      : '<div class="field"><label>Amazon GST B2B report (.xlsx, GST_MTR_B2B)</label><input class="in" id="ecB2b" type="file" accept=".xlsx"></div>' +
+        '<div class="field"><label>Amazon GST B2C report (.xlsx, GST_MTR_B2C)</label><input class="in" id="ecB2c" type="file" accept=".xlsx"></div>' +
+        '<p class="muted small">Upload at least one. Most sellers only need the B2C report; add B2B too if you have registered-buyer sales. From Seller Central: Reports → Tax Document Library → GST reports.</p>';
   };
   $('#ecPlatform').onchange=fields;fields();
   $('#ecRead').onclick=async()=>{
     const button=$('#ecRead'), status=$('#ecProgress');
     const platform=$('#ecPlatform').value;
     const sources=platform==='ME'?{sales:$('#ecSales').files[0],returns:$('#ecReturns').files[0],invoice:$('#ecInvoice').files[0]}:
-      {flipkart:$('#ecFlipkart').files[0]};
-    if(Object.entries(sources).some(([k,f])=>!f&&k!=='invoice'))return toast('Choose the required marketplace Excel files',true);
+      platform==='FL'?{flipkart:$('#ecFlipkart').files[0]}:
+      {b2b:$('#ecB2b').files[0],b2c:$('#ecB2c').files[0]};
+    if(platform==='AZ'){
+      if(!sources.b2b&&!sources.b2c)return toast('Choose at least one Amazon GST report',true);
+    } else if(Object.entries(sources).some(([k,f])=>!f&&k!=='invoice'))return toast('Choose the required marketplace Excel files',true);
     button.disabled=true;status.textContent='Reading Excel on this PC…';
     try {
       const files={};
@@ -95,7 +103,7 @@ async function viewEcommerceBatch(id) {
   const requiredStock=[...new Set(rows.filter(r=>r.invoice>0).flatMap(r=>r.items.map(i=>i.name)))].filter(Boolean);
   const original=data.mapping||{}, map={...original,stock:{...(original.stock||{})}};
   const preferred={
-    party:data.platform==='ME'?['Selling Through Meesho']:['Selling Through Flipkart'],
+    party:['Selling Through '+EC.label(data.platform)],
     sales:['Online Sales','GST SALES'],
     cgst:['Output CGST','CGST'],sgst:['Output SGST','SGST'],igst:['Output IGST','IGST'],
     round:['Round Off','ROUND OFF SALES ACCOUNT']

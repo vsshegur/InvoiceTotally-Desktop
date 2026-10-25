@@ -69,7 +69,8 @@ export function ecommerceVoucher(company, row, mapping) {
   const view = stock ? "Invoice Voucher View" : "Accounting Voucher View";
   const detail = items.map(i => i.name + " " + money(i.taxable) +
     (i.qty ? " (" + i.qty + " PCS)" : "")).join("; ").slice(0, 680);
-  const narr = row.number + " | " + (row.platform === "ME" ? "Meesho" : "Flipkart") + " consolidated " +
+  const platformLabel = { ME:"Meesho", FL:"Flipkart", AZ:"Amazon" }[row.platform] || row.platform;
+  const narr = row.number + " | " + platformLabel + " consolidated " +
     row.period + ", " + row.state + ", GST " + row.rate + "%; " + detail;
   const voucher = '<VOUCHER VCHTYPE="' + kind + '" ACTION="Create" OBJVIEW="' + view + '">' +
     '<DATE>' + d + '</DATE><VCHSTATUSDATE>' + d + '</VCHSTATUSDATE><EFFECTIVEDATE>' + d + '</EFFECTIVEDATE>' +

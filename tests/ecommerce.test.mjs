@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as X from "../engine/ecommerce.js";
-import { parseMeesho, parseFlipkart } from "../engine/ecommerce-parse.js";
+import { parseMeesho, parseFlipkart, parseAmazon } from "../engine/ecommerce-parse.js";
 import { ecommerceVoucher, ecommerceNumber, parseExistingVouchers } from "../engine/ecommerce-tally.js";
 import * as TL from "../desktop/tally.mjs";
 import { db } from "../engine/db.js";
@@ -37,6 +37,39 @@ test("Flipkart GST section generates offline consolidated sales", async()=>{
   assert.equal(parsed.vouchers.length,1);
   assert.deepEqual([parsed.vouchers[0].taxable,parsed.vouchers[0].cgst,parsed.vouchers[0].sgst],[700,17.5,17.5]);
   assert.equal(parsed.vouchers[0].invoice,735);
+});
+const azHead = ["Seller Gstin","Invoice Number","Invoice Date","Transaction Type","Hsn/sac","Quantity",
+  "Tax Exclusive Gross","Ship To State","Cgst Rate","Cgst Tax","Sgst Rate","Sgst Tax","Igst Rate","Igst Tax","Invoice Amount"];
+test("Amazon B2C report: intra/inter-state split, refund netting, operator GSTIN derivation", async()=>{
+  const b2c=file("amz-b2c.xlsx",[azHead,
+    [GSTIN,"INV1","2026-09-05","Shipment","630260",2,1000,"Maharashtra",2.5,25,2.5,25,0,0,1050],
+    [GSTIN,"INV2","2026-09-10","Shipment","630260",1,500,"Karnataka",0,0,0,0,5,25,525],
+    [GSTIN,"INV3","2026-09-12","Refund","630260",1,200,"Maharashtra",2.5,5,2.5,5,0,0,210]]);
+  const result=await parseAmazon({b2bFile:null,b2cFile:b2c,client:company,info});
+  assert.equal(result.operatorGstin,"27AAICA3918J1CT");
+  const mh=result.vouchers.find(x=>x.state==="Maharashtra"),ka=result.vouchers.find(x=>x.state==="Karnataka");
+  assert.deepEqual([mh.taxable,mh.cgst,mh.sgst,mh.igst,mh.invoice],[800,20,20,0,840]);
+  assert.deepEqual([ka.taxable,ka.cgst,ka.sgst,ka.igst,ka.invoice],[500,0,0,25,525]);
+  assert.equal(result.documentCount,3);
+});
+test("Amazon report rejects a different month and a mismatched seller GSTIN",async()=>{
+  const wrongMonth=file("az-wrong-month.xlsx",[azHead,
+    [GSTIN,"INV1","2026-08-05","Shipment","630260",2,1000,"Maharashtra",2.5,25,2.5,25,0,0,1050]]);
+  await assert.rejects(parseAmazon({b2bFile:null,b2cFile:wrongMonth,client:company,info}),/outside 9\/2026/);
+  const wrongGstin=file("az-wrong-gstin.xlsx",[azHead,
+    ["29AAAAA0000A1Z5","INV1","2026-09-05","Shipment","630260",2,1000,"Maharashtra",2.5,25,2.5,25,0,0,1050]]);
+  await assert.rejects(parseAmazon({b2bFile:null,b2cFile:wrongGstin,client:company,info}),/does not match client/);
+  await assert.rejects(parseAmazon({b2bFile:null,b2cFile:null,client:company,info}),/Upload at least one/);
+});
+test("Amazon B2B and B2C reports combine into one month's totals",async()=>{
+  const b2b=file("amz-b2b.xlsx",[azHead,
+    [GSTIN,"INV9","2026-09-07","Shipment","630260",1,300,"Maharashtra",2.5,7.5,2.5,7.5,0,0,315]]);
+  const b2c=file("amz-b2c2.xlsx",[azHead,
+    [GSTIN,"INV10","2026-09-08","Shipment","630260",1,200,"Maharashtra",2.5,5,2.5,5,0,0,210]]);
+  const result=await parseAmazon({b2bFile:b2b,b2cFile:b2c,client:company,info});
+  assert.equal(result.vouchers.length,1);
+  assert.deepEqual([result.vouchers[0].taxable,result.vouchers[0].invoice],[500,525]);
+  assert.deepEqual(result.files,["amz-b2b.xlsx","amz-b2c2.xlsx"]);
 });
 test("financial-year/state/rate voucher numbers remain stable across file reordering",()=>{
   assert.equal(ecommerceNumber("ME",2026,9,"Maharashtra",5),"EC-2026-27-ME-09-27-0500");
@@ -131,6 +164,19 @@ test("Meesho inventory mode validates HSN, stock unit and emits a balanced item 
 });
 
 
+test("Amazon batch posts through the same prepare/mapping/post pipeline as Meesho/Flipkart",async()=>{
+  const b2c=file("amz-aug.xlsx",[azHead,
+    [GSTIN,"INV20","2026-08-05","Shipment","630260",2,1000,"Maharashtra",2.5,25,2.5,25,0,0,1050]]);
+  const created=await X.prepare(D,"ec-c",{platform:"AZ",year:2026,month:8,files:{b2c}});
+  assert.equal(created.vouchers,1);
+  const map={party:"ABCABC",sales:"GST SALES",cgst:"CGST",sgst:"SGST",igst:"IGST",round:"ROUND OFF SALES ACCOUNT",mode:"accounting"};
+  await X.saveMapping(D,created.id,map);
+  const queued=await X.post(D,created.id,{});
+  assert.equal(queued.queued,1);
+  const j=await D.first("SELECT * FROM jobs WHERE kind='import_ecommerce' AND invoice_id IN (SELECT id FROM ecommerce_vouchers WHERE batch_id=?)",created.id);
+  assert.match(j.payload,/Amazon consolidated/);
+  assert.equal(TL.validatePosting(j.payload,"VIPUL TEXTILES"),"Sales voucher");
+});
 test("an uncertain posting is rechecked read-only before a manual retry is allowed", async()=>{
   const b=(await X.list(D,"ec-c")).find(x=>x.period==="2026-06");
   const original=(await X.view(D,b.id)).vouchers[0];

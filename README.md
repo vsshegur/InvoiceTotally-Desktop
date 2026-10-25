@@ -201,11 +201,18 @@ The importer neither creates stock quantities nor infers freight/discount/HSN fr
 If your accounts depend on inventory or invoice-specific charges, use **Upload Invoices** instead.
 Always verify tax/accounting classification and original bills before posting.
 
-## Offline Meesho / Flipkart → Tally (v3.4)
+## Offline Meesho / Flipkart / Amazon → Tally (v3.4, Amazon added in 3.9.0)
 
 Open a company's **E-Commerce → Tally** tab. Choose the month and upload **.xlsx** reports:
 - **Meesho:** TCS Sales and TCS Sales Return workbooks; optional invoice-summary workbook.
 - **Flipkart:** the marketplace's GSTR-1 GST workbook with sections 7(A)(2), 7(B)(2) and/or 5B.
+- **Amazon:** Seller Central's GST report(s) — `GST_MTR_B2B` and/or `GST_MTR_B2C` (Reports →
+  Tax Document Library → GST reports). Upload at least one; most sellers only need B2C.
+  The e-commerce operator GSTIN is derived from Amazon Seller Services Pvt Ltd's PAN
+  (confirmed against its published state-wise GSTINs), the same way Flipkart's and Meesho's
+  operator GSTIN are derived. **Validate the first Amazon import against a real report and
+  your GSTR-1 before relying on it for filing** — the column layout is taken from Amazon's own
+  published report field names but has not been tested against a live downloaded file.
 
 The existing local Excel decoder and the PackPilot GSTR-1 grouping calculations handle the files
 **on the same PC**, without a conversion/AI service, Firebase, Cloudflare or invoice credits. The
@@ -326,3 +333,23 @@ bill-wise outstanding snapshots. All existing local accounting databases are lef
 intact, including any older records created by previous versions. Reconciliation
 screens do not create or modify Tally entries. Review the installer and test with a
 separate Tally company before using new accounting workflows on production books.
+
+## Bug fixes (v3.9.0)
+
+Alongside the Amazon addition above, this release fixes two correctness issues found
+in an audit of the recent accounting modules:
+
+- **GSTR-2B purchase "check logic" reconciliation (`gst-control.js`)**: an unmapped
+  freight, discount or other-charge ledger line on a **purchase** voucher (no saved
+  GST ledger rule) was silently dropped from the taxable total instead of being added
+  back, understating purchase-side GST/ITC figures with no warning shown. Purchases
+  now follow the same name-pattern recognition and unclassified-line review flagging
+  that sales already had.
+- **Backup restore leaving a GSTR-2B purchase voucher stuck (`safe-backup.mjs`)**: when
+  restoring a backup that had a GSTR-2B purchase posting mid-flight, the safety logic
+  that freezes unverifiable in-flight postings (added for invoices/bank/e-commerce)
+  had never been extended to the newer GSTR-2B purchase posting job type. The job was
+  still marked failed, but the voucher itself was left showing "queued" forever with
+  no job driving it. It's now marked "uncertain" (the same "verify in Tally before any
+  manual retry" state e-commerce already used) so it surfaces for review instead of
+  getting stuck silently.
