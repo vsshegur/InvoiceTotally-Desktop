@@ -310,6 +310,29 @@ export function purchaseGstRows(reply) {
   return out;
 }
 
+/**
+ * Bill-wise outstanding, one ledger collection at a time (see outstandingBillsRequest).
+ * Pending amount is the absolute value of the bill's closing balance — Tally's own
+ * debit/credit sign on a ledger's bill is not meaningful to show the person picking
+ * a bill to settle, only its size. A bill already settled (near-zero) is left out.
+ */
+export function outstandingBillRows(reply) {
+  const out = [], ledgers = [];
+  walk(parseXml(reply), (n) => { if (n.name === "LEDGER") { ledgers.push(n); return false; } });
+  for (const l of ledgers) {
+    const ledger = nodeName(l);
+    if (!ledger) continue;
+    for (const b of kids(l, "BILLALLOCATIONS.LIST")) {
+      const name = nodeName(b) || child(b, "NAME");
+      const closing = num(child(b, "CLOSINGBALANCE"));
+      if (!name || Math.abs(closing) < 0.005) continue;
+      out.push({ ledger, name, date: isoDate(child(b, "BILLDATE")), amount: r2(Math.abs(closing)),
+        credit_days: child(b, "BILLCREDITPERIOD") ? parseInt(child(b, "BILLCREDITPERIOD"), 10) || null : null });
+    }
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ status
 const COMPANIES_XML = '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST><TYPE>Collection</TYPE><ID>ITCompanies</ID></HEADER><BODY><DESC><STATICVARIABLES><SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT></STATICVARIABLES><TDL><TDLMESSAGE><COLLECTION NAME="ITCompanies" ISMODIFY="No"><TYPE>Company</TYPE><NATIVEMETHOD>Name</NATIVEMETHOD></COLLECTION></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
 

@@ -80,3 +80,17 @@ test("bank Receipt and Payment use Tally's accounting voucher XML shape", () => 
   assert.match(billXml, /<ISPARTYLEDGER>Yes<\/ISPARTYLEDGER>/, "bill settlement still marks its party ledger");
   assert.match(billXml, /<BILLTYPE>Agst Ref<\/BILLTYPE>/);
 });
+
+test("outstanding bills are parsed per ledger, zero-balance bills left out", () => {
+  const xml = '<ENVELOPE><LEDGER NAME="Sri Sai Hand Looms">' +
+    '<BILLALLOCATIONS.LIST><NAME>SSHL-101</NAME><BILLDATE>20260115</BILLDATE><OPENINGBALANCE>-3000.00</OPENINGBALANCE><CLOSINGBALANCE>-3000.00</CLOSINGBALANCE><BILLCREDITPERIOD>30</BILLCREDITPERIOD></BILLALLOCATIONS.LIST>' +
+    '<BILLALLOCATIONS.LIST><NAME>SSHL-090</NAME><BILLDATE>20251201</BILLDATE><OPENINGBALANCE>0</OPENINGBALANCE><CLOSINGBALANCE>0</CLOSINGBALANCE></BILLALLOCATIONS.LIST>' +
+    '</LEDGER><LEDGER NAME="Another Debtor"><BILLALLOCATIONS.LIST><NAME>AD-1</NAME><CLOSINGBALANCE>-999.00</CLOSINGBALANCE></BILLALLOCATIONS.LIST></LEDGER>' +
+    '</ENVELOPE>';
+  const rows = TL.outstandingBillRows(xml);
+  assert.equal(rows.length, 2, "one live bill per ledger, the settled bill excluded");
+  const sshl = rows.find((r) => r.ledger === "Sri Sai Hand Looms");
+  assert.deepEqual([sshl.name, sshl.amount, sshl.date, sshl.credit_days], ["SSHL-101", 3000, "2026-01-15", 30]);
+  const other = rows.find((r) => r.ledger === "Another Debtor");
+  assert.deepEqual([other.name, other.amount, other.credit_days], ["AD-1", 999, null]);
+});

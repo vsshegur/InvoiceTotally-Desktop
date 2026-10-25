@@ -49,6 +49,59 @@ test("party bank mappings require explicit On Account review without any outstan
   assert.match(x.note,/On Account/);
 });
 
+test("recurring narration patterns are grouped for one bulk ledger assignment",async()=>{
+  for(const [id,narr,credit] of [
+    ["cf-1","UPI/123456789012/CASHFREE PAYMENTS PRIVATE LIMITED/settlement1",2000],
+    ["cf-2","UPI/123456789099/CASHFREE PAYMENTS PRIVATE LIMITED/settlement2",3500],
+    ["cf-3","UPI/123456789088/CASHFREE PAYMENTS PRIVATE LIMITED/settlement3",1500],
+    ["one-off","NEFT/SBIN0001234/SOME OTHER PARTY/INV-99",400],
+  ])await D.insert("bank_lines",{id,statement_id:"st",company_id:"a",seq:10,status:"ready",
+    date:"2026-10-20",credit,debit:0,ref:"",narration:narr,key:"k-"+id});
+  const groups=await BK.patternGroups(D,"st");
+  const cf=groups.find(g=>g.ids.includes("cf-1"));
+  assert.ok(cf,"the three Cashfree transactions must form one group");
+  assert.equal(cf.ids.length,3);
+  assert.deepEqual(new Set(cf.ids),new Set(["cf-1","cf-2","cf-3"]));
+  assert.equal(cf.total,7000);
+  assert.ok(!groups.some(g=>g.ids.includes("one-off")),"a pattern seen only once is not a group");
+});
+
+test("a likely party name in the narration is suggested, never auto-applied",async()=>{
+  await D.insert("masters",{company_id:"a",kind:"ledger",name:"Sri Sai Hand Looms",uname:"SRI SAI HAND LOOMS",
+    parent:"Sundry Debtors",primary_group:"Sundry Debtors",pending:0});
+  await D.insert("bank_lines",{id:"party-1",statement_id:"st",company_id:"a",seq:11,status:"ready",
+    date:"2026-10-20",credit:5000,debit:0,ref:"",narration:"NEFT/UTIB0001234/SRI SAI HAND LOOMS/SETTLEMENT",
+    vtype:"Receipt",key:"k-party-1"});
+  const suggestions=await BK.partySuggestions(D,"st");
+  assert.ok(suggestions["party-1"]?.length,"a candidate must be suggested for the receipt");
+  assert.equal(suggestions["party-1"][0].name,"Sri Sai Hand Looms");
+  const row=await D.first("SELECT ledger FROM bank_lines WHERE id='party-1'");
+  assert.equal(row.ledger,null,"a suggestion never assigns the ledger by itself");
+});
+
+test("live bill-wise outstanding is read for the chosen party, and a transaction can be allocated against real bills",async()=>{
+  const billsXml='<ENVELOPE><LEDGER NAME="Sri Sai Hand Looms">'+
+    '<BILLALLOCATIONS.LIST><NAME>SSHL-101</NAME><BILLDATE>20260115</BILLDATE><OPENINGBALANCE>-3000.00</OPENINGBALANCE><CLOSINGBALANCE>-3000.00</CLOSINGBALANCE><BILLCREDITPERIOD>30</BILLCREDITPERIOD></BILLALLOCATIONS.LIST>'+
+    '<BILLALLOCATIONS.LIST><NAME>SSHL-090</NAME><BILLDATE>20251201</BILLDATE><OPENINGBALANCE>0</OPENINGBALANCE><CLOSINGBALANCE>0</CLOSINGBALANCE></BILLALLOCATIONS.LIST>'+
+    '</LEDGER><LEDGER NAME="Another Debtor"><BILLALLOCATIONS.LIST><NAME>AD-1</NAME><CLOSINGBALANCE>-999.00</CLOSINGBALANCE></BILLALLOCATIONS.LIST></LEDGER>'+
+    '</ENVELOPE>';
+  const billEnv={TALLY:{readOnly:async()=>billsXml}};
+  const read=await BK.outstandingBills(D,billEnv,"st",{ledger:"Sri Sai Hand Looms"});
+  assert.equal(read.bills.length,1,"a bill already settled to zero must be left out, and other ledgers' bills excluded");
+  assert.deepEqual([read.bills[0].name,read.bills[0].amount,read.bills[0].date,read.bills[0].credit_days],
+    ["SSHL-101",3000,"2026-01-15",30]);
+
+  await assert.rejects(()=>BK.allocateBills(D,"st",{id:"party-1",ledger:"Sri Sai Hand Looms",bills:[{name:"SSHL-101",amount:9000}]}),
+    /more than the transaction amount/,"cannot allocate more than the transaction's own amount");
+  const r=await BK.allocateBills(D,"st",{id:"party-1",ledger:"Sri Sai Hand Looms",bills:[{name:"SSHL-101",amount:3000}]});
+  assert.equal(r.allocated,3000);
+  assert.equal(r.residual,2000,"the remaining 2000 of the 5000 receipt goes On Account");
+  const row=await D.first("SELECT ledger,bills,method FROM bank_lines WHERE id='party-1'");
+  assert.equal(row.ledger,"Sri Sai Hand Looms");
+  assert.deepEqual(JSON.parse(row.bills),[{name:"SSHL-101",amount:3000}]);
+  assert.equal(row.method,"manual");
+});
+
 test("reciprocal company voucher matching is source-linked and read-only",async()=>{
  await D.insert("tally_gst_vouchers",{company_id:"a",mid:"1",date:"2026-10-10",number:"A-1",ref:"",
    party:"Vijayalaxmi Textiles",gstin:"27BBBBBBBBB1Z1",inv:0,e:JSON.stringify([["Vijayalaxmi Textiles",1180]]),vtype:"Sales"});

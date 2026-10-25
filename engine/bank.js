@@ -4,6 +4,8 @@
 // right ledger in Tally, as usual. A transaction already posted from an earlier statement is never posted twice.
 import { newId, now, jload } from "./db.js";
 import * as T from "./tally.js";
+import * as TL from "../desktop/tally.mjs";
+import * as M from "./matching.js";
 import {narrationKey} from "../public/bankparse.js";
 import { getCompany } from "./pipeline.js";
 
@@ -185,6 +187,101 @@ export async function suggestedLedger(D,sid){
   })).filter(x=>x.suggested),notice:"Suggestions are based on manually approved mappings only and never applied or posted automatically."};
 }
 
+/** Extracts a plausible counterparty name from a bank narration's cleaned pattern key,
+ *  e.g. narrationKey("NEFT/FLIPKART INTERNET PRIVATE LIMITED/...") → "FLIPKART INTERNET PRIVATE".
+ *  Returns "" for a UPI handle or anything with no usable name text. */
+function likelyPartyName(narration) {
+  const m = /^(?:NEFT|RTGS|UPI|TXT):(.+)$/.exec(narrationKey(narration));
+  return m && !m[1].includes("@") ? m[1] : "";
+}
+
+/** Suggested party-ledger matches per ready line, by narration text alone — never applied automatically.
+ *  Receipt lines are matched against Sundry Debtors, Payment lines against Sundry Creditors. */
+export async function partySuggestions(D, sid) {
+  const st = await statement(D, sid);
+  const rows = await D.all("SELECT id,narration,vtype FROM bank_lines WHERE statement_id=? AND status='ready'", sid);
+  const out = {};
+  for (const r of rows) {
+    const name = likelyPartyName(r.narration);
+    if (!name) continue;
+    const hits = await M.partyCandidates(D, st.company_id, r.vtype === "Payment" ? "Purchase" : "Sales", name, null, 3);
+    if (hits.length) out[r.id] = hits.map((h) => ({ name: h.name, score: h.score, tags: h.tags }));
+  }
+  return out;
+}
+
+/** Groups ready lines that share the same cleaned narration pattern (e.g. every "Cashfree" settlement),
+ *  so several transactions can be assigned to one ledger in a single action via the existing /assign
+ *  endpoint — grouping alone changes nothing; nothing is assigned until that call is made. */
+export async function patternGroups(D, sid) {
+  const st = await statement(D, sid);
+  const [rows, rules] = await D.many([
+    ["SELECT id,narration,debit,credit FROM bank_lines WHERE statement_id=? AND status='ready' ORDER BY seq", sid],
+    ["SELECT key,ledger FROM bank_rules WHERE company_id=? AND bank_ledger=?", st.company_id, st.bank_ledger],
+  ]);
+  const byKey = new Map(rules.map((r) => [r.key, r.ledger]));
+  const groups = new Map();
+  for (const r of rows) {
+    const key = narrationKey(r.narration);
+    if (!key) continue;
+    if (!groups.has(key)) groups.set(key, { key, ids: [], total: 0, sample: r.narration, suggested_ledger: byKey.get(key) || null });
+    const g = groups.get(key);
+    g.ids.push(r.id);
+    g.total = r2(g.total + (r.credit || r.debit));
+  }
+  return [...groups.values()].filter((g) => g.ids.length > 1).sort((a, b) => b.ids.length - a.ids.length).slice(0, 60);
+}
+
+/** Live-reads one party ledger's open bills from Tally, for allocating a single bank transaction
+ *  against a real bill instead of only On Account. Read-only; nothing is written to Tally. */
+export async function outstandingBills(D, env, sid, body) {
+  const st = await statement(D, sid);
+  const ledger = String(body.ledger || "").trim();
+  if (!ledger) throw new BankError(400, "Choose a party ledger first");
+  const master = await D.first("SELECT name,primary_group,parent FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND UPPER(name)=UPPER(?)", st.company_id, ledger);
+  if (!master) throw new BankError(400, "Ledger was not found in the imported Tally masters");
+  const group = /sundry debtors/i.test(master.primary_group || master.parent || "") ? "Sundry Debtors"
+    : /sundry creditors/i.test(master.primary_group || master.parent || "") ? "Sundry Creditors" : null;
+  if (!group) throw new BankError(400, "Bill-wise allocation only applies to a Sundry Debtor or Sundry Creditor ledger");
+  if (!env.TALLY?.readOnly) throw new BankError(503, "Tally read-only connection is unavailable");
+  const c = await getCompany(D, st.company_id);
+  const xml = await env.TALLY.readOnly(T.outstandingBillsRequest(c.tally_company || c.name, group));
+  const bills = TL.outstandingBillRows(xml).filter((b) => b.ledger.trim().toUpperCase() === master.name.trim().toUpperCase());
+  return { ledger: master.name, bills,
+    notice: "Freshly read from Tally just now. Not yet validated against a real Tally company — check a bill's amount there before relying on it." };
+}
+
+/** Allocates one ready/failed transaction against specific open bills of a party ledger; any part of the
+ *  amount not covered goes On Account (bankVoucher() already builds the Agst Ref + On Account split). */
+export async function allocateBills(D, sid, body) {
+  const st = await statement(D, sid);
+  const id = String(body.id || "");
+  const ledger = String(body.ledger || "").trim();
+  const bills = Array.isArray(body.bills) ? body.bills.slice(0, 40) : [];
+  if (!id || !ledger) throw new BankError(400, "Choose a transaction and a party ledger");
+  const line = must(await D.first("SELECT id,debit,credit,status FROM bank_lines WHERE statement_id=? AND id=?", sid, id), "Statement transaction not found");
+  if (!["ready", "failed"].includes(line.status)) throw new BankError(409, "Only a ready or safely failed statement row can be allocated");
+  const master = await D.first("SELECT name,primary_group,parent FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND UPPER(name)=UPPER(?)", st.company_id, ledger);
+  if (!master) throw new BankError(400, "Ledger was not found in the imported Tally masters");
+  if (!/^(sundry debtors|sundry creditors)$/i.test(String(master.primary_group || master.parent || "").trim()))
+    throw new BankError(400, "Bill-wise allocation only applies to a Sundry Debtor or Sundry Creditor ledger");
+  const amount = r2(line.credit || line.debit);
+  const cleaned = [];
+  let sum = 0;
+  for (const b of bills) {
+    const name = String(b?.name || "").trim().slice(0, 60);
+    const amt = r2(Math.abs(+b?.amount || 0));
+    if (!name || amt < 0.005) continue;
+    cleaned.push({ name, amount: amt });
+    sum = r2(sum + amt);
+  }
+  if (!cleaned.length) throw new BankError(400, "Allocate at least one bill, or use On Account instead");
+  if (sum > amount + 0.01) throw new BankError(400, "Allocated bills add up to more than the transaction amount");
+  await D.update("bank_lines", id, { ledger: master.name, method: "manual", confidence: 100, bills: JSON.stringify(cleaned),
+    note: "Allocated against " + cleaned.length + " open bill" + (cleaned.length > 1 ? "s" : "") + (sum < amount - 0.004 ? "; remainder On Account" : "") });
+  return { ok: true, ledger: master.name, allocated: sum, residual: r2(amount - sum) };
+}
+
 /** Post the chosen rows (default: every Ready row) to Tally: Receipt for money in, Payment for money out. */
 export async function push(D, sid, body) {
   const st = await statement(D, sid);
@@ -255,6 +352,10 @@ export function bankRoutes(route, { useCredit, requirePosting, authorizeCompany 
   });
   secured("GET", "/api/bank/:sid", async ({ D, p }) => json(await view(D, p.sid)));
   secured("GET", "/api/bank/:sid/suggestions", async ({ D, p }) => json(await suggestedLedger(D,p.sid)));
+  secured("GET", "/api/bank/:sid/party-suggestions", async ({ D, p }) => json(await partySuggestions(D,p.sid)));
+  secured("GET", "/api/bank/:sid/patterns", async ({ D, p }) => json(await patternGroups(D,p.sid)));
+  secured("POST", "/api/bank/:sid/outstanding-bills", async ({ env, D, p, body }) => json(await outstandingBills(D,env,p.sid,body)));
+  secured("POST", "/api/bank/:sid/allocate-bills", async ({ D, p, body }) => json(await allocateBills(D,p.sid,body)));
   secured("POST", "/api/bank/:sid/assign", async ({ D, p, body }) => json(await assignLedger(D,p.sid,body)));
   secured("POST", "/api/bank/:sid/suspense", async ({ D, p, body }) => json(await setSuspense(D, p.sid, body)));
   secured("POST", "/api/bank/:sid/mark", async ({ D, p, body }) => json(await mark(D, p.sid, body)));
