@@ -3,8 +3,8 @@
 // `group` only decides how the admin screen lays the switches out.
 export const FEATURES = [
   { group: "Invoices", key: "invoices", label: "Invoices module", help: "The invoice list, review screens and posting. Turn off to hide invoices completely." },
-  { group: "Invoices", key: "invoice_images", label: "Upload PDFs & photos", help: "Scanned, photographed or handwritten invoices read by AI." },
-  { group: "Invoices", key: "invoice_excel", label: "Upload Excel / CSV registers", help: "A sheet of invoices read column by column." },
+  { group: "Invoices", key: "invoice_images", label: "Upload PDFs & photos", help: "Scanned, photographed or handwritten invoices read by AI. Needs the Invoices module on." },
+  { group: "Invoices", key: "invoice_excel", label: "Upload Excel / CSV registers", help: "A sheet of invoices read column by column. Needs the Invoices module on." },
   { group: "Invoices", key: "gstr2b_purchase", label: "Purchase vouchers from GSTR-2B", help: "Prepare Tally purchase vouchers from the GST portal file." },
   { group: "Banking", key: "bank", label: "Bank statements", help: "Upload statements, match ledgers and bills, post entries." },
   { group: "Banking", key: "ecommerce", label: "E-Commerce → Tally", help: "Meesho, Flipkart and Amazon sales." },
