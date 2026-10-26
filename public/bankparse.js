@@ -96,9 +96,26 @@ const TOTAL_RE = /^(grand\s*)?totals?\b|^page\s*total|^transaction\s*total/i;
 // "No Of Transaction(s) : 9 11" — how many debits and credits the bank counted
 const COUNT_RE = /\b(no\.?\s*of|number\s*of|count\s*of)\s*tr?an?s?a?c?tion|\btxn\s*count/i;
 // "Page No :- 1 Of 3", "Page 2 of 5", "End of statement", "computer generated…" — never transactions
-const FOOTER_RE = /\bpage\s*(no\.?)?\s*[:.\-]*\s*\d+\s*(of|\/)\s*\d+|end\s*of\s*(the\s*)?statement|computer(ised|ized)?\s*generated|computeri[sz]ed\s*statement|does\s*not\s*require\s*(a\s*)?signature/i;
+const FOOTER_RE = /\bpage\s*(no\.?)?\s*[:.\-]*\s*\d+\s*(of|\/)\s*\d+|^\s*page\s*(no\.?)?\s*[:.\-]*\s*\d+\s*[-\u2013]?\s*$|end\s*of\s*(the\s*)?statement|computer(ised|ized)?\s*generated|computeri[sz]ed\s*statement|does\s*not\s*require\s*(a\s*)?signature/i;
 const MONEY = /\d\.\d{2}\b/; // amounts on a statement always have paise
 const isDateText = (t) => !!date(t);
+
+
+/**
+ * Joins two pieces of one narration that a statement wrapped onto separate lines. Banks cut text anywhere, so the pieces are
+ * glued without a space where the cut was clearly inside a word: a UPI handle ("vijtexkvb@a" + "xl/Pa"), after a dash or
+ * slash ("IMPS-" + "OUT/…"), or inside a long number ("…4526020000041" + "1").
+ */
+export function joinNarration(a, b) {
+  a = clean(a); b = clean(b);
+  if (!a) return b;
+  if (!b) return a;
+  const glue = (/[a-z0-9._-]$/.test(a) && /^[a-z0-9._-]*@[a-z]/.test(b))
+    || (/@[a-z]{0,6}$/i.test(a) && /^[a-z]{1,8}(\/|$)/i.test(b))
+    || /[A-Za-z0-9][-/]$/.test(a)
+    || (/\d{9,}$/.test(a) && /^\d{1,4}$/.test(b));
+  return clean(a + (glue ? "" : " ") + b);
+}
 
 /**
  * Rows of cells → transactions.
@@ -119,8 +136,17 @@ export function parseTable(rows, header = findHeader(rows)) {
     const m = [...t.matchAll(/(-?[\d,]*\d\.\d{2})\s*(cr|dr)?\b/gi)].pop();
     if (m) opening = balance(m[1] + (m[2] ? " " + m[2] : ""));
   }
+  // Lines of a narration that the PDF printed ABOVE the line carrying the date and amounts (rows whose text is centred or
+  // bottom-aligned): fromPdfPages marks them `lead`, and they are put in front of the next transaction's narration.
+  let lead = [], leadRef = "";
   for (let i = header.row + 1; i < rows.length; i++) {
     const r = rows[i];
+    if (r.lead) {
+      const n = m.narration == null ? "" : clean(r[m.narration]);
+      if (n) lead.push(n);
+      if (m.ref != null && r[m.ref]) leadRef = clean(leadRef + " " + clean(r[m.ref]));
+      continue;
+    }
     if (r.map(low).join("|") === headerSig) continue; // header repeated on the next page
     const cell = (k) => (m[k] == null ? "" : clean(r[m[k]]));
     const text = clean(r.join(" "));
@@ -161,15 +187,17 @@ export function parseTable(rows, header = findHeader(rows)) {
     const ref = cell("ref").split(" ").filter((t) => !isDateText(t)).join(" ");
     const moneyCells = [cell("debit"), cell("credit"), cell("amount"), cell("balance")].join(" ");
     if ((debit || credit) && (d || (lastDate && MONEY.test(moneyCells)))) {
-      out.push({ date: d || lastDate, narration: narr, ref, debit: debit || 0, credit: credit || 0, balance: bal });
+      const full = lead.length ? [...lead, narr].reduce((a, b) => joinNarration(a, b), "") : narr;
+      const cheque = leadRef ? clean(leadRef + " " + ref) : ref;
+      lead = []; leadRef = "";
+      out.push({ date: d || lastDate, narration: full, ref: cheque, debit: debit || 0, credit: credit || 0, balance: bal });
       if (d) lastDate = d;
       summary = false;
     } else if (!d && out.length && !summary && narr && !debit && !credit && bal == null) {
+      lead = []; leadRef = "";
       // narration wrapped onto the next line (also across a page break)
       const last = out[out.length - 1];
-      // a UPI handle cut over two lines ("vijte" + "x@axl/…") is joined without a space
-      const glue = /[a-z0-9._-]$/.test(last.narration) && /^[a-z0-9._-]*@[a-z]/.test(narr);
-      last.narration = clean(last.narration + (glue ? "" : " ") + narr);
+      last.narration = joinNarration(last.narration, narr);
       if (m.ref != null && ref && !last.ref.endsWith(ref)) last.ref = clean(last.ref + ref);
     }
   }
@@ -272,6 +300,137 @@ function mergeHeadingWords(items) {
   return out;
 }
 
+
+/**
+ * Horizontal rules (table row borders) of a PDF page, from pdf.js's operator list: [{ y, x1, x2 }] with y from the top of the
+ * page like the text items. Stroked lines, the top and bottom edges of stroked boxes, and thin filled bars all count.
+ * `ops` is { fnArray, argsArray }, `OPS` pdf.js's operator numbers, `height` the page height.
+ */
+export function horizontalRules(ops, OPS, height) {
+  const out = [];
+  if (!ops || !OPS) return out;
+  const mul = (m, n) => [m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3], m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3],
+    m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5]];
+  let ctm = [1, 0, 0, 1, 0, 0];
+  const stack = [];
+  const pt = (x, y) => [x * ctm[0] + y * ctm[2] + ctm[4], x * ctm[1] + y * ctm[3] + ctm[5]];
+  const add = (a, b) => { // a, b: page-space points
+    if (Math.abs(a[1] - b[1]) <= 0.6 && Math.abs(a[0] - b[0]) >= 12) out.push({ y: height - (a[1] + b[1]) / 2, x1: Math.min(a[0], b[0]), x2: Math.max(a[0], b[0]) });
+  };
+  const paints = new Set([OPS.stroke, OPS.closeStroke, OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].filter((x) => x != null));
+  const filled = new Set([OPS.fill, OPS.eoFill, OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].filter((x) => x != null));
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const f = ops.fnArray[i], a = ops.argsArray[i];
+    if (f === OPS.save) stack.push(ctm);
+    else if (f === OPS.restore) ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
+    else if (f === OPS.transform && Array.isArray(a) && a.length >= 6) ctm = mul(a.slice(0, 6), ctm);
+    else if (f === OPS.constructPath && Array.isArray(a) && paints.has(a[0]) && a[1] && a[1][0]) {
+      // path data: 0 = moveTo x y, 1 = lineTo x y, 4 = closePath (curves 2 and 3 are skipped over)
+      const d = Array.from(a[1][0]), shape = [];
+      let k = 0, start = null, prev = null;
+      const flush = () => {
+        if (shape.length === 2 && !filled.has(a[0])) add(shape[0], shape[1]); // a single stroked line
+        // a closed box 4 points wide: a thin filled bar is one rule; a stroked box gives its top and bottom edges
+        if (shape.length >= 4 && shape.length <= 5) {
+          const ys = shape.map((q) => q[1]), xs = shape.map((q) => q[0]);
+          const h = Math.max(...ys) - Math.min(...ys), w = Math.max(...xs) - Math.min(...xs);
+          if (filled.has(a[0]) && h <= 2.5 && w >= 12) out.push({ y: height - (Math.max(...ys) + Math.min(...ys)) / 2, x1: Math.min(...xs), x2: Math.max(...xs) });
+          else if (h > 2.5 && w >= 12) { out.push({ y: height - Math.max(...ys), x1: Math.min(...xs), x2: Math.max(...xs) }, { y: height - Math.min(...ys), x1: Math.min(...xs), x2: Math.max(...xs) }); }
+        }
+        shape.length = 0;
+      };
+      while (k < d.length) {
+        const c = d[k];
+        if (c === 0) { flush(); prev = pt(d[k + 1], d[k + 2]); start = prev; shape.push(prev); k += 3; }
+        else if (c === 1) { const q = pt(d[k + 1], d[k + 2]); shape.push(q); prev = q; k += 3; }
+        else if (c === 2) { prev = pt(d[k + 5], d[k + 6]); k += 7; }
+        else if (c === 3) { prev = pt(d[k + 3], d[k + 4]); k += 5; }
+        else if (c === 4) { if (start) shape.push(start); k += 1; }
+        else break;
+      }
+      flush();
+    }
+  }
+  return out;
+}
+
+/** Row borders of one page, tidied: close together = one, and only rules that cross most of the table count. */
+function pageRules(rules, left, right) {
+  const span = Math.max(1, right - left), ys = [];
+  for (const r of (rules || []).slice().sort((a, b) => a.y - b.y)) {
+    if (r.x2 - r.x1 < span * 0.6 || r.x1 > left + span * 0.4 || r.x2 < left + span * 0.6) continue;
+    if (!ys.length || r.y - ys[ys.length - 1] > 1.2) ys.push(r.y);
+  }
+  return ys;
+}
+
+
+/**
+ * A narration longer than one line is printed over several lines, and the date and amounts may sit on any of them (middle,
+ * last…). Lines printed above the date/amount line belong to THAT transaction, not to the one above it. Which transaction a
+ * narration-only line belongs to is decided by the table's own row borders when the PDF has them; otherwise by the larger
+ * gap at a row boundary (lines inside one cell are evenly spaced, the cell padding makes the gap between cells bigger).
+ * Marks such lines `lead` (rows[i].lead = true) so parseTable puts them in front of the next transaction's narration.
+ */
+function markLeadLines(lines, rows, map, pages, headSig, left, right) {
+  const col = (r, k) => (map[k] == null ? "" : clean(r[map[k]]));
+  const kind = rows.map((r, i) => {
+    const text = clean(r.join(" "));
+    if (!text) return "blank";
+    if (r.map((x) => x.toLowerCase().replace(/[:#*]/g, "").trim()).join("|") === headSig) return "head";
+    if (FOOTER_RE.test(text) || OPEN_RE.test(text) || CLOSE_RE.test(text) || TOTAL_RE.test(clean(r[0])) || COUNT_RE.test(text)) return "other";
+    const money = amount(col(r, "debit")) || amount(col(r, "credit")) || (map.amount != null && amount(col(r, "amount")));
+    if (date(col(r, "date")) && money) return "txn";
+    if (!date(col(r, "date")) && !money && !col(r, "balance") && (col(r, "narration") || col(r, "ref"))) return "narr";
+    return "other";
+  });
+  const lead = new Array(rows.length).fill(false);
+  const byPage = new Map();
+  lines.forEach((l, i) => { if (!byPage.has(l.page)) byPage.set(l.page, []); byPage.get(l.page).push(i); });
+  let evidence = false;
+  const pending = []; // pages without usable borders: handled by spacing
+  for (const [pg, idx] of byPage) {
+    const txns = idx.filter((i) => kind[i] === "txn");
+    if (!txns.length) continue;
+    const ys = pageRules(pages[pg]?.rules, left, right);
+    const band = (y) => ys.filter((v) => v < y - 0.5).length;
+    const bands = txns.map((i) => band(lines[i].y));
+    // borders are trusted when every transaction has a band of its own, with a border between each pair
+    if (ys.length >= txns.length && new Set(bands).size === bands.length) {
+      for (const i of idx) {
+        if (kind[i] !== "narr") continue;
+        const t = txns.find((j) => band(lines[j].y) === band(lines[i].y));
+        if (t != null && lines[i].y < lines[t].y - 1) { lead[i] = true; evidence = true; }
+      }
+    } else pending.push([pg, idx, txns]);
+  }
+  for (const [, idx, txns] of pending) {
+    for (let t = 0; t + 1 < txns.length; t++) {
+      const a = txns[t], b = txns[t + 1];
+      const mid = idx.filter((i) => i > a && i < b);
+      if (!mid.length || mid.some((i) => kind[i] !== "narr")) continue;
+      const ys = [lines[a].y, ...mid.map((i) => lines[i].y), lines[b].y];
+      const gaps = ys.slice(1).map((y, k) => y - ys[k]);
+      const sorted = gaps.slice().sort((x, y) => y - x);
+      if (sorted[0] - sorted[1] < 2.5 || sorted[0] < sorted[1] * 1.25) continue; // an even column of lines: all belong to the transaction above
+      const cut = gaps.indexOf(sorted[0]); // lines at positions > cut start the next transaction
+      mid.slice(cut).forEach((i) => { lead[i] = true; evidence = true; });
+    }
+  }
+  // once the layout is known to print lines above the amounts, those after a page's heading line belong to its first transaction
+  for (const [, idx, txns] of pending) {
+    const first = txns[0];
+    if (evidence) {
+      const heads = idx.filter((i) => kind[i] === "head" && i < first);
+      {
+        const from = heads.length ? heads[heads.length - 1] : idx[0] === 0 ? -1 : null; // the first page's heading is above the body
+        if (from != null) idx.filter((i) => i > from && i < first && kind[i] === "narr").forEach((i) => { lead[i] = true; });
+      }
+    }
+  }
+  rows.forEach((r, i) => { if (lead[i]) r.lead = true; });
+}
+
 export function fromPdfPages(pages) {
   const allLines = [];
   pages.forEach((p, pi) => linesOf(p.items).forEach((l) => allLines.push({ ...l, page: pi })));
@@ -312,7 +471,9 @@ export function fromPdfPages(pages) {
   };
   const above = allLines.slice(0, best.line - (best.span - 1)).map((l) => [l.items.map((it) => it.s).join(" ")]);
   const rows = [...above, cols.map((c) => c.s)];
-  for (let i = best.line + 1; i < allLines.length; i++) rows.push(toCells(allLines[i]));
+  const body = [];
+  for (let i = best.line + 1; i < allLines.length; i++) { const row = toCells(allLines[i]); body.push(row); rows.push(row); }
+  markLeadLines(allLines.slice(best.line + 1), body, best.h.map, pages, cols.map((c) => c.s.toLowerCase().replace(/[:#*]/g, "").trim()).join("|"), cols[0].x, cols[cols.length - 1].x + cols[cols.length - 1].w);
   const header = { ...best.h, row: above.length };
   return finish(parseTable(rows, header));
 }

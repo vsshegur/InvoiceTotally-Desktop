@@ -195,6 +195,7 @@ async function viewBankUpload(cid) {
             }
           }
           if (!pages.some((p) => p.hasText)) { errors.push(`${f.name} is a scanned image — download the statement from net banking as PDF or Excel instead (scans can't be read without AI)`); continue; }
+          for (const p of pages) { try { p.rules = BP.horizontalRules(p.ops, p.OPS, p.height); } catch { p.rules = []; } p.ops = null; }
           const r = BP.fromPdfPages(pages.filter((p) => p.hasText));
           if (r.rows.length) { rows.push(...r.rows); if (opening == null) opening = r.opening; took(f, r); }
           else {
