@@ -345,7 +345,7 @@ export function narrationKey(narration) {
 const BANKISH = /\b(BANK|BRANCH|BR|SEQ|CHQ|CHEQUE|MICR|CTS|CLEARING|CLG|PHONEPE|GPAY|PAYTM|GOOGLE|BHIM|TFR|TRF|DEBIT|CREDIT|UPI|NEFT|RTGS|IMPS|PAYMENT|FROM|REF)\b/;
 /**
  * Names that could be the other party in a narration, best first. Understands cheque clearing
- * ("By-Clearing DEVIDAS NARSAYYA GUNDALA, Chq : 55006, Seq : …, Bank : …"), UPI
+ * ("By-Clearing SAMPLE PARTY ONE, Chq : 100003, Seq : …, Bank : …"), UPI
  * ("UPI/356…/DEBIT/VIJAYALAXMI TEXTILES/PUNB…/vpa@bank/…") and NEFT / RTGS / IMPS style lines.
  * Only suggestions: the app never assigns a party from these on its own.
  */
@@ -369,7 +369,7 @@ export function partyNamesFrom(narration) {
   }
   return out.slice(0, 4);
 }
-/** The cheque number in a clearing narration ("Chq : 55006"), or "". */
+/** The cheque number in a clearing narration ("Chq : 100003"), or "". */
 export function chequeNo(narration) {
   const m = /\bCH(?:Q|EQUE)\s*(?:NO\.?)?\s*[:.#-]?\s*(\d{4,9})/i.exec(clean(narration));
   return m ? m[1] : "";

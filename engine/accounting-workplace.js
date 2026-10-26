@@ -3,7 +3,7 @@ import * as T from "./tally.js";
 import * as R from "./accounting-reconcile.js";
 import * as TL from "../desktop/tally.mjs";
 import {newId,now,jload} from "./db.js";
-import {bankVouchers} from "./accounting-reconcile.js";
+import {bankVouchers,sameBankEntry} from "./accounting-reconcile.js";
 import {legacyBillAgeing} from "./outstanding.js";
 
 const json=x=>new Response(JSON.stringify(x),{headers:{"content-type":"application/json","cache-control":"no-store"}});
@@ -41,16 +41,22 @@ export async function beforeBankPosting(D,job,read){
   const xml=await read(T.bankEntriesRequest(tallyName(c),x.bank_ledger,addDays(x.date,-7),addDays(x.date,7)));
   const rows=bankVouchers(xml,x.bank_ledger);
   const ref=norm(x.ref),signed=r2((x.credit||0)-(x.debit||0));
+  // The person looked at the Tally entry and chose "Post these after all": do not hold it again for the same reason.
+  if(x.confirmed_new)return {blocked:false};
   const same=rows.filter(y=>{
     if(Math.abs(y.signed-signed)>0.01)return false;
     const dayGap=Math.abs((Date.parse(y.date+"T00:00:00Z")-Date.parse(x.date+"T00:00:00Z"))/86400000);
     if(!Number.isFinite(dayGap)||dayGap>7)return false;
     const source=norm(y.reference+" "+y.narration);
-    // Even a different or missing reference can be a manually entered voucher.
-    // Hold same-date/same-amount records for review rather than risking duplicate Tally books.
-    return dayGap===0 || (!!ref && ref.length>=6 && source.includes(ref));
+    if(!!ref && ref.length>=6 && source.includes(ref))return true;
+    // Same cheque / sequence / UTR number = the same entry; different ones = a different entry, even on the same day for the same amount.
+    const k=sameBankEntry(x,y);
+    if(k==="same")return true;
+    if(k==="different")return false;
+    // No numbers to compare: a manually entered voucher can look like this, so hold same-date / same-amount ones for review.
+    return dayGap===0;
   });
-  if(same.length)return {blocked:true,reason:"Possible existing Tally bank entry within seven days for the same amount/reference. Compare before posting: "+same.map(y=>y.number||y.id).slice(0,5).join(", ")};
+  if(same.length)return {blocked:true,reason:"Possible existing Tally bank entry within seven days for the same amount/reference. Compare before posting (if it is a different entry, choose Post these after all): "+same.map(y=>y.number||y.id).slice(0,5).join(", ")};
   return {blocked:false};
 }
 

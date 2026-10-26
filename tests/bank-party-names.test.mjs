@@ -4,9 +4,9 @@ import assert from "node:assert/strict";
 import { partyNamesFrom, chequeNo, billHints } from "../public/bankparse.js";
 
 test("cheque clearing lines give the drawer's name", () => {
-  const n = "By-Clearing devidas narsayya gundala, Chq : 55006, Seq : 21042605008801, Bank : BANK OF MAHARASHTRA, Br : 012";
-  assert.equal(partyNamesFrom(n)[0], "DEVIDAS NARSAYYA GUNDALA");
-  assert.equal(chequeNo(n), "55006");
+  const n = "By-Clearing sample party one, Chq : 100003, Seq : 21042600000003, Bank : BANK OF MAHARASHTRA, Br : 012";
+  assert.equal(partyNamesFrom(n)[0], "SAMPLE PARTY ONE");
+  assert.equal(chequeNo(n), "100003");
   assert.equal(partyNamesFrom("By-Clearing VIVAN TRADERS, Chq : 264680, Seq : 9042605008631, Bank : BANK OF MAHARASHTRA, Br : 010")[0], "VIVAN TRADERS");
 });
 test("UPI and NEFT lines give the counterparty", () => {
