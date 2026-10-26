@@ -1,4 +1,4 @@
-package main
+package lzma
 
 import (
 	"archive/zip"
@@ -23,7 +23,7 @@ func TestLZMAFixtures(t *testing.T) {
 			t.Fatal(err)
 		}
 		src, _ := os.ReadFile(f)
-		got, err := lzmaDecode(src, 1<<30)
+		got, err := Decode(src, 1<<30)
 		if err != nil {
 			t.Errorf("%s: %v", base, err)
 			continue
@@ -37,22 +37,22 @@ func TestLZMAFixtures(t *testing.T) {
 func TestLZMADamaged(t *testing.T) {
 	src, _ := os.ReadFile("testdata/text.lzma")
 	// cut short, flipped bytes and a lying header must give an error or different bytes, never a crash
-	if _, err := lzmaDecode(src[:len(src)/2], 1<<30); err == nil {
+	if _, err := Decode(src[:len(src)/2], 1<<30); err == nil {
 		t.Error("truncated data was accepted")
 	}
 	for i := 20; i < len(src); i += 97 {
 		bad := append([]byte(nil), src...)
 		bad[i] ^= 0xFF
-		_, _ = lzmaDecode(bad, 1<<30)
+		_, _ = Decode(bad, 1<<30)
 	}
-	if _, err := lzmaDecode(src[:10], 1<<30); err == nil {
+	if _, err := Decode(src[:10], 1<<30); err == nil {
 		t.Error("tiny input accepted")
 	}
 	big := append([]byte(nil), src...)
 	for i := 5; i < 13; i++ {
 		big[i] = 0x7F
 	}
-	if _, err := lzmaDecode(big, 1<<20); err == nil {
+	if _, err := Decode(big, 1<<20); err == nil {
 		t.Error("absurd size accepted")
 	}
 }
@@ -65,7 +65,7 @@ func TestLZMABig(t *testing.T) {
 	}
 	want, _ := os.ReadFile(p)
 	src, _ := os.ReadFile(p + ".lzma")
-	got, err := lzmaDecode(src, 1<<31)
+	got, err := Decode(src, 1<<31)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatalf("big file: err=%v equal=%v", err, bytes.Equal(got, want))
 	}
@@ -73,11 +73,11 @@ func TestLZMABig(t *testing.T) {
 
 // After windows/build.sh: the real payload unpacks to a zip that holds the runtime and the app.
 func TestPayloadIfBuilt(t *testing.T) {
-	src, err := os.ReadFile("payload.lzma")
+	src, err := os.ReadFile("../setup/payload.lzma")
 	if err != nil {
 		t.Skip("no payload.lzma (run windows/build.sh first)")
 	}
-	raw, err := lzmaDecode(src, 1<<30)
+	raw, err := Decode(src, 1<<30)
 	if err != nil {
 		t.Fatal(err)
 	}

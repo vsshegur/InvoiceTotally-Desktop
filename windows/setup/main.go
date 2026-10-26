@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"invoicetotally/windows/lzma"
 )
 
 //go:embed payload.lzma
@@ -66,7 +68,7 @@ func main() {
 	stopRunning()
 
 	// the payload is a stored zip, compressed as one LZMA stream (lzma.go)
-	raw, err := lzmaDecode(payload, 1<<30)
+	raw, err := lzma.Decode(payload, 1<<30)
 	if err != nil {
 		fail("The installer is damaged: " + err.Error())
 	}

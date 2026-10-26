@@ -399,6 +399,6 @@ in an audit of the recent accounting modules:
 - The Users table shows "17 of 19 on" and lists the switched-off features on hover.
 
 ## Version 4.3.4 — smaller installer
-- The installer is about **31 MB instead of 42 MB** (a quarter smaller). Almost all of it is the bundled Node.js runtime (87 MB on disk); the installer now packs everything as one LZMA stream instead of compressing file by file. The unpacker (`windows/setup/lzma.go`) is a small decoder written from the public LZMA specification, so no outside code goes into the installer. Unpacking takes about 3 seconds longer.
-- Tests: `cd windows && go test ./setup` (small fixtures made by `windows/setup/testdata/make.py`; `LZMA_BIG=<file>` checks a large file). CI runs them, then installs the built installer on a Windows machine and starts the app, as before.
+- The installer is about **31 MB instead of 42 MB** (a quarter smaller). Almost all of it is the bundled Node.js runtime (87 MB on disk); the installer now packs everything as one LZMA stream instead of compressing file by file. The unpacker (`windows/lzma/lzma.go`) is a small decoder written from the public LZMA specification, so no outside code goes into the installer. Unpacking takes about 3 seconds longer.
+- Tests: `cd windows && go test ./lzma` (small fixtures made by `windows/lzma/testdata/make.py`; `LZMA_BIG=<file>` checks a large file). CI runs them, then installs the built installer on a Windows machine and starts the app, as before.
 - Nothing changes on the PC after installing: same files, same data folder.

@@ -18,7 +18,7 @@ cp "$NODE_EXE" "$STAGE/runtime/node.exe"
 cp package.json "$STAGE/app/"
 cp desktop/*.mjs desktop/config.json "$STAGE/app/desktop/"
 cp -r engine public "$STAGE/app/"
-# The payload is one stored zip, compressed as a single LZMA stream (windows/setup/lzma.go unpacks it): about a third
+# The payload is one stored zip, compressed as a single LZMA stream (windows/lzma/lzma.go unpacks it): about a third
 # smaller than compressing each file with deflate.
 "$PY" - "$STAGE" windows/setup/payload.lzma <<'PYEOF'
 import sys, os, io, zipfile, lzma

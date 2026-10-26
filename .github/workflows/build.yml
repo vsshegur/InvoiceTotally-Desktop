@@ -36,7 +36,7 @@ jobs:
         run: node --test tests/*.test.mjs
       - name: Installer unpacker tests
         shell: bash
-        run: cd windows && go test ./setup
+        run: cd windows && go test ./lzma
       - name: Build the installer (with this Node as the bundled runtime)
         shell: bash
         run: |

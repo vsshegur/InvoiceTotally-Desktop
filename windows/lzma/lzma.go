@@ -1,4 +1,4 @@
-package main
+package lzma
 
 // A small LZMA ("lzma_alone", the .lzma file format) decoder, written from the public LZMA specification so the installer
 // needs no outside code. The installer's payload is compressed with it (about a third smaller than zip's deflate).
@@ -121,9 +121,9 @@ func (l *lzmaLen) decode(r *lzmaRC, posState uint32) uint32 {
 	return 16 + r.tree(l.high[:], 8)
 }
 
-// lzmaDecode decodes a whole .lzma file (13-byte header, then the stream). The header may carry the real size or "unknown"
+// Decode decodes a whole .lzma file (13-byte header, then the stream). The header may carry the real size or "unknown"
 // (then the stream ends with an end marker). maxOut stops a damaged header from asking for absurd memory.
-func lzmaDecode(src []byte, maxOut uint64) ([]byte, error) {
+func Decode(src []byte, maxOut uint64) ([]byte, error) {
 	if len(src) < 13+5 {
 		return nil, errLZMA
 	}
