@@ -136,7 +136,8 @@ export async function mark(D, sid, body) {
   let changed = 0;
   for (let i = 0; i < ids.length; i += 200) {
     const part = ids.slice(i, i + 200);
-    const r = await D.run(`UPDATE bank_lines SET status=?, note=NULL WHERE statement_id=? AND status IN ${from} AND id IN (${inList(part)})`, to, sid, ...part);
+    // Bringing a held row back on purpose means "I checked Tally, this one is new": remember it so the live check lets it through.
+    const r = await D.run(`UPDATE bank_lines SET confirmed_new=CASE WHEN ?='ready' AND status='duplicate' THEN 1 ELSE confirmed_new END, status=?, note=NULL WHERE statement_id=? AND status IN ${from} AND id IN (${inList(part)})`, to, to, sid, ...part);
     changed += r.meta?.changes ?? 0;
   }
   return { ok: true, changed };

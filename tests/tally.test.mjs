@@ -58,7 +58,7 @@ test("Tally's replies: UTF-16, odd control characters, masters and GST vouchers"
 
 test("bank Receipt and Payment use Tally's accounting voucher XML shape", () => {
   for (const [vtype, moneyIn, bankAmount] of [["Receipt", true, -56448], ["Payment", false, 55000]]) {
-    const xml = T.bankVoucher("VIPUL TEXTILES", { vtype, date: "2026-04-09", bankLedger: "Siddheshwar Bank Current",
+    const xml = T.bankVoucher("VIPUL TEXTILES", { vtype, date: "2026-04-09", bankLedger: "Test Bank Current",
       ledger: "Suspense", amount: Math.abs(bankAmount), moneyIn, narration: "Bank transfer & clearing" });
     assert.equal(TL.validatePosting(xml, "VIPUL TEXTILES"), vtype + " voucher");
     assert.match(xml, new RegExp('<VOUCHER VCHTYPE="' + vtype + '" ACTION="Create" OBJVIEW="Accounting Voucher View">'));

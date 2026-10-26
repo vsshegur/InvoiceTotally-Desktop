@@ -9,6 +9,30 @@ const day=x=>{const n=Date.parse(iso(x)+"T00:00:00Z");return Number.isFinite(n)?
 export const normRef=identity;
 export const money2=money;
 
+/** Cheque numbers, bank sequence numbers and UTR/reference numbers that a narration spells out ("Chq : 100001, Seq : 1111..."). */
+export function bankIdentifiers(text){
+  const t=String(text||"").toUpperCase(),out={chq:new Set(),seq:new Set(),utr:new Set()};
+  for(const m of t.matchAll(/\b(?:CHQ|CHEQUE|CHK)\.?\s*(?:NO\.?|NUMBER|#)?\s*[:.\-]?\s*0*(\d{4,})/g))out.chq.add(m[1]);
+  for(const m of t.matchAll(/\bSEQ\.?\s*(?:NO\.?)?\s*[:.\-]?\s*(\d{6,})/g))out.seq.add(m[1]);
+  for(const m of t.matchAll(/\b(?:UTR|RRN|REF(?:ERENCE)?)\.?\s*(?:NO\.?)?\s*[:.\-]?\s*([A-Z0-9]{8,})/g))out.utr.add(m[1]);
+  return out;
+}
+/**
+ * Are a statement line and a Tally bank entry of the same amount and date the same entry?
+ * "same": they share a cheque / sequence / UTR number. "different": both name such numbers and none agree
+ * (two cheques of ₹11,340 on one day are two entries). "unknown": not enough to tell, so the caller keeps its safety hold.
+ */
+export function sameBankEntry(line,tally){
+  const a=bankIdentifiers((line.narration||"")+" "+(line.ref||"")),b=bankIdentifiers((tally.narration||"")+" "+(tally.reference||""));
+  let conflict=false;
+  for(const k of ["chq","seq","utr"]){
+    if(!a[k].size||!b[k].size)continue;
+    if([...a[k]].some(v=>b[k].has(v)))return "same";
+    conflict=true;
+  }
+  return conflict?"different":"unknown";
+}
+
 export function bankVouchers(xml,bankLedger){
   const root=TL.parseXml(xml),out=[];
   const wanted=identity(bankLedger);

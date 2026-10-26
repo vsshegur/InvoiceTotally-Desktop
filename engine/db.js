@@ -145,6 +145,7 @@ export const MIGRATIONS = [
   "ALTER TABLE batches ADD COLUMN fy_start INTEGER",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN vtype TEXT NOT NULL DEFAULT 'Purchase'",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN credit_verified INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE bank_lines ADD COLUMN confirmed_new INTEGER NOT NULL DEFAULT 0",
   "CREATE INDEX IF NOT EXISTS ix_bank_key ON bank_lines(company_id, key)",
   "CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs(status, created_at)",
 ];
