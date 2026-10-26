@@ -397,3 +397,8 @@ in an audit of the recent accounting modules:
 - The permission list is built into the app, so it is always shown — even when the online service has not been updated. In that case a clear warning says the switches cannot be saved yet (nothing is silently lost), and Admin → Users no longer shows "All on" for what it cannot know.
 - Switching **photos/PDFs** or **Excel** on also switches the Invoices module on; switching the Invoices module off switches both uploads off.
 - The Users table shows "17 of 19 on" and lists the switched-off features on hover.
+
+## Version 4.3.4 — smaller installer
+- The installer is about **31 MB instead of 42 MB** (a quarter smaller). Almost all of it is the bundled Node.js runtime (87 MB on disk); the installer now packs everything as one LZMA stream instead of compressing file by file. The unpacker (`windows/lzma/lzma.go`) is a small decoder written from the public LZMA specification, so no outside code goes into the installer. Unpacking takes about 3 seconds longer.
+- Tests: `cd windows && go test ./lzma` (small fixtures made by `windows/lzma/testdata/make.py`; `LZMA_BIG=<file>` checks a large file). CI runs them, then installs the built installer on a Windows machine and starts the app, as before.
+- Nothing changes on the PC after installing: same files, same data folder.

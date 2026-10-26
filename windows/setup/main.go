@@ -19,9 +19,11 @@ import (
 	"syscall"
 	"time"
 	"unsafe"
+
+	"invoicetotally/windows/lzma"
 )
 
-//go:embed payload.zip
+//go:embed payload.lzma
 var payload []byte
 
 //go:embed version.txt
@@ -65,7 +67,12 @@ func main() {
 	// a running copy is asked to stop first (it finishes what it is posting to Tally)
 	stopRunning()
 
-	zr, err := zip.NewReader(bytes.NewReader(payload), int64(len(payload)))
+	// the payload is a stored zip, compressed as one LZMA stream (lzma.go)
+	raw, err := lzma.Decode(payload, 1<<30)
+	if err != nil {
+		fail("The installer is damaged: " + err.Error())
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
 	if err != nil {
 		fail("The installer is damaged: " + err.Error())
 	}
