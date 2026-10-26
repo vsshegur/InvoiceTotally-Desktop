@@ -402,3 +402,10 @@ in an audit of the recent accounting modules:
 - The installer is about **31 MB instead of 42 MB** (a quarter smaller). Almost all of it is the bundled Node.js runtime (87 MB on disk); the installer now packs everything as one LZMA stream instead of compressing file by file. The unpacker (`windows/lzma/lzma.go`) is a small decoder written from the public LZMA specification, so no outside code goes into the installer. Unpacking takes about 3 seconds longer.
 - Tests: `cd windows && go test ./lzma` (small fixtures made by `windows/lzma/testdata/make.py`; `LZMA_BIG=<file>` checks a large file). CI runs them, then installs the built installer on a Windows machine and starts the app, as before.
 - Nothing changes on the PC after installing: same files, same data folder.
+
+## Version 4.3.5 — long bank narrations read correctly from PDF statements
+- **Problem (Punjab National Bank and similar):** when a narration wraps over two or three lines and the date and amounts sit on the middle or last line of the cell, the wrapped lines above them were glued to the transaction *above*. Narrations came out scrambled, partly missing, or empty.
+- **Fix:** the reader now uses the table's own row borders from the PDF to decide which lines belong to which row. If a PDF has no borders, it uses the larger gap at a row boundary (lines inside a cell are evenly spaced). Evenly spaced layouts without padding behave exactly as before.
+- Pieces of one narration are joined sensibly: a UPI handle cut inside its domain (`…@a` + `xl/Pa` → `…@axl/Pa`), a cut after a dash or slash (`IMPS-` + `OUT/…`), and a long number cut over two lines (`…4526020000041` + `1`).
+- A bare "Page No 1" line at the foot of a page is no longer added to the last narration.
+- Checked on made-up PDF statements (borders and no borders; text at the top, middle or bottom of the cell; a 40-row, two-page statement) in a real browser: every narration exact. The same files read wrongly with 4.3.4.

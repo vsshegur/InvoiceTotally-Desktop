@@ -91,7 +91,15 @@ const Ingest = (() => {
       const vp = page.getViewport({ scale: 1 });
       const tc = await page.getTextContent();
       const items = tc.items.filter((it) => it.str && it.str.trim()).map((it) => ({ s: it.str, x: it.transform[4], y: vp.height - it.transform[5], w: it.width }));
-      const p = { items, hasText: items.length >= 12 };
+      const p = { items, hasText: items.length >= 12, height: vp.height };
+      // the table's row borders (bankparse.horizontalRules reads them): only the drawing operators are kept
+      try {
+        const ol = await page.getOperatorList(), O = lib.OPS, keep = new Set([O.save, O.restore, O.transform, O.constructPath]);
+        p.ops = { fnArray: [], argsArray: [] };
+        ol.fnArray.forEach((f, k) => { if (keep.has(f)) { p.ops.fnArray.push(f); p.ops.argsArray.push(ol.argsArray[k]); } });
+        p.OPS = { save: O.save, restore: O.restore, transform: O.transform, constructPath: O.constructPath, stroke: O.stroke, closeStroke: O.closeStroke,
+          fill: O.fill, eoFill: O.eoFill, fillStroke: O.fillStroke, eoFillStroke: O.eoFillStroke, closeFillStroke: O.closeFillStroke, closeEOFillStroke: O.closeEOFillStroke };
+      } catch { /* no borders: the text positions alone are used */ }
       // a page without text is a scan: statements are read without AI, so it is reported, not rendered
       out.push(p);
       onPage?.(i, doc.numPages);
