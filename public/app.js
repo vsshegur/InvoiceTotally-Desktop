@@ -396,13 +396,16 @@ const AI_HELP = {
   groq: "Qwen on Groq's free tier. Free, but about 25 invoices a day and at most 3 pages per invoice.",
   claude: "Anthropic Claude. The most accurate, especially for handwritten bills; costs more.",
 };
-// Feature switches grouped by area, with all-on / all-off shortcuts. `attr` is the checkbox attribute prefix.
+// Feature switches grouped by area: a toggle per feature, per-group and overall shortcuts, a running count.
+// `mk(f)` gives the checkbox attributes (name or data-feat).
 function featureBoxes(features, off, mk) {
   const groups = [...new Set(features.map((f) => f.group || "Other"))];
-  return `<div class="feat-tools"><select class="in" data-feat-preset style="max-width:300px"><option value="">Quick setup: choose a role…</option>${FEATURE_PRESETS.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join("")}</select>
-    <button type="button" class="btn sm" data-feat-all="1">All on</button> <button type="button" class="btn sm" data-feat-all="0">All off</button></div>` +
-    groups.map((g) => `<div class="feat-group"><div class="eyebrow">${esc(g)}</div><div class="feat-grid">${features.filter((f) => (f.group || "Other") === g).map((f) =>
-      `<label class="check-row"><input type="checkbox" ${mk(f)} ${off.includes(f.key) ? "" : "checked"}> <span><b>${esc(f.label)}</b><span class="muted small"> — ${esc(f.help)}</span></span></label>`).join("")}</div></div>`).join("");
+  return `<div class="feat-tools"><select class="in" data-feat-preset style="max-width:340px"><option value="">Quick setup: choose a role…</option>${FEATURE_PRESETS.map((p, i) => `<option value="${i}">${esc(p.name)}</option>`).join("")}</select>
+    <button type="button" class="btn sm" data-feat-all="1">All on</button> <button type="button" class="btn sm" data-feat-all="0">All off</button><span class="spacer"></span><span class="feat-sum" data-feat-sum></span></div>` +
+    groups.map((g) => `<div class="feat-group"><div class="feat-ghead"><span class="eyebrow">${esc(g)}</span><span class="muted small" data-gcount></span><span class="spacer"></span>
+      <button type="button" class="linkbtn" data-grp="1">all on</button><button type="button" class="linkbtn" data-grp="0">all off</button></div>
+      <div class="feat-list">${features.filter((f) => (f.group || "Other") === g).map((f) =>
+      `<label class="feat-row"><input type="checkbox" class="sw" ${mk(f)} ${off.includes(f.key) ? "" : "checked"}><span class="feat-txt"><b>${esc(f.label)}</b><span class="muted small">${esc(f.help)}</span></span></label>`).join("")}</div></div>`).join("");
 }
 // Ready-made sets of switches. `on` lists what is allowed ("*" = everything); `except` removes some from "*".
 const FEATURE_PRESETS = [
@@ -416,35 +419,55 @@ const FEATURE_PRESETS = [
   { name: "Reports only (outstanding, GST, inter-company)", on: ["ageing", "share", "gstcontrol", "gstr2b", "intercompany", "masters"] },
 ];
 function wireFeatureAll(root) {
+  const boxes = () => $$('input[type=checkbox][name^="feat_"], input[type=checkbox][data-feat]', root);
+  const keyOf = (cb) => cb.name ? cb.name.slice(5) : cb.dataset.feat;
+  const setBox = (cb, v) => { if (cb.checked !== v) { cb.checked = v; cb.dispatchEvent(new Event("change", { bubbles: true })); } };
+  const refresh = () => {
+    const all = boxes(), on = all.filter((c) => c.checked).length;
+    $$("[data-feat-sum]", root).forEach((e) => { e.textContent = `${on} of ${all.length} on`; e.className = "feat-sum " + (on === all.length ? "good" : on ? "warn" : "bad"); });
+    $$(".feat-group", root).forEach((g) => { const b = $$("input[type=checkbox]", g); $("[data-gcount]", g).textContent = `${b.filter((c) => c.checked).length} of ${b.length} on`; });
+  };
+  // The upload choices live inside the Invoices module: turning one on turns the module on, turning the module off turns them off.
+  root.addEventListener("change", (e) => {
+    const cb = e.target; if (!cb.matches?.("input.sw")) return;
+    const k = keyOf(cb), by = (key) => boxes().find((x) => keyOf(x) === key);
+    if ((k === "invoice_images" || k === "invoice_excel") && cb.checked && by("invoices")) setBox(by("invoices"), true);
+    if (k === "invoices" && !cb.checked) for (const d of ["invoice_images", "invoice_excel"]) if (by(d)) setBox(by(d), false);
+    refresh();
+  });
   $$("[data-feat-preset]", root).forEach((sel) => sel.onchange = () => {
     const p = FEATURE_PRESETS[+sel.value]; if (!p) return;
     const allow = (k) => p.on === "*" ? !(p.except || []).includes(k) : p.on.includes(k);
-    $$('input[type=checkbox][name^="feat_"], input[type=checkbox][data-feat]', root).forEach((cb) => {
-      const k = cb.name ? cb.name.slice(5) : cb.dataset.feat, want = allow(k);
-      if (cb.checked !== want) { cb.checked = want; cb.dispatchEvent(new Event("change", { bubbles: true })); }
-    });
+    boxes().forEach((cb) => setBox(cb, allow(keyOf(cb))));
     sel.value = "";
   });
-  $$("[data-feat-all]", root).forEach((b) => b.onclick = () => {
-    $$('input[type=checkbox][name^="feat_"], input[type=checkbox][data-feat]', root).forEach((cb) => { if (cb.checked !== (b.dataset.featAll === "1")) { cb.checked = b.dataset.featAll === "1"; cb.dispatchEvent(new Event("change", { bubbles: true })); } });
-  });
+  $$("[data-feat-all]", root).forEach((b) => b.onclick = () => boxes().forEach((cb) => setBox(cb, b.dataset.featAll === "1")));
+  $$("[data-grp]", root).forEach((b) => b.onclick = () => $$("input[type=checkbox]", b.closest(".feat-group")).forEach((cb) => setBox(cb, b.dataset.grp === "1")));
+  refresh();
 }
+// The permission list: the service's own when it has one, else this app's copy (so the screen is never empty).
+let ADMIN_SVC_OK = true;
+async function loadAdminFeatures(r) {
+  ADMIN_SVC_OK = Array.isArray(r.features) && r.features.length > 0;
+  ADMIN_FEATURES = ADMIN_SVC_OK ? r.features : ((await api("/features")).features || []);
+}
+const SVC_OLD = `<div class="alert warn" style="margin:8px 0">The online service has not been updated with the permission switches yet, so what you tick here <b>cannot be saved or enforced</b>. Deploy the latest service (vsshegur/invoicetotally, “Service: per-user feature switches”), then come back.</div>`;
 let ADMIN_FEATURES = [];
 async function viewAdmin() {
   if (!ME?.licence?.admin) { location.hash = "#/"; return; }
   const r = await api("/admin/users", { body: {} });
-  ADMIN_FEATURES = r.features || [];
+  await loadAdminFeatures(r);
   const keyNote = Object.entries(r.ai || {}).filter(([, ok]) => !ok).map(([k]) => ME.ai_labels[k] || k);
   app().innerHTML = topBar([["Admin"]]) + `<div class="page wide">
     <div class="bar" style="padding:0 0 14px;border:0"><h1>Users</h1><div class="spacer"></div><button class="btn primary" id="add">+ Add user</button></div>
-    ${keyNote.length ? `<div class="alert warn" style="margin-bottom:12px">No API key on the service for: ${keyNote.map(esc).join(", ")}. Users given only these can't read invoices until the key is added in Cloudflare.</div>` : ""}
+    ${ADMIN_SVC_OK ? "" : SVC_OLD}${keyNote.length ? `<div class="alert warn" style="margin-bottom:12px">No API key on the service for: ${keyNote.map(esc).join(", ")}. Users given only these can't read invoices until the key is added in Cloudflare.</div>` : ""}
     <table class="grid"><thead><tr><th>User</th><th class="num">Invoice credits</th><th class="num">Statement credits</th><th class="num">Companies</th><th>Posting</th><th>AI</th><th>Features</th><th>Last seen</th></tr></thead><tbody>
     ${r.users.map((u) => `<tr class="click" data-href="#/admin/u/${encodeURIComponent(u.email)}"><td><b>${esc(u.name || u.email)}</b>${u.admin ? ' <span class="tag">admin</span>' : ""}${u.active ? "" : ' <span class="tag bad">off</span>'}<div class="muted small">${esc(u.email)}</div></td>
       <td class="num">${u.admin ? "∞" : u.invoice_credits.toLocaleString("en-IN")}${u.used?.invoice ? `<div class="muted small">${u.used.invoice.credits} used</div>` : ""}</td>
       <td class="num">${u.admin ? "∞" : u.statement_credits.toLocaleString("en-IN")}${u.used?.statement ? `<div class="muted small">${u.used.statement.credits} used</div>` : ""}</td>
       <td class="num">${u.companies} of ${u.admin ? "∞" : u.company_limit}</td><td>${u.admin || u.can_post ? '<span class="good">Allowed</span>' : '<span class="bad">Blocked</span>'}</td>
       <td class="small">${(u.admin ? Object.keys(AI_HELP) : u.ai_options).map((a) => esc(ME.ai_labels[a] || a)).join(", ")}</td>
-      <td class="small">${u.admin || !(u.disabled_features || []).length ? '<span class="good">All on</span>' : `<span class="warn">${u.disabled_features.length} off</span>`}</td>
+      <td class="small" title="${esc((u.disabled_features || []).map((k) => (ADMIN_FEATURES.find((f) => f.key === k) || {}).label || k).join(", "))}">${u.admin || !(u.disabled_features || []).length ? '<span class="good">All on</span>' : `<span class="warn">${ADMIN_FEATURES.length - u.disabled_features.length} of ${ADMIN_FEATURES.length} on</span>`}</td>
       <td class="muted small">${u.last_seen ? ago(u.last_seen) : "not signed in yet"}</td></tr>`).join("")}</tbody></table>
     <p class="muted small" style="margin-top:12px">A user signs in with their Google account on their own PC. Give credits when they pay you; switch a user off to sign them out everywhere.</p></div>`;
   wireTop();
@@ -454,38 +477,43 @@ async function viewAdmin() {
 
 function userModal(u, features = ADMIN_FEATURES) {
   const ai = u?.ai_options || ["gemini_lite"], off = u?.disabled_features || [];
-  const mbg = modal(`<h2>${u ? "Edit " + esc(u.name || u.email) : "Add user"}</h2>
-    <div class="field"><label>Google email</label><input class="in" name="email" type="email" value="${esc(u?.email || "")}" ${u ? "readonly" : "required"} placeholder="name@gmail.com"></div>
-    <div class="field"><label>Name</label><input class="in" name="name" value="${esc(u?.name || "")}"></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="field"><label>Companies allowed</label><input class="in" name="company_limit" type="number" min="0" max="999" value="${u?.company_limit ?? 1}"></div>
-      <div class="field"><label>Posting to Tally</label><select class="in" name="can_post"><option value="1" ${u?.can_post !== false ? "selected" : ""}>Allowed</option><option value="0" ${u?.can_post === false ? "selected" : ""}>Blocked — can read and review only</option></select></div></div>
-    ${u ? "" : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      <div class="field"><label>Invoice credits to start with</label><input class="in" name="invoice" type="number" min="0" value="0"></div>
-      <div class="field"><label>Statement credits to start with</label><input class="in" name="statement" type="number" min="0" value="0"></div></div>`}
-    <div class="field"><label>AI this user may use</label>${Object.keys(AI_HELP).map((k) => `<label class="check-row"><input type="checkbox" name="ai_${k}" ${ai.includes(k) ? "checked" : ""}> <span><b>${esc(ME.ai_labels[k])}</b> <span class="muted small">— ${esc(AI_HELP[k])}</span></span></label>`).join("")}</div>
-    ${u?.admin ? "" : `<div class="field"><label>Offline limit <span class="muted small">— days the app may run without checking in online</span></label><input class="in" name="verify_days" type="number" min="1" max="30" value="${u?.verify_days ?? 3}" style="max-width:120px"></div>
-    <div class="field"><label>Features this user can use <span class="muted small">— untick to hide and block</span></label>${features.length ? featureBoxes(features, off, (f) => `name="feat_${f.key}"`) : `<div class="alert warn">The online service has not been updated with the feature switches yet, so the list is empty. Deploy the latest service (see the README), then reopen this screen.</div>`}</div>`}
-    <div class="field"><label>Note (only you see it)</label><input class="in" name="note" value="${esc(u?.note || "")}" placeholder="e.g. paid ₹2,000 on 20 Oct by UPI"></div>
-    <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${u ? "Save" : "Add user"}</button></div>`,
+  const restricted = !u?.admin;
+  const mbg = modal(`<h2 style="margin:0 0 12px">${u ? "Edit " + esc(u.name || u.email) : "Add user"}</h2>
+    <div class="sec"><div class="eyebrow">Who</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field"><label>Google email</label><input class="in" name="email" type="email" value="${esc(u?.email || "")}" ${u ? "readonly" : "required"} placeholder="name@gmail.com"></div>
+        <div class="field"><label>Name</label><input class="in" name="name" value="${esc(u?.name || "")}"></div></div>
+      <div class="field"><label>Note (only you see it)</label><input class="in" name="note" value="${esc(u?.note || "")}" placeholder="e.g. paid ₹2,000 on 20 Oct by UPI"></div></div>
+    <div class="sec"><div class="eyebrow">Limits</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr${restricted ? " 1fr" : ""};gap:12px">
+        <div class="field"><label>Companies allowed</label><input class="in" name="company_limit" type="number" min="0" max="999" value="${u?.company_limit ?? 1}"></div>
+        <div class="field"><label>Posting to Tally</label><select class="in" name="can_post"><option value="1" ${u?.can_post !== false ? "selected" : ""}>Allowed</option><option value="0" ${u?.can_post === false ? "selected" : ""}>Blocked — review only</option></select></div>
+        ${restricted ? `<div class="field"><label>Must go online every <span class="muted small">(days)</span></label><input class="in" name="verify_days" type="number" min="1" max="30" value="${u?.verify_days ?? 3}"></div>` : ""}</div>
+      ${u ? "" : `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field"><label>Invoice credits to start with</label><input class="in" name="invoice" type="number" min="0" value="0"></div>
+        <div class="field"><label>Statement credits to start with</label><input class="in" name="statement" type="number" min="0" value="0"></div></div>`}</div>
+    <div class="sec"><div class="eyebrow">AI this user may use</div>${Object.keys(AI_HELP).map((k) => `<label class="feat-row"><input type="checkbox" class="sw" name="ai_${k}" ${ai.includes(k) ? "checked" : ""}><span class="feat-txt"><b>${esc(ME.ai_labels[k])}</b><span class="muted small">${esc(AI_HELP[k])}</span></span></label>`).join("")}</div>
+    ${restricted ? `<div class="sec"><div class="eyebrow">What this user can use <span class="muted small" style="text-transform:none;letter-spacing:0">— switch off to hide and block</span></div>${ADMIN_SVC_OK ? "" : SVC_OLD}${featureBoxes(features, off, (f) => `name="feat_${f.key}"`)}</div>` : ""}
+    <div class="modal-foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${u ? "Save" : "Add user"}</button></div>`,
   async (d) => {
     const body = { email: d.email, name: d.name, company_limit: +d.company_limit, can_post: d.can_post === "1", note: d.note,
       ai_options: Object.keys(AI_HELP).filter((k) => d["ai_" + k]) };
-    if (!u?.admin && features.length) { body.disabled_features = features.filter((f) => !d["feat_" + f.key]).map((f) => f.key); body.verify_days = +d.verify_days || 3; }
+    if (restricted && features.length) { body.disabled_features = features.filter((f) => !("feat_" + f.key in d)).map((f) => f.key); body.verify_days = +d.verify_days || 3; }
     if (!body.ai_options.length) throw new Error("Tick at least one AI");
     await api("/admin/save-user", { body });
     if (!u && (+d.invoice || +d.statement)) await api("/admin/add-credits", { body: { email: d.email, invoice: +d.invoice || 0, statement: +d.statement || 0, note: d.note } });
     toast(u ? "Saved" : "User added — they can sign in now");
     if (u) route(); else location.hash = `#/admin/u/${encodeURIComponent(d.email.toLowerCase())}`;
-  });
-  wireFeatureAll(mbg);
+  }, "wide scroll");
+  if (restricted) wireFeatureAll(mbg);
 }
+
 
 async function viewAdminUser(email) {
   if (!ME?.licence?.admin) { location.hash = "#/"; return; }
   const r = await api("/admin/user-detail", { body: { email } });
   const u = r.user;
-  ADMIN_FEATURES = (await api("/admin/users", { body: {} })).features || [];
+  await loadAdminFeatures(await api("/admin/users", { body: {} }));
   const KIND = { invoice: "Invoice read", statement: "Statement saved", split: "Pages split", add_invoice: "Invoice credits added", add_statement: "Statement credits added" };
   app().innerHTML = topBar([["Admin", "#/admin"], [u.name || u.email]]) + `<div class="page wide">
     <div class="bar" style="padding:0 0 14px;border:0"><div><h1 style="margin:0">${esc(u.name || u.email)}</h1><div class="muted">${esc(u.email)}${u.note ? " · " + esc(u.note) : ""}</div></div><div class="spacer"></div>
@@ -497,7 +525,8 @@ async function viewAdminUser(email) {
       <div><div class="eyebrow">Companies</div><div class="v">${u.companies} <span class="muted" style="font-size:14px">of ${u.admin ? "∞" : u.company_limit}</span></div></div>
       <div><div class="eyebrow">Must go online every</div><div class="v" style="font-size:18px">${u.admin ? "—" : (u.verify_days ?? 3) + " days"}</div></div>
       <div><div class="eyebrow">Posting to Tally</div><div class="v" style="font-size:18px">${u.admin || u.can_post ? '<span class="good">Allowed</span>' : '<span class="bad">Blocked</span>'}</div></div></div>
-    ${u.admin ? "" : `<div class="card" id="featCard" style="margin:14px 0"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b>Features</b><span class="muted small">Switch a feature off to hide it and block it for this user. Takes effect the next time their app checks the licence (within minutes while online).</span></div>
+    ${u.admin ? "" : `<div class="card" id="featCard" style="margin:14px 0"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h2 style="margin:0">What this user can use</h2><span class="muted small">Switch a feature off to hide it and block it for this user. Saved at once; their app picks it up the next time it checks the licence (within minutes while online).</span></div>
+      ${ADMIN_SVC_OK ? "" : SVC_OLD}
       <div style="margin-top:10px">${featureBoxes(ADMIN_FEATURES, u.disabled_features || [], (f) => `data-feat="${esc(f.key)}"`)}</div></div>`}
     ${u.admin ? "" : `<form class="card" id="cr" style="margin:14px 0;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
       <div class="field" style="margin:0"><label>Invoice credits</label><input class="in" name="invoice" type="number" value="0" style="width:130px"></div>
@@ -520,6 +549,7 @@ async function viewAdminUser(email) {
   $$("[data-feat]").forEach((cb) => cb.onchange = () => {
     clearTimeout(featTimer);
     featTimer = setTimeout(async () => {   // one save after a burst of clicks (a quick-setup role flips many at once)
+      if (!ADMIN_SVC_OK) { toast("Not saved — the online service has not been updated yet.", true); return; }
       const off = $$("[data-feat]").filter((x) => !x.checked).map((x) => x.dataset.feat);
       try { await api("/admin/save-user", { body: { email: u.email, disabled_features: off } }); u.disabled_features = off; toast(off.length ? `Saved — ${off.length} feature${off.length === 1 ? "" : "s"} off for this user` : "Saved — all features on for this user"); }
       catch (e) { toast(e.message, true); route(); }
@@ -564,10 +594,10 @@ async function viewCompanies() {
   $("#add").onclick = () => companyModal();
 }
 
-function modal(html, onSubmit) {
+function modal(html, onSubmit, cls = "") {
   const bg = document.createElement("div");
   bg.className = "modal-bg";
-  bg.innerHTML = `<form class="modal">${html}</form>`;
+  bg.innerHTML = `<form class="modal ${cls}">${html}</form>`;
   bg.addEventListener("mousedown", (e) => { if (e.target === bg) bg.remove(); });
   document.body.appendChild(bg);
   const f = $("form", bg);

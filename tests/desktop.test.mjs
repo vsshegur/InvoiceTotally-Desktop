@@ -88,6 +88,8 @@ test("admin: signs in, adds a user with limits and credits, sets up a company fr
   assert.equal(u.ok, true, JSON.stringify(u));
   const cr = await call("POST", "/admin/add-credits", { email: USER, invoice: 2, statement: 1, note: "Paid ₹500 by UPI" });
   assert.deepEqual([cr.user.invoice_credits, cr.user.statement_credits], [2, 1]);
+  const local = await call("GET", "/features");
+  assert.ok(local.features.length >= 19 && local.features.some((f) => f.key === "invoice_images"), "the app lists the switches itself, so the admin screen is never empty");
   const list = await call("POST", "/admin/users", {});
   assert.equal(list.users.find((x) => x.email === USER).company_limit, 1);
   assert.deepEqual(list.users.find((x) => x.email === USER).disabled_features, ["intercompany", "share", "invoice_excel"]);
