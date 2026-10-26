@@ -172,8 +172,8 @@ test("Invoices offers two upload choices and GSTR-2B parser is reused, not repla
  const app=fs.readFileSync(new URL("../public/app.js",import.meta.url),"utf8");
  const gst=fs.readFileSync(new URL("../public/gst.js",import.meta.url),"utf8");
  const index=fs.readFileSync(new URL("../public/index.html",import.meta.url),"utf8");
- assert.match(app,/1\. Upload Invoices/);
- assert.match(app,/2\. Upload GSTR-2B/);
+ assert.match(app,/Upload invoices/);
+ assert.match(app,/Upload GSTR-2B/);
  assert.match(app,/viewGstr2bPurchaseChoose/);
  assert.match(gst,/viewGstUpload\(cid,mode="reconcile"\)/);
  assert.match(gst,/gstr2b-purchases\/prepare/);
