@@ -222,7 +222,8 @@ function hashFeature(h) {
   if (/^#\/c\/\w+\/(bank)|^#\/(s|br)\//.test(h)) return "bank";
   if (/^#\/c\/\w+\/ecommerce|^#\/e\//.test(h)) return "ecommerce";
   if (/^#\/c\/\w+\/gstr2b|^#\/g\//.test(h)) return "gstr2b";
-  if (/^#\/c\/\w+\/(batches|upload)$|^#\/(b|i)\//.test(h)) return "invoices";
+  if (/^#\/c\/\w+\/batches$/.test(h)) return "invoices|gstr2b_purchase";
+  if (/^#\/c\/\w+\/upload$|^#\/(b|i)\//.test(h)) return "invoices";
   const m = /^#\/c\/\w+\/(\w+)$/.exec(h);
   return m ? TAB_FEATURE[m[1]] || "" : "";
 }
@@ -464,13 +465,13 @@ function userModal(u, features = ADMIN_FEATURES) {
       <div class="field"><label>Statement credits to start with</label><input class="in" name="statement" type="number" min="0" value="0"></div></div>`}
     <div class="field"><label>AI this user may use</label>${Object.keys(AI_HELP).map((k) => `<label class="check-row"><input type="checkbox" name="ai_${k}" ${ai.includes(k) ? "checked" : ""}> <span><b>${esc(ME.ai_labels[k])}</b> <span class="muted small">— ${esc(AI_HELP[k])}</span></span></label>`).join("")}</div>
     ${u?.admin ? "" : `<div class="field"><label>Offline limit <span class="muted small">— days the app may run without checking in online</span></label><input class="in" name="verify_days" type="number" min="1" max="30" value="${u?.verify_days ?? 3}" style="max-width:120px"></div>
-    <div class="field"><label>Features this user can use <span class="muted small">— untick to hide and block</span></label>${featureBoxes(features, off, (f) => `name="feat_${f.key}"`)}</div>`}
+    <div class="field"><label>Features this user can use <span class="muted small">— untick to hide and block</span></label>${features.length ? featureBoxes(features, off, (f) => `name="feat_${f.key}"`) : `<div class="alert warn">The online service has not been updated with the feature switches yet, so the list is empty. Deploy the latest service (see the README), then reopen this screen.</div>`}</div>`}
     <div class="field"><label>Note (only you see it)</label><input class="in" name="note" value="${esc(u?.note || "")}" placeholder="e.g. paid ₹2,000 on 20 Oct by UPI"></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary">${u ? "Save" : "Add user"}</button></div>`,
   async (d) => {
     const body = { email: d.email, name: d.name, company_limit: +d.company_limit, can_post: d.can_post === "1", note: d.note,
       ai_options: Object.keys(AI_HELP).filter((k) => d["ai_" + k]) };
-    if (!u?.admin) { body.disabled_features = features.filter((f) => !d["feat_" + f.key]).map((f) => f.key); body.verify_days = +d.verify_days || 3; }
+    if (!u?.admin && features.length) { body.disabled_features = features.filter((f) => !d["feat_" + f.key]).map((f) => f.key); body.verify_days = +d.verify_days || 3; }
     if (!body.ai_options.length) throw new Error("Tick at least one AI");
     await api("/admin/save-user", { body });
     if (!u && (+d.invoice || +d.statement)) await api("/admin/add-credits", { body: { email: d.email, invoice: +d.invoice || 0, statement: +d.statement || 0, note: d.note } });
@@ -601,14 +602,15 @@ function companyModal() {
 // The company's navigation, grouped by what the person is doing. Diagnostics is deliberately the last item.
 const COMPANY_NAV = [
   [null, [["overview", "Overview", "⌂"], ["actions", "Action Center", "◎"]]],
-  ["Post to Tally", [["batches", "Invoices", "▤"], ["gstr2b-purchase", "GSTR-2B purchases", "§"], ["bank", "Bank statements", "▥"], ["ecommerce", "E-Commerce → Tally", "⇄"]]],
+  ["Post to Tally", [["batches", "Invoices", "▤"], ["bank", "Bank statements", "▥"], ["ecommerce", "E-Commerce → Tally", "⇄"]]],
   ["Reconcile", [["gstr2b", "GSTR-2B", "§"], ["gstcontrol", "GST reconciliation", "≡"], ["intercompany", "Inter-company", "⇋"]]],
   ["Parties & bills", [["ageing", "Outstanding & ageing", "₹"], ["masters", "Masters", "☰"], ["smartmaps", "Smart matching", "✦"]]],
   ["System", [["jobs", "Tally log", "⟲"], ["settings", "Settings", "⚙"], ["diagnostics", "Diagnostics", "✚"]]],
 ];
 // Admin can switch features off per user (ME.licence.disabled_features); hidden here and refused by the API.
-const TAB_FEATURE = { settings: "company_settings", "gstr2b-purchase": "gstr2b_purchase", actions: "actions", masters: "masters", smartmaps: "smartmaps", batches: "invoices", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
-const featureOn = (k) => !k || !!ME?.licence?.admin || !(ME?.licence?.disabled_features || []).includes(k);
+const TAB_FEATURE = { settings: "company_settings", "gstr2b-purchase": "gstr2b_purchase", actions: "actions", masters: "masters", smartmaps: "smartmaps", batches: "invoices|gstr2b_purchase", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
+// "a|b" = allowed when either is on (the Invoices page serves both the invoice upload and the GSTR-2B upload)
+const featureOn = (k) => !k || !!ME?.licence?.admin || k.split("|").some((x) => !(ME?.licence?.disabled_features || []).includes(x));
 const TAB_INFO = {
   overview: ["Overview", "Where things stand for this company, and where to start."],
   actions: ["Action Center", "Everything that needs a decision, in one list."],
@@ -682,7 +684,6 @@ async function companyOverview(c, el) {
       ${[["invoices", `#/c/${c.id}/upload`, "▤", "Upload invoices", "PDF, photo or Excel purchase and sales invoices"],
         ["bank", `#/c/${c.id}/bank/upload`, "▥", "Upload a bank statement", "Match it to ledgers and bills, then post"],
         ["ageing", `#/c/${c.id}/ageing`, "₹", "Outstanding & ageing", "Receivables and payables — share on WhatsApp or PDF"],
-        ["gstr2b_purchase", `#/c/${c.id}/gstr2b-purchase`, "§", "GSTR-2B purchases", "Prepare purchase vouchers from the GST portal file"],
         ["intercompany", `#/c/${c.id}/intercompany`, "⇋", "Inter-company check", "Do two of your companies agree?"],
         ["gstcontrol", `#/c/${c.id}/gstcontrol`, "≡", "GST reconciliation", "GSTR-1, 2B and 3B against your books"]]
         .filter((t) => featureOn(t[0])).map((t) => tile(...t.slice(1))).join("")}
@@ -707,24 +708,24 @@ function tallyHelp(c) {
   return "";
 }
 async function companyBatches(c, el) {
-  const rows = await api(`/companies/${c.id}/batches`);
+  const rows = featureOn("invoices") ? await api(`/companies/${c.id}/batches`) : [];
   const help = tallyHelp(c);
   if (!c.masters.ledger) el.insertAdjacentHTML("beforebegin", `<div class="alert warn" style="margin-bottom:12px">${help || (c.pending_jobs ? "Reading your ledgers and stock items from Tally…" : "Masters aren't imported yet. Press <b>Import masters</b> (top right) so invoices can be matched to your ledgers and stock items.")}</div>`);
   else if (help && c.pending_jobs) el.insertAdjacentHTML("beforebegin", `<div class="alert warn" style="margin-bottom:12px">${help} ${plural(c.pending_jobs, "entry is", "entries are")} waiting to go to Tally.</div>`);
   const stageLbl = { find: "Finding invoices…", split: "Checking the split…", read: "Reading…", review: "", error: "Failed" };
   const choices='<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-bottom:18px">'+
-    (!featureOn("invoice_images")&&!featureOn("invoice_excel")?'':'<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/upload">'+
-    '<h3 style="margin:0 0 5px">1. Upload Invoices</h3><p class="muted small">Existing PDF, photo and Excel invoice reader. Supports purchase/sales, item lines, discounts and freight.</p>'+
+    (!featureOn("invoices")||(!featureOn("invoice_images")&&!featureOn("invoice_excel"))?'':'<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/upload">'+
+    '<h3 style="margin:0 0 5px">Upload invoices</h3><p class="muted small">Existing PDF, photo and Excel invoice reader. Supports purchase/sales, item lines, discounts and freight.</p>'+
     '<span class="btn sm">Upload invoices →</span></a>')+
     (!featureOn("gstr2b_purchase")?'':'<a class="card" style="display:block;padding:18px;text-decoration:none" href="#/c/'+c.id+'/gstr2b-purchase">'+
-    '<h3 style="margin:0 0 5px">2. Upload GSTR-2B</h3><p class="muted small">Prepare Purchase vouchers from GST portal GSTR-2B with fixed PURCHASE-GSTR2B ledger, review, then post to Tally.</p>'+
+    '<h3 style="margin:0 0 5px">Upload GSTR-2B</h3><p class="muted small">Prepare Purchase vouchers from GST portal GSTR-2B with fixed PURCHASE-GSTR2B ledger, review, then post to Tally.</p>'+
     '<span class="btn sm primary">Upload GSTR-2B →</span></a>')+'</div>';
   el.innerHTML = choices + (rows.length ? `<table class="grid"><thead><tr><th>Batch</th><th>Type</th><th>Uploaded</th><th class="num">Invoices</th><th>Progress</th></tr></thead><tbody>
     ${rows.map((b) => { const n = b.counts || {}; const done = n.synced || 0;
       return `<tr class="click" data-href="#/b/${b.id}"><td><b>${esc(b.name)}</b></td><td>${esc(b.voucher_type)}</td><td class="muted">${ago(b.created_at)}</td>
       <td class="num">${b.invoices}</td><td>${b.stage !== "review" ? `<span class="${b.stage === "error" ? "bad" : "warn"}">${stageLbl[b.stage]} ${b.stage === "error" ? esc(b.error || "") : ""}</span>` :
         `<span class="${done === b.invoices && done ? "good" : ""}">${done} of ${b.invoices} in Tally</span>${n.failed ? ` · <span class="bad">${n.failed} failed</span>` : ""}${b.have_a_look?` · <span class="bad" title="Open this batch and choose Have a look to verify dates">⚠ Have a look: ${b.have_a_look}</span>`:""}`}</td></tr>`; }).join("")}
-    </tbody></table>` : `<div class="card empty">No invoices yet. Choose one of the two upload options above.</div>`);
+    </tbody></table>` : featureOn("invoices") ? `<div class="card empty">No invoices yet. Choose an upload option above.</div>` : "");
   $$("tr[data-href]", el).forEach((tr) => tr.onclick = () => location.hash = tr.dataset.href);
   every(5000, async () => { if (rows.some((b) => b.stage !== "review" && b.stage !== "error") || (!c.masters.ledger && c.pending_jobs)) refresh(); });
 }
