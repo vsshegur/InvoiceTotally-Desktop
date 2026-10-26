@@ -1,6 +1,6 @@
 // InvoiceTotally for Windows — the JSON API behind the app window (served on this PC only; see desktop/main.mjs).
 import { db, newId, now, jload } from "./db.js";
-import { featureForPath, cleanDisabled } from "./features.js";
+import { featuresForRequest, cleanDisabled } from "./features.js";
 import * as P from "./pipeline.js";
 import * as M from "./matching.js";
 import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
@@ -36,11 +36,28 @@ async function licence(env) {
   if (!env.LIC) return env.TEST_LICENCE || null;
   return env.LIC.current();
 }
+let lastVerifyTry = 0, lastVerified = null;
+/** One quick online check, at most every 15 seconds, so an offline PC isn't slowed on every click. */
+async function verifyNow(env) {
+  if (Date.now() - lastVerifyTry < 15000) return lastVerified && !lastVerified.stale ? lastVerified : env.LIC.current();
+  lastVerifyTry = Date.now();
+  try { lastVerified = await env.LIC.refresh(); } catch { lastVerified = null; }
+  return lastVerified || env.LIC.current();
+}
+export function resetLicenceCheck() { lastVerifyTry = 0; lastVerified = null; } // tests
 async function requireLicence(env) {
   const lic = await licence(env);
   if (!lic) throw new HttpError(401, "Please sign in.", "signin");
   if (lic.active === false) throw new HttpError(403, "Your account is switched off. Ask the admin.", "inactive");
-  if (lic.stale && env.LIC && env.LIC.online === false) throw new HttpError(403, "Connect this PC to the internet once, so your licence can be checked.", "stale");
+  if (lic.stale && env.LIC) {
+    // Past the offline limit (or the PC clock was turned back): the service must confirm this account right now.
+    const fresh = await verifyNow(env);
+    if (!fresh || fresh.stale) throw new HttpError(403, lic.clock_rolled_back
+      ? "This PC's clock looks wrong. Set the correct date and time, then connect to the internet once to verify your licence."
+      : "Connect this PC to the internet once to verify your licence. It must be checked online every few days.", "stale");
+    if (fresh.active === false) throw new HttpError(403, "Your account is switched off. Ask the admin.", "inactive");
+    return fresh;
+  }
   return lic;
 }
 async function requirePosting(env) {
@@ -115,7 +132,7 @@ function licView(lic) {
   return { email: lic.email, name: lic.name || "", admin: !!lic.admin, active: lic.active !== false, company_limit: lic.company_limit ?? 0,
     can_post: !!lic.can_post, disabled_features: lic.admin ? [] : cleanDisabled(lic.disabled_features), invoice_credits: lic.invoice_credits ?? 0, statement_credits: lic.statement_credits ?? 0,
     unlimited: !!lic.admin, ai_options: allowedAI(lic),
-    issued_at: lic.issued_at, stale: !!lic.stale };
+    issued_at: lic.issued_at, stale: !!lic.stale, valid_until: lic.valid_until || null, verify_days: lic.verify_days || 3 };
 }
 route("GET", "/api/me", async ({ env, D }) => {
   const lic = await licence(env);
@@ -669,6 +686,7 @@ route("PATCH", "/api/invoices/:iid", async ({ D, p, body }) => {
     h.date_verified_value=P.normDate(h.date);
     h.date_verified_at=now();
   }
+  if(body.confirm_units===true)h.unit_ack=true;
   h.warnings = (h.warnings||[]).filter(w=>!/^GSTIN .* fails the checksum/.test(w));
   if (h.party_gstin && !gstinValid(h.party_gstin)) h.warnings.push(`GSTIN ${h.party_gstin} fails the checksum — check for a misread character.`);
   h.edited = true;
@@ -760,14 +778,15 @@ async function handleApi(req, env, url) {
     const m = url.pathname.match(r.re);
     if (!m) continue;
     if (!r.open) requireWindow(env, req, url);
-    if (!r.open && !r.keyed) {
-      const lic = await requireLicence(env);
-      const f = featureForPath(url.pathname);
-      if (f && !lic.admin && cleanDisabled(lic.disabled_features).includes(f))
-        throw new HttpError(403, "This feature is switched off for your account. Ask the admin to turn it on.", "feature");
-    }
+    let lic = null;
+    if (!r.open && !r.keyed) lic = await requireLicence(env);
     let body = {};
     if (req.method !== "GET" && req.method !== "DELETE") { try { body = await req.json(); } catch { body = {}; } }
+    if (lic && !lic.admin) {
+      const off = cleanDisabled(lic.disabled_features);
+      if (featuresForRequest(req.method, url.pathname, body, !!(r.createPosts && body.create)).some((f) => off.includes(f)))
+        throw new HttpError(403, "This feature is switched off for your account. Ask the admin to turn it on.", "feature");
+    }
     if (r.post || (r.createPosts && body.create)) await requirePosting(env);
     const res = await r.fn({ env, D, req, url, p: m.groups || {}, body });
     if (r.wakes && env.wakeReader) env.wakeReader();

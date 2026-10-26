@@ -1,0 +1,36 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { FEATURES, FEATURE_KEYS, cleanDisabled, featureForPath, featuresForRequest } from "../engine/features.js";
+
+test("every switch has a unique key, a label and a group", () => {
+  assert.equal(new Set(FEATURE_KEYS).size, FEATURES.length);
+  for (const f of FEATURES) assert.ok(f.key && f.label && f.group && f.help, f.key);
+});
+test("unknown or repeated keys are dropped", () => {
+  assert.deepEqual(cleanDisabled(["bank", "bank", "nope", 5, "share"]), ["bank", "share"]);
+  assert.deepEqual(cleanDisabled(null), []);
+});
+test("GSTR-2B purchase vouchers are a separate switch from GSTR-2B reconciliation", () => {
+  assert.equal(featureForPath("/api/companies/c1/gstr2b-purchases/prepare"), "gstr2b_purchase");
+  assert.equal(featureForPath("/api/gstr2b-purchases/x/mapping"), "gstr2b_purchase");
+  assert.equal(featureForPath("/api/companies/c1/gstr2b"), "gstr2b");
+});
+test("invoice upload needs its source switch as well as the invoices module", () => {
+  assert.deepEqual(featuresForRequest("POST", "/api/companies/c1/batches", { source: "excel" }), ["invoices", "invoice_excel"]);
+  assert.deepEqual(featuresForRequest("POST", "/api/companies/c1/batches", { source: "pdf" }), ["invoices", "invoice_images"]);
+  assert.deepEqual(featuresForRequest("GET", "/api/companies/c1/batches", {}), ["invoices"]);
+  assert.deepEqual(featuresForRequest("GET", "/api/companies/c1/masters", {}), []);
+});
+
+test("action permissions: delete, settings, backups, XML and creating masters", () => {
+  assert.ok(featuresForRequest("DELETE", "/api/invoices/i1", {}).includes("delete_data"));
+  assert.ok(featuresForRequest("DELETE", "/api/companies/c1", {}).includes("delete_data"));
+  assert.deepEqual(featuresForRequest("PATCH", "/api/companies/c1", {}), ["company_settings"]);
+  assert.ok(!featuresForRequest("PATCH", "/api/invoices/i1", {}).includes("company_settings"));
+  assert.ok(featuresForRequest("POST", "/api/backups/restore", {}).includes("backup_restore"));
+  assert.ok(featuresForRequest("POST", "/api/backup", {}).includes("backup_restore"));
+  assert.ok(featuresForRequest("GET", "/api/invoices/i1/xml", {}).includes("export_xml"));
+  assert.ok(featuresForRequest("POST", "/api/batches/b1/party", {}, true).includes("create_masters"));
+  assert.ok(featuresForRequest("POST", "/api/gstr2b-purchases/p1/ensure-ledger", {}).includes("create_masters"));
+  assert.deepEqual(featuresForRequest("POST", "/api/batches/b1/party", {}, false), ["invoices"]);
+});

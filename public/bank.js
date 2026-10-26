@@ -271,7 +271,7 @@ async function viewStatement(sid) {
   app().innerHTML = topBar([[c.name, `#/c/${c.id}/bank`], [s.name]], c) + `<div class="bar">
       <span class="status">${esc(s.bank_ledger)} → <b>${esc(s.suspense_ledger)}</b> · ${s.period_from ? `${fmtDate(s.period_from)} – ${fmtDate(s.period_to)}` : ""} · in ${money(s.totals.in)} · out ${money(s.totals.out)}</span>
       <div class="spacer"></div><a class="btn" href="#/br/${sid}">Reconcile against Tally</a> <a class="btn" href="#/c/${c.id}/bank">Back <kbd>Esc</kbd></a>
-      <button class="btn danger" id="del" title="Delete this statement from the app (entries in Tally stay)">🗑</button>
+      ${featureOn("delete_data") ? `<button class="btn danger" id="del" title="Delete this statement from the app (entries in Tally stay)">🗑</button>` : ""}
       <button class="btn primary" id="post" ${count.ready && canPost ? "" : "disabled"} ${canPost ? "" : 'title="Posting to Tally is not allowed for your account"'}>Post ${BANK_UI.checked.size ? `${BANK_UI.checked.size} selected` : count.ready ? `all ${count.ready}` : ""} to Tally <kbd>P</kbd></button></div>
     <div class="page wide">
       ${s.stage === "error" ? `<div class="alert bad">${esc(s.error || "")}</div>` : ""}
@@ -314,7 +314,7 @@ async function viewStatement(sid) {
     BANK_UI.checked.clear(); BANK_UI.filter = "sent"; refresh();
   };
   $("#post").onclick = post; keymap.p = post;
-  $("#del").onclick = async () => { if (confirm("Delete this statement from the app? Entries already posted stay in Tally.")) { await api(`/bank/${sid}`, { method: "DELETE" }); location.hash = `#/c/${c.id}/bank`; } };
+  if ($("#del")) $("#del").onclick = async () => { if (confirm("Delete this statement from the app? Entries already posted stay in Tally.")) { await api(`/bank/${sid}`, { method: "DELETE" }); location.hash = `#/c/${c.id}/bank`; } };
   keymap.Escape = () => location.hash = `#/c/${c.id}/bank`;
   if (s.lines.some((l) => l.status === "queued")) every(2500, refresh);
 }

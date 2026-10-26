@@ -84,13 +84,14 @@ test("admin: signs in, adds a user with limits and credits, sets up a company fr
   assert.equal(me.licence.can_post, true);
   assert.deepEqual(me.licence.ai_options, ["gemini_lite", "gemini", "groq", "claude"]);
 
-  const u = await call("POST", "/admin/save-user", { email: USER, name: "Ramesh", company_limit: 1, can_post: false, ai_options: ["groq"], disabled_features: ["intercompany", "share", "not-a-feature"] });
+  const u = await call("POST", "/admin/save-user", { email: USER, name: "Ramesh", company_limit: 1, can_post: false, ai_options: ["groq"], disabled_features: ["intercompany", "share", "invoice_excel", "not-a-feature"], verify_days: 5 });
   assert.equal(u.ok, true, JSON.stringify(u));
   const cr = await call("POST", "/admin/add-credits", { email: USER, invoice: 2, statement: 1, note: "Paid ₹500 by UPI" });
   assert.deepEqual([cr.user.invoice_credits, cr.user.statement_credits], [2, 1]);
   const list = await call("POST", "/admin/users", {});
   assert.equal(list.users.find((x) => x.email === USER).company_limit, 1);
-  assert.deepEqual(list.users.find((x) => x.email === USER).disabled_features, ["intercompany", "share"]);
+  assert.deepEqual(list.users.find((x) => x.email === USER).disabled_features, ["intercompany", "share", "invoice_excel"]);
+  assert.equal(list.users.find((x) => x.email === USER).verify_days, 5);
   assert.ok(list.features.some((f) => f.key === "gstcontrol"));
   assert.deepEqual(list.ai, { gemini_lite: true, gemini: false, groq: true, claude: true });
 
@@ -287,7 +288,11 @@ test("user: own companies, company limit, credits counted, posting blocked", asy
 
   const c = await call("POST", "/companies", { name: "Ramesh Traders" });
   assert.equal(c.settings.ai, "groq");
-  assert.deepEqual(me.licence.disabled_features, ["intercompany", "share"], "unknown feature names are dropped");
+  assert.deepEqual(me.licence.disabled_features, ["intercompany", "share", "invoice_excel"], "unknown feature names are dropped");
+  assert.equal(me.licence.verify_days, 5);
+  const xl = await call("POST", `/companies/${c.id}/batches`, { voucher_type: "Purchase", source: "excel", files: [{ filename: "a.xlsx", pages: 1 }] });
+  assert.equal(xl.status, 403, "Excel upload is switched off for this user");
+  assert.match(xl.error, /switched off/);
   const blocked = await call("POST", `/companies/${c.id}/intercompany/other/refresh`, {});
   assert.equal(blocked.status, 403);
   assert.match(blocked.error, /switched off/);
