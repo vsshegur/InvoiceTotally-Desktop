@@ -391,3 +391,9 @@ in an audit of the recent accounting modules:
 ## Version 4.3.2 — bank entries that look alike but are different
 - Before posting a bank line, the app compares it with Tally's bank entries of the same amount within seven days. Same day and same amount used to be held even when the cheque numbers were different. Now the **cheque number, bank sequence number and UTR/reference** in the two narrations are compared: a shared number means it is the same entry (held), numbers that all differ mean it is a different entry (posted). The hold stays only when there are no numbers to compare.
 - A line that is held shows "Already posted earlier". Choosing **Post these after all** now remembers that you checked it, and the app no longer holds it again for the same reason (before, it was held again at once).
+
+## Version 4.3.3 — admin panel redesigned around toggles
+- **Add user** and **Edit user** are now sectioned forms (Who / Limits / AI / What this user can use) in a scrolling window with the buttons always in view. Every permission is a toggle with a one-line explanation, a per-group "all on / all off", a running "17 of 19 on", and the Quick setup roles.
+- The permission list is built into the app, so it is always shown — even when the online service has not been updated. In that case a clear warning says the switches cannot be saved yet (nothing is silently lost), and Admin → Users no longer shows "All on" for what it cannot know.
+- Switching **photos/PDFs** or **Excel** on also switches the Invoices module on; switching the Invoices module off switches both uploads off.
+- The Users table shows "17 of 19 on" and lists the switched-off features on hover.

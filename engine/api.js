@@ -1,6 +1,6 @@
 // InvoiceTotally for Windows — the JSON API behind the app window (served on this PC only; see desktop/main.mjs).
 import { db, newId, now, jload } from "./db.js";
-import { featuresForRequest, cleanDisabled } from "./features.js";
+import { featuresForRequest, cleanDisabled, FEATURES } from "./features.js";
 import * as P from "./pipeline.js";
 import * as M from "./matching.js";
 import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
@@ -167,6 +167,8 @@ route("POST", "/api/licence/refresh", async ({ env }) => {
 }, { keyed: true });
 route("POST", "/api/tally/check", async () => json(TALLY ? await TALLY.tally(true) : { status: "unknown" }), { keyed: true });
 
+// The list of permission switches this app knows (the admin screen falls back to it when the service has no list).
+route("GET", "/api/features", async () => json({ features: FEATURES }), { keyed: true });
 // Admin (vipulshegur@gmail.com): users, credits, limits — kept by the service; this app only passes the requests on.
 route("POST", "/api/admin/:action", async ({ env, p, body }) => {
   const lic = await requireLicence(env);
