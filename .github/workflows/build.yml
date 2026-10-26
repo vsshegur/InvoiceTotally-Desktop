@@ -34,6 +34,9 @@ jobs:
       - name: Tests on Windows (the app, a stand-in service and a stand-in TallyPrime)
         shell: bash
         run: node --test tests/*.test.mjs
+      - name: Installer unpacker tests
+        shell: bash
+        run: cd windows && go test ./setup
       - name: Build the installer (with this Node as the bundled runtime)
         shell: bash
         run: |

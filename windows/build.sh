@@ -18,14 +18,21 @@ cp "$NODE_EXE" "$STAGE/runtime/node.exe"
 cp package.json "$STAGE/app/"
 cp desktop/*.mjs desktop/config.json "$STAGE/app/desktop/"
 cp -r engine public "$STAGE/app/"
-"$PY" - "$STAGE" windows/setup/payload.zip <<'PYEOF'
-import sys, os, zipfile
+# The payload is one stored zip, compressed as a single LZMA stream (windows/setup/lzma.go unpacks it): about a third
+# smaller than compressing each file with deflate.
+"$PY" - "$STAGE" windows/setup/payload.lzma <<'PYEOF'
+import sys, os, io, zipfile, lzma
 stage, out = sys.argv[1], sys.argv[2]
-with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as z:
     for root, _, files in os.walk(stage):
         for f in sorted(files):
             p = os.path.join(root, f)
             z.write(p, os.path.relpath(p, stage).replace(os.sep, "/"))
+raw = buf.getvalue()
+packed = lzma.compress(raw, format=lzma.FORMAT_ALONE, filters=[{"id": lzma.FILTER_LZMA1, "preset": 9, "dict_size": 1 << 27}])
+open(out, "wb").write(packed)
+print("payload: %.1f MB -> %.1f MB" % (len(raw) / 1e6, len(packed) / 1e6))
 PYEOF
 echo "$VERSION" > windows/setup/version.txt
 ( cd windows && go build -trimpath -ldflags "-s -w -H=windowsgui" -o "../build/Vipul-Workplace-$VERSION-Setup.exe" ./setup )
