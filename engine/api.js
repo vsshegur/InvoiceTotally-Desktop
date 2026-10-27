@@ -510,7 +510,7 @@ route("POST", "/api/batches/:bid/party-fix", async ({ D, p, body }) => {
   for (const inv of invs.filter(Boolean)) {
     const h = inv.data;
     applyPartyDetails(h, body);
-    stmts.push(D.updateStmt("invoices", inv.id, { data: JSON.stringify(h), tax_lines: null,
+    stmts.push(D.updateStmt("invoices", inv.id, { data: JSON.stringify(h),
       ...(inv.party_ledger ? { party_ledger: null, party_method: null } : {}) }));
   }
   stmts.push(D.stmt("INSERT INTO activity (batch_id, invoice_id, message, at) VALUES (?,?,?,?)", p.bid, null, "Party details corrected", now()));
@@ -611,8 +611,9 @@ route("POST", "/api/batches/:bid/ledger", async ({ D, body }) => {
 
 route("POST", "/api/batches/:bid/calculate-tax", async ({ D, p, body }) => {
   const ids = body.invoice_ids || (await P.loadBatchInvoices(D, p.bid, REVIEWABLE)).map((i) => i.id);
-  await Promise.all(ids.slice(0, 40).map((iid) => P.calculateTax(D, iid)));
-  return json({ ok: true, calculated: Math.min(ids.length, 40), remaining: Math.max(0, ids.length - 40) });
+  // Every invoice, in small groups — a cap here left everything past the first 40 permanently "not calculated".
+  for (let i = 0; i < ids.length; i += 10) await Promise.all(ids.slice(i, i + 10).map((iid) => P.calculateTax(D, iid)));
+  return json({ ok: true, calculated: ids.length, remaining: 0 });
 });
 
 route("POST", "/api/batches/:bid/tax-ledger", async ({ D, p, body }) => {
@@ -713,6 +714,8 @@ route("PATCH", "/api/invoices/:iid", async ({ D, p, body }) => {
   }
   await D.batch(stmts);
   await D.log("Edited invoice details", { invoice_id: p.iid, batch_id: inv.batch_id });
+  // Tax follows the edit straight away (keeping the ledgers already chosen), so a corrected invoice never drops back to "calculate tax".
+  await P.calculateTax(D, p.iid).catch(() => D.update("invoices", p.iid, { tax_lines: null }));
   await P.autoMatch(D, p.iid, true);
   return json(await invoiceFull(D, p.iid));
 });
