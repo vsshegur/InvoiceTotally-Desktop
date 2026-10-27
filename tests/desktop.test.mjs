@@ -137,6 +137,25 @@ test("admin: an invoice is read through the service and posted straight to Tally
   postedPurchaseInvoiceId=inv.id;
 });
 
+test("admin: tax is calculated for every invoice in a big batch, and survives an edit", async () => {
+  const N = 45; // more than the old 40-invoice cap
+  const b = await call("POST", `/companies/${cid}/batches`, { voucher_type: "Purchase", files: Array.from({ length: N }, (_, i) => ({ filename: `big${i}.pdf`, pages: 1 })) });
+  for (const f of b.files) await call("POST", `/files/${f.id}/pages`, { idx: 0, image_b64: JPEG });
+  await call("POST", `/batches/${b.id}/start`, {});
+  const rev = await until(async () => { const x = await call("GET", `/batches/${b.id}`); return x.stage === "review" && x.invoices.length === N && x; }, 30000, "reading 45");
+  const r = await call("POST", `/batches/${b.id}/calculate-tax`, {});
+  assert.equal(r.calculated, N);
+  assert.equal(r.remaining, 0);
+  const full = await Promise.all(rev.invoices.map((i) => call("GET", `/invoices/${i.id}`)));
+  assert.ok(full.every((i) => Array.isArray(i.tax_lines) && i.tax_lines.length), "every invoice has its tax, not just the first 40");
+  // editing the last invoice must not throw its tax away
+  const last = full[full.length - 1];
+  const saved = await call("PATCH", `/invoices/${last.id}`, { data: { narration: "corrected" } });
+  const again = await call("GET", `/invoices/${last.id}`);
+  assert.ok(Array.isArray(again.tax_lines) && again.tax_lines.length, "tax is recalculated on save, not cleared");
+  await call("DELETE", `/batches/${b.id}`);
+});
+
 test("admin: forced local repost of the same Purchase is blocked by live Tally duplicate check", async()=>{
   const id=postedPurchaseInvoiceId;
   assert.ok(id);

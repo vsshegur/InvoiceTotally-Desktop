@@ -413,3 +413,8 @@ in an audit of the recent accounting modules:
 ## Version 4.3.6 — more than 40 invoice files in one upload
 - Uploading 49 files ended with “Cannot read properties of undefined (reading 'id')”: the app has always accepted only 40 files per batch and dropped the rest silently, and the upload screen then crashed on file 41. One batch now takes up to 300 files, and if a batch ever can't take them all, the screen says so in plain words instead.
 - (The 4.3.4 smaller installer was not the cause: it contains exactly the same 64 files as 4.3.0, checked file by file.)
+
+## Version 4.3.7 — tax now calculates for every invoice, and stays after you correct one
+- **Problem:** in a batch of more than 40 invoices, the Tax step's *Recalculate* only ever worked on the first 40, so the rest stayed “not calculated” however often it was pressed. Saving a corrected invoice also threw away its tax, sending it straight back to “calculate tax” (the invoice page said “Lines, taxes and total add up” while the batch still said “Needs fixing: calculate tax”).
+- **Fix:** *Recalculate* now covers every invoice in the batch. Saving an invoice recalculates its tax immediately, keeping the tax ledgers you had already chosen.
+- If a batch already shows “not calculated”, update and press *Recalculate* once.
