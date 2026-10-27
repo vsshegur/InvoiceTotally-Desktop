@@ -109,6 +109,11 @@ test("admin: signs in, adds a user with limits and credits, sets up a company fr
 });
 
 test("admin: an invoice is read through the service and posted straight to Tally", async () => {
+  // a month's worth of invoices (49 files) goes into one batch: every file gets its own id
+  const many = await call("POST", `/companies/${cid}/batches`, { voucher_type: "Purchase", files: Array.from({ length: 49 }, (_, i) => ({ filename: `inv${i}.pdf`, pages: 1 })) });
+  assert.equal(many.files.length, 49);
+  assert.ok(many.files.every((f) => f.id));
+  await call("DELETE", `/batches/${many.id}`);
   const b = await call("POST", `/companies/${cid}/batches`, { voucher_type: "Purchase", files: [{ filename: "bill.pdf", pages: 1 }] });
   await call("POST", `/files/${b.files[0].id}/pages`, { idx: 0, image_b64: JPEG });
   await call("POST", `/batches/${b.id}/start`, {});

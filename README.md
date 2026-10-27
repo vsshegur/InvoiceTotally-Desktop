@@ -409,3 +409,7 @@ in an audit of the recent accounting modules:
 - Pieces of one narration are joined sensibly: a UPI handle cut inside its domain (`…@a` + `xl/Pa` → `…@axl/Pa`), a cut after a dash or slash (`IMPS-` + `OUT/…`), and a long number cut over two lines (`…4526020000041` + `1`).
 - A bare "Page No 1" line at the foot of a page is no longer added to the last narration.
 - Checked on made-up PDF statements (borders and no borders; text at the top, middle or bottom of the cell; a 40-row, two-page statement) in a real browser: every narration exact. The same files read wrongly with 4.3.4.
+
+## Version 4.3.6 — more than 40 invoice files in one upload
+- Uploading 49 files ended with “Cannot read properties of undefined (reading 'id')”: the app has always accepted only 40 files per batch and dropped the rest silently, and the upload screen then crashed on file 41. One batch now takes up to 300 files, and if a batch ever can't take them all, the screen says so in plain words instead.
+- (The 4.3.4 smaller installer was not the cause: it contains exactly the same 64 files as 4.3.0, checked file by file.)

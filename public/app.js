@@ -964,6 +964,7 @@ async function viewUpload(cid) {
       batch = await api(`/companies/${cid}/batches`, { body: { voucher_type: st.type, source: st.source,
         period_mode:st.period_mode,expected_period:st.period_mode==="month"?[...st.months].sort().join(","):null,
         files: prepared.map((x) => ({ filename: x.f.name, pages: x.pages?.length || 0 })) } });
+      if ((batch.files || []).length < prepared.length) throw new Error(`Only ${(batch.files || []).length} of ${prepared.length} files can go in one upload. Upload the rest as a second batch.`);
       const totalPages = prepared.reduce((a, x) => a + (x.pages?.length || 0), 0);
       let sent = 0;
       for (const [n, x] of prepared.entries()) {
