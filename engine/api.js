@@ -327,9 +327,11 @@ route("GET", "/api/companies/:cid/batches", async ({ D, p }) => {
   }
   return json(rows);
 });
+export const MAX_FILES_PER_BATCH = 300;
 async function createBatch(D, cid, body, { source, label = "" } = {}) {
   const vt = body.voucher_type === "Sales" ? "Sales" : "Purchase";
-  const files = (body.files || []).slice(0, 40);
+  // This runs on the person's own PC, so a big month of invoices in one go is fine. The client is told how many were accepted.
+  const files = (body.files || []).slice(0, MAX_FILES_PER_BATCH);
   const mode=body.period_mode||"mixed";
   if(!["mixed","month"].includes(mode))throw new HttpError(400,"Choose a specific month/year or regular mixed invoices");
   const picked=[...new Set(String(body.expected_period||"").split(",").map(x=>x.trim()).filter(Boolean))].sort();
