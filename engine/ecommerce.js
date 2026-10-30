@@ -24,8 +24,8 @@ function validateFiles(files, platform) {
   let count = 0;
   for (const [key,f] of Object.entries(files || {})) {
     if (!["sales","returns","invoice","flipkart","b2b","b2c"].includes(key) || !f ||
-        typeof f.name !== "string" || !/\.xlsx$/i.test(f.name) || !Array.isArray(f.sheets) || !f.sheets.length ||
-        f.sheets.length > 50) throw new EcommerceError("Invalid .xlsx workbook: " + key);
+        typeof f.name !== "string" || !/\.(xlsx|csv)$/i.test(f.name) || !Array.isArray(f.sheets) || !f.sheets.length ||
+        f.sheets.length > 50) throw new EcommerceError("Invalid .xlsx / .csv report: " + key);
     for (const s of f.sheets) {
       if (!s || typeof s.name !== "string" || !Array.isArray(s.rows) || s.rows.length > 100000)
         throw new EcommerceError("Invalid or oversized sheet in " + f.name);

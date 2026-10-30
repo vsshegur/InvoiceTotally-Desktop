@@ -60,8 +60,8 @@ async function viewEcommerceUpload(cid) {
       : platform==='FL'
       ? '<div class="field"><label>Flipkart GSTR-1 GST report (.xlsx, includes Section 7/5B)</label>' +
         '<input class="in" id="ecFlipkart" type="file" accept=".xlsx" required></div>'
-      : '<div class="field"><label>Amazon GST B2B report (.xlsx, GST_MTR_B2B)</label><input class="in" id="ecB2b" type="file" accept=".xlsx"></div>' +
-        '<div class="field"><label>Amazon GST B2C report (.xlsx, GST_MTR_B2C)</label><input class="in" id="ecB2c" type="file" accept=".xlsx"></div>' +
+      : '<div class="field"><label>Amazon GST B2B report (.csv or .xlsx, GST_MTR_B2B)</label><input class="in" id="ecB2b" type="file" accept=".csv,.xlsx"></div>' +
+        '<div class="field"><label>Amazon GST B2C report (.csv or .xlsx, GST_MTR_B2C)</label><input class="in" id="ecB2c" type="file" accept=".csv,.xlsx"></div>' +
         '<p class="muted small">Upload at least one. Most sellers only need the B2C report; add B2B too if you have registered-buyer sales. From Seller Central: Reports → Tax Document Library → GST reports.</p>';
   };
   $('#ecPlatform').onchange=fields;fields();
@@ -79,7 +79,7 @@ async function viewEcommerceUpload(cid) {
       const files={};
       for(const [key,f] of Object.entries(sources)){
         if(!f)continue;
-        if(!/\.xlsx$/i.test(f.name))throw new Error(f.name+': save the workbook as .xlsx first');
+        if(!/\.(xlsx|csv)$/i.test(f.name))throw new Error(f.name+': choose the .xlsx or .csv report as downloaded');
         if(f.size>20*1024*1024)throw new Error(f.name+': workbook exceeds the 20 MB local limit');
         const sheets=await Ingest.workbook(f);
         files[key]={name:f.name,sheets};

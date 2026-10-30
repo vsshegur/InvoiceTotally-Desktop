@@ -223,8 +223,12 @@ export async function autoMatch(D, invId, onlyUnresolved = false) {
   const lineStmts = await Promise.all(inv.lines.map(async (l) => {
     const upd = {};
     if (voucherLedger && !(l.kind === "item" && l.stock_state === "resolved")) {
-      if (l.kind !== "ledger" || l.ledger_state !== "resolved")
-        return D.updateStmt("lines", l.id, { kind: "ledger", stock_item: null, stock_state: null, ledger: voucherLedger, ledger_state: "resolved" });
+      if (l.kind !== "ledger" || l.ledger_state !== "resolved") {
+        // a fee remembered on its own (Flipkart "Shipping fee" → its ledger) wins over "every line from this party"
+        const own = await M.aliasGet(D, comp.id, "party_charge", M.partyChargeKey(vt, party, l.description));
+        const ledger = own && (await D.first("SELECT 1 x FROM masters WHERE company_id=? AND kind='ledger' AND name=?", comp.id, own)) ? own : voucherLedger;
+        return D.updateStmt("lines", l.id, { kind: "ledger", stock_item: null, stock_state: null, ledger, ledger_state: "resolved" });
+      }
       return null;
     }
     if (l.kind === "item" && l.stock_state !== "resolved") {

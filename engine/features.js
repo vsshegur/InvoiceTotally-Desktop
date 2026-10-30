@@ -51,7 +51,7 @@ export function featuresForRequest(method, path, body, createsMaster = false) {
   if (method === "PATCH" && /^\/api\/companies\/[^/]+$/.test(p)) out.push("company_settings");
   if (/^\/api\/backups?(\/|$)/.test(p)) out.push("backup_restore");
   if (/\/xml$/.test(p)) out.push("export_xml");
-  if (createsMaster || /\/(ensure-ledger|create-supplier)$/.test(p)) out.push("create_masters");
+  if (createsMaster || /\/(ensure-ledger|create-suppliers?)$/.test(p)) out.push("create_masters");
   if (method === "POST" && /^\/api\/companies\/[^/]+\/batches$/.test(String(path))) out.push(body?.source === "excel" ? "invoice_excel" : "invoice_images");
   return out;
 }

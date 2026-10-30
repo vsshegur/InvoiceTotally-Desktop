@@ -41,6 +41,13 @@ export async function create(D, cid, body) {
   return { id };
 }
 
+/** The rate split as stored: [{rt, txval, igst, cgst, sgst, cess}] (null when the file had no rate per line). */
+function rateJson(list) {
+  if (!Array.isArray(list) || !list.length) return null;
+  const out = list.slice(0, 20).map((x) => ({ rt: r2(x?.rt), txval: r2(x?.txval), igst: r2(x?.igst), cgst: r2(x?.cgst), sgst: r2(x?.sgst), cess: r2(x?.cess) }))
+    .filter((x) => Number.isFinite(x.rt) && x.rt >= 0 && x.rt <= 100);
+  return out.length ? JSON.stringify(out) : null;
+}
 export async function addDocs(D, rid, body) {
   const g = await getReturn(D, rid);
   if (g.stage !== "uploading") throw new GstError(400, "This GSTR-2B is already saved");
@@ -54,7 +61,8 @@ export async function addDocs(D, rid, body) {
       ctin: str(d.ctin, 15).toUpperCase(), name: str(d.name, 200), num: str(d.num, 60), dt: iso(d.dt), onum: str(d.onum, 60), odt: iso(d.odt),
       note: d.note === "C" || d.note === "D" ? d.note : "", typ: str(d.typ, 20), val: r2(d.val), txval: r2(d.txval), igst: r2(d.igst), cgst: r2(d.cgst),
       sgst: r2(d.sgst), cess: r2(d.cess), pos: str(d.pos, 40), rev: d.rev ? 1 : 0, itc: d.itc === "N" ? "N" : "Y", rsn: str(d.rsn, 60),
-      supprd: str(d.supprd, 20), supfildt: iso(d.supfildt), compare: d.compare === false ? 0 : 1, status: d.compare === false ? "info" : "new" }));
+      supprd: str(d.supprd, 20), supfildt: iso(d.supfildt), compare: d.compare === false ? 0 : 1, status: d.compare === false ? "info" : "new",
+      rates: rateJson(d.rates) }));
   });
   for (let i = 0; i < stmts.length; i += 90) await D.batch(stmts.slice(i, i + 90));
   return { ok: true, stored: stmts.length };

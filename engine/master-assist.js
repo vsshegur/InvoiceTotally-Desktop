@@ -5,7 +5,7 @@ import * as P from "./pipeline.js";
 import { jload, now } from "./db.js";
 
 export class MappingError extends Error { constructor(message,status=400){super(message);this.status=status;} }
-const out=x=>new Response(JSON.stringify(x),{headers:{"content-type":"application/json","cache-control":"no-store"}});
+const out=(x,status=200)=>new Response(JSON.stringify(x),{status,headers:{"content-type":"application/json","cache-control":"no-store"}});
 const clean=s=>String(s||"").trim();
 const same=(a,b)=>clean(a).toLowerCase()===clean(b).toLowerCase();
 const normUnit=s=>clean(s).toUpperCase().replace(/[^A-Z0-9]/g,"");
@@ -132,5 +132,17 @@ export function smartRoutes(route,authorize){
   route("GET","/api/companies/:cid/smart-maps/export",async ({D,env,p})=>{
     await authorize(D,env,p.cid);
     return out({mappings:await D.all("SELECT kind,key,value FROM aliases WHERE company_id=? ORDER BY kind,key",p.cid)});
+  });
+  // Forget one remembered choice (e.g. a "every line from this party" rule that sent all Flipkart fees to one ledger).
+  // Only the app's memory changes; nothing in Tally.
+  route("POST","/api/companies/:cid/smart-maps/forget",async ({D,env,p,body})=>{
+    await authorize(D,env,p.cid);
+    const kind=String(body?.kind||""),key=String(body?.key??"");
+    if(!kind)return out({error:"Choose a remembered choice"},400);
+    const r=await D.first("SELECT value FROM aliases WHERE company_id=? AND kind=? AND key=?",p.cid,kind,key);
+    if(!r)return out({error:"Already forgotten"},404);
+    await D.run("DELETE FROM aliases WHERE company_id=? AND kind=? AND key=?",p.cid,kind,key);
+    await D.log("Forgot remembered choice: "+kind+" "+key+" → "+r.value,{});
+    return out({ok:true});
   });
 }

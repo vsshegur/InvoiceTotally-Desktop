@@ -7,6 +7,16 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/** The GSTIN check of an invoice's party (see engine/gstin-check.js): ✓ Verified / ✓ Check digit OK · new / ⚠ / ✗ Misread. */
+function gstinBadge(ck, withDetail = false) {
+  if (!ck) return "";
+  const cls = { verified: "good", valid: "good", mismatch: "warn", invalid: "bad", missing: "muted" }[ck.status] || "";
+  const sug = (ck.suggestions || []).map((x) => `${x.gstin}${x.ledger ? " (" + x.ledger + ")" : ""}`).join(", ");
+  const title = ck.detail + (sug ? " Did you mean " + sug + "?" : "");
+  return `<span class="${cls}" title="${esc(title)}" style="white-space:nowrap">${esc(ck.label)}</span>` +
+    (withDetail ? `<div class="small muted" style="max-width:340px">${esc(ck.detail)}</div>` : "") +
+    (sug ? `<div class="small bad">Did you mean ${esc(sug)}?</div>` : "");
+}
 const money = (n) => (n === null || n === undefined || n === "" || isNaN(n)) ? "—" :
   (Number(n) < 0 ? "-" : "") + "₹" + Math.abs(Number(n)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1041,9 +1051,10 @@ async function viewBatch(bid) {
       <b>${esc(f.filename)}</b>: ${esc(f.note)} <span class="muted">(try ${f.attempts || 1} of 4 — it tries again by itself in a moment)</span></div></div>`).join("")}
     ${failedFiles.map((f) => `<div style="padding:8px 16px 0"><div class="alert bad">${esc(f.filename)}: ${esc(f.error || "failed")}</div></div>`).join("")}
     ${b.invoices.length ? `<div style="padding:14px 16px 4px" class="eyebrow">${b.invoices.length} invoice${b.invoices.length > 1 ? "s" : ""}</div>
-    <table class="grid"><thead><tr><th>Invoice</th><th>Date</th><th>Party</th><th class="num">Lines</th><th class="num">Total</th><th>State</th></tr></thead><tbody>
+    <table class="grid"><thead><tr><th>Invoice</th><th>Date</th><th>Party</th><th title="Check digit of the GSTIN read from the invoice, and whether your Tally masters or GSTR-2B already have it">GSTIN check</th><th class="num">Lines</th><th class="num">Total</th><th>State</th></tr></thead><tbody>
     ${b.invoices.map((i) => `<tr class="click" data-href="#/i/${i.id}"><td><b>${esc(i.number || "—")}</b>${i.warnings.length ? ` <span class="warn" title="${esc(i.warnings.join("\n"))}">⚠</span>` : ""}${i.date_review?.needs_review?` <span class="bad" title="${esc(i.date_review.reasons.join("\n"))}">⚠ Have a look</span>`:""}</td>
       <td class="mono">${fmtDate(i.date)}</td><td>${esc(i.party_name || "—")}${i.party_ledger ? ` <span class="faint">→</span> <span class="muted">${esc(i.party_ledger)}</span>` : ""}</td>
+      <td>${i.party_gstin ? `<div class="mono small">${esc(i.party_gstin)}</div>` : ""}${gstinBadge(i.gstin_check)}</td>
       <td class="num">${i.lines || ""}</td><td class="num">${["pending", "reading"].includes(i.status) ? "" : money(i.total)}</td>
       <td class="${i.status === "synced" ? "good" : i.status === "failed" || i.status === "error" ? "bad" : ""}">${["pending", "reading"].includes(i.status) ? '<span class="spin" style="display:inline-block;vertical-align:-2px"></span> ' : ""}${esc(i.state)}${i.error ? `<div class="muted" style="font-size:12px">${esc(i.error)}</div>` : ""}</td></tr>`).join("")}
     </tbody></table>` : ""}`;
@@ -1174,7 +1185,7 @@ function reviewParty(ctx) {
     const v = vis();
     sel = Math.min(sel, Math.max(0, v.length - 1));
     const rows = v.length ? `<table class="grid"><thead><tr><th>Party on invoice</th><th>Tally ledger</th><th class="num">Invoices</th><th class="num">Amount</th></tr></thead><tbody>
-      ${v.map((g, i) => `<tr class="click ${i === sel ? "sel" : ""}" data-i="${i}"><td><b>${esc(g.name || "(no name)")}</b><div class="mono muted" style="font-size:12px">${esc(g.gstin || "no GSTIN")} ${g.gstin_valid === false ? '<span class="bad">· invalid</span>' : ""}</div></td>
+      ${v.map((g, i) => `<tr class="click ${i === sel ? "sel" : ""}" data-i="${i}"><td><b>${esc(g.name || "(no name)")}</b><div class="mono muted" style="font-size:12px">${esc(g.gstin || "no GSTIN")}</div>${gstinBadge(g.gstin_check)}</td>
       <td>${g.ledger ? `<span class="state-resolved">${esc(g.ledger)}</span><div class="muted" style="font-size:12px">${esc(g.method || "")}</div>` : g.proposed ? `<span class="state-proposed">${esc(g.proposed)}</span> <span class="muted">proposed</span>` : `<span class="state-suspense">Suspense</span> <span class="muted">needs a ledger</span>`}</td>
       <td class="num">${g.invoice_ids.length}</td><td class="num">${money(g.total)}</td></tr>`).join("")}</tbody></table>`
       : `<div class="empty">${filter === "need" ? "Every party is matched. ✓" : "Nothing resolved yet."}</div>`;
@@ -1193,7 +1204,7 @@ function reviewParty(ctx) {
       });
       panel = `<div class="box"><div class="bh"><span class="eyebrow">Extracted party</span><span><a class="btn sm" id="fixParty" title="Correct a misread name or GSTIN">✎ Fix</a> <a class="btn sm" href="#/i/${g.invoice_ids[0]}">View invoice ↗</a></span></div><div class="bb">
         <div class="big">${esc(g.name || "(no name)")}</div>
-        <div class="kv"><div><span>GSTIN</span><span class="mono">${esc(g.gstin || "—")} ${g.gstin_valid === true ? '<span class="good">✓</span>' : g.gstin_valid === false ? '<span class="bad">checksum fails</span>' : ""}</span></div>
+        <div class="kv"><div><span>GSTIN</span><span class="mono">${esc(g.gstin || "—")}</span></div><div><span>Check</span><span>${gstinBadge(g.gstin_check, true)}${(g.gstin_check?.suggestions || []).map((x) => ` <button class="btn sm" data-usegstin="${esc(x.gstin)}">Use ${esc(x.gstin)}</button>`).join("")}</span></div>
           <div><span>State</span><span>${esc(g.state || "—")}</span></div><div><span>Found on</span><span>${g.invoice_ids.length} invoice(s)</span></div></div>
         ${g.address ? `<div class="muted" style="margin-top:8px;font-size:13px">${esc(g.address)}</div>` : ""}
         <p class="muted small" style="margin-top:8px">If the AI misread the name or GSTIN, fix it here first — the correction is saved on every invoice from this party and used for the ledger below.</p></div></div>
@@ -1213,6 +1224,10 @@ function reviewParty(ctx) {
       $("#apply").onclick = apply; keymap.enter = apply;
     }
     $("#fixParty")?.addEventListener("click", (e) => { e.preventDefault(); fixPartyModal(bid, g); });
+    $$("[data-usegstin]").forEach((bt) => bt.onclick = async () => {
+      await act(() => api(`/batches/${bid}/party-fix`, { body: { invoice_ids: g.invoice_ids, gstin: bt.dataset.usegstin } }), "GSTIN corrected on " + g.invoice_ids.length + " invoice(s)");
+      route();
+    });
   };
   draw();
 }
@@ -1305,7 +1320,8 @@ function reviewLines(ctx, mode) {
       panel = extracted + `<div class="pickers ${showStock && mode === "stock" ? "" : "one"}">${showStock ? stockPk.html : ""}${mode === "ledger" || g.kind === "ledger" ? ledgerPk.html : showStock ? ledgerPk.html : ""}</div>` +
         willSet(`<span id="willtxt"></span>`, `<button class="btn primary" id="apply">Apply <kbd>↵</kbd></button>`,
           mode === "ledger" && g.kind === "item" ? `<label class="muted" style="font-size:12.5px;display:flex;gap:6px"><input type="checkbox" id="remParty"> Use for everything from this party</label>`
-          : g.kind === "ledger" ? `<label class="muted" style="font-size:12.5px;display:flex;gap:6px" title="For suppliers of stationery, packing material, printing, services: their next bills skip the Stock step and post as a voucher"><input type="checkbox" id="remVoucher"> Always post this party's bills to this ledger, as a voucher</label>` : "");
+          : g.kind === "ledger" ? `<label class="muted" style="font-size:12.5px;display:flex;gap:6px"><input type="checkbox" id="remFee" checked> Remember “${esc(g.description)}” → this ledger for this party (other lines keep their own ledgers)</label>` +
+            `<label class="muted" style="font-size:12.5px;display:flex;gap:6px" title="Only for suppliers whose bills have one kind of line (stationery, printing). Fees remembered on their own still go to their own ledgers."><input type="checkbox" id="remVoucher"> Every line from this party, whatever it is, goes to this ledger</label>` : "");
     }
     twoPane(ctx, {
       filters: `<div class="filters"><input class="in" id="q" placeholder="Description, HSN, item…" style="max-width:220px" value="${esc(q)}">
@@ -1339,7 +1355,7 @@ function reviewLines(ctx, mode) {
       await act(async () => {
         if (mode === "stock" && g.kind === "item" && pickStock) await api(`/batches/${bid}/stock`, { body: { line_ids: g.line_ids, stock_item: pickStock } });
         if (pickLedger && (mode === "ledger" || pickLedger !== g.ledger || g.ledger_state !== "resolved"))
-          await api(`/batches/${bid}/ledger`, { body: { line_ids: g.line_ids, ledger: pickLedger, remember_for_party: $("#remParty")?.checked, remember_party_voucher: $("#remVoucher")?.checked } });
+          await api(`/batches/${bid}/ledger`, { body: { line_ids: g.line_ids, ledger: pickLedger, remember_for_party: $("#remParty")?.checked, remember_party_voucher: $("#remVoucher")?.checked, remember_fee: $("#remFee") ? $("#remFee").checked : undefined } });
       }, "Saved");
       route();
     };
@@ -1517,7 +1533,7 @@ async function viewInvoice(iid) {
         <div class="small muted" style="margin-top:4px">This is mandatory for handwritten or suspicious dates. If the date is outside the selected month, correct it or use the regular mixed-invoice mode in a new batch.</div>
       </div>`:""}
       <div class="row">${f("party_name", b.voucher_type === "Purchase" ? "Supplier name" : "Customer name")}
-        <div class="field"><label>GSTIN ${inv.gstin_valid === true ? '<span class="good">✓ valid</span>' : inv.gstin_valid === false ? '<span class="bad">checksum fails</span>' : ""}</label><input class="in mono" data-h="party_gstin" value="${esc(h.party_gstin || "")}" maxlength="15" ${ro}></div></div>
+        <div class="field"><label>GSTIN ${gstinBadge(inv.gstin_check)}</label><input class="in mono" data-h="party_gstin" value="${esc(h.party_gstin || "")}" maxlength="15" ${ro}></div></div>
       <div class="row">${f("party_state", "State")}${f("place_of_supply", "Place of supply")}</div>
       <div class="field"><label>Tally ledger</label><div>${inv.party_ledger ? `<span class="state-resolved">${esc(inv.party_ledger)}</span> <span class="muted">· ${esc(inv.party_method || "")}</span>` : `<span class="state-suspense">not matched yet</span>`}</div></div>
       <h2 style="margin-top:14px">Lines</h2>

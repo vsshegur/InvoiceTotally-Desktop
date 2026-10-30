@@ -177,6 +177,21 @@ test("Amazon batch posts through the same prepare/mapping/post pipeline as Meesh
   assert.match(j.payload,/Amazon consolidated/);
   assert.equal(TL.validatePosting(j.payload,"VIPUL TEXTILES"),"Sales voucher");
 });
+test("Amazon's GST report downloaded as CSV reads the same as the Excel one", async()=>{
+  const vm=await import("node:vm"),fs=await import("node:fs");
+  const ctx={};vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(new URL("../public/ingest.js",import.meta.url),"utf8")+";globalThis.Ingest=Ingest;",ctx);
+  const csv="\uFEFF"+azHead.map(h=>'"'+h+'"').join(",")+"\r\n"+
+    [GSTIN,"INV21","2026-09-06 10:15:00","Shipment","630260","2","1000.00","MAHARASHTRA","0.025","25.00","0.025","25.00","0","0","1050.00"].map(x=>'"'+x+'"').join(",")+"\r\n";
+  const rows=ctx.Ingest.csvRows(csv);
+  assert.equal(rows.length,2);
+  assert.equal(rows[0][0],"Seller Gstin");
+  const created=await X.prepare(D,"ec-c",{platform:"AZ",year:2026,month:9,files:{b2b:{name:"GST_MTR_B2B-sep.csv",sheets:[{name:"GST_MTR_B2B-sep",rows}]}}});
+  assert.equal(created.vouchers,1);
+  const v=(await X.view(D,created.id)).vouchers[0];
+  assert.equal(v.taxable,1000);
+  await X.remove?.(D,created.id);
+});
 test("an uncertain posting is rechecked read-only before a manual retry is allowed", async()=>{
   const b=(await X.list(D,"ec-c")).find(x=>x.period==="2026-06");
   const original=(await X.view(D,b.id)).vouchers[0];

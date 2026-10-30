@@ -39,6 +39,47 @@ async function viewDashboard(){
     catch(e){toast(e.message,true);btn.disabled=false;}
   });
 }
+// What the app remembers from your review choices, in words, with a Forget button for each.
+const MEMORY_KIND={
+  party_charge:["Fee / charge line, for one party",k=>{const [vt,party,...d]=k.split(":");return "“"+d.join(":")+"” on "+party+"’s "+vt+" bills";}],
+  charge:["Fee / charge line, any party",k=>"“"+k+"”"],
+  voucher:["Every line from a party",k=>{const [vt,...party]=k.split(":");return "All lines of "+party.join(":")+"’s "+vt+" bills";}],
+  ledger:["Item ledger",k=>{const [w,vt,...r]=k.split(":");return (w==="party"?"Items from "+r.join(":"):w==="party_item"?"Item "+r.slice(1).join(":")+" from "+r[0]:"Item "+r.join(":"))+" ("+vt+")";}],
+  stock:["Stock item",k=>"“"+k+"”"],
+  stock_party:["Stock item, for one party",k=>k],
+  party:["Party ledger",k=>k.replace(/^gstin:/,"GSTIN ").replace(/^name:/,"Name ")],
+  tax:["Tax ledger",k=>k.replace(/:/g," · ")],
+};
+async function rememberedChoices(c,el){
+  const box=document.createElement("div");
+  box.className="card";box.style.cssText="padding:16px;margin-top:16px";
+  el.appendChild(box);
+  let list=[],q="";
+  const draw=()=>{
+    const rows=list.filter(m=>!q||(m.kind+" "+m.key+" "+m.value).toLowerCase().includes(q));
+    box.innerHTML='<h3 style="margin:0 0 6px">Remembered choices</h3>'+
+      '<p class="muted small">What the app fills in by itself on new invoices. Forget one that is wrong — for example a rule that sent every Flipkart fee to one ledger. Nothing in Tally changes.</p>'+
+      '<input class="in" id="memQ" placeholder="Search party, line, ledger…" value="'+esc(q)+'" style="max-width:300px;margin:6px 0">'+
+      (rows.length?'<div style="overflow:auto;max-height:520px"><table class="grid"><thead><tr><th>Kind</th><th>When the invoice has</th><th>The app uses</th><th></th></tr></thead><tbody>'+
+        rows.slice(0,500).map(m=>{const [label,fmt]=MEMORY_KIND[m.kind]||[m.kind,k=>k];
+          return '<tr><td class="small">'+esc(label)+'</td><td>'+esc(fmt(m.key))+'</td><td><b>'+esc(m.value)+'</b></td>'+
+          '<td><button class="btn sm" data-forget="'+esc(m.kind)+'" data-key="'+esc(m.key)+'">Forget</button></td></tr>';}).join("")+
+        '</tbody></table></div>'+(rows.length>500?'<p class="muted small">Showing 500 of '+rows.length+' — search to narrow.</p>':''):
+        '<p class="muted">'+(list.length?"Nothing matches.":"Nothing remembered yet.")+'</p>');
+    const input=box.querySelector("#memQ");
+    input.oninput=()=>{q=input.value.trim().toLowerCase();const pos=input.selectionStart;draw();const n=box.querySelector("#memQ");n.focus();n.setSelectionRange(pos,pos);};
+    box.querySelectorAll("[data-forget]").forEach(btn=>btn.onclick=async()=>{
+      const m=list.find(x=>x.kind===btn.dataset.forget&&x.key===btn.dataset.key);
+      if(!m||!confirm("Forget this?\n\n"+((MEMORY_KIND[m.kind]||[m.kind,k=>k])[1](m.key))+" → "+m.value))return;
+      try{await api("/companies/"+c.id+"/smart-maps/forget",{body:{kind:m.kind,key:m.key}});list=list.filter(x=>x!==m);toast("Forgotten");draw();}
+      catch(e){toast(e.message,true);}
+    });
+  };
+  try{list=(await api("/companies/"+c.id+"/smart-maps/export")).mappings||[];}catch(e){list=[];}
+  const order=["voucher","party_charge","charge","ledger","party","stock_party","stock","tax"];
+  list.sort((a,b)=>order.indexOf(a.kind)-order.indexOf(b.kind));
+  draw();
+}
 async function companySmartMappings(c,el){
   const data=await api("/companies/"+c.id+"/smart-maps");
   const rows=data.pending||[];
@@ -62,6 +103,7 @@ async function companySmartMappings(c,el){
           '<td><button class="btn sm" data-remember="'+i+'">Remember</button></td></tr>';
       }).join('')+'</tbody></table></div>':
       '<div class="card empty">All reviewed invoice parties, stock items and charge ledgers are resolved.</div>');
+  rememberedChoices(c,el);
   $('#ccBackfillMappings')?.addEventListener('click',async()=>{
     const btn=$('#ccBackfillMappings');btn.disabled=true;
     try{
