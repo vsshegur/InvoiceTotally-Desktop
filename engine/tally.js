@@ -20,7 +20,7 @@ const companyVar = (c) => (c ? `<SVCURRENTCOMPANY>${esc(c)}</SVCURRENTCOMPANY>` 
 export const EXPORTS = {
   export_groups: ["Group", ["Name", "Parent"]],
   export_units: ["Unit", ["Name", "IsSimpleUnit"]],
-  export_ledgers: ["Ledger", ["Name", "Parent", "PartyGSTIN", "LedStateName", "StateName", "GSTRegistrationType", "LedGSTRegDetails"]],
+  export_ledgers: ["Ledger", ["Name", "Parent", "PartyGSTIN", "LedStateName", "StateName", "GSTRegistrationType", "LedGSTRegDetails", "TaxType", "GSTDutyHead", "GSTApplicable", "GSTTypeOfSupply"]],
   export_stock: ["StockItem", ["Name", "Parent", "BaseUnits", "GSTDetails", "HSNDetails"]],
 };
 

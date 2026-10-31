@@ -11,6 +11,10 @@ export const FEATURES = [
   { group: "Reconcile", key: "gstr2b", label: "GSTR-2B matching", help: "Portal purchase data against Tally." },
   { group: "Reconcile", key: "gstcontrol", label: "GST reconciliation", help: "GSTR-1 / 3B / 2B against the books." },
   { group: "Reconcile", key: "intercompany", label: "Inter-company matching", help: "Two of your companies agreeing with each other." },
+  { group: "GST & month-end", key: "month_end", label: "Month-end closing", help: "Checklist and GSTR-3B estimate for each month." },
+  { group: "GST & month-end", key: "supplier_followup", label: "Supplier follow-up", help: "Invoices in Tally that suppliers have not filed in GSTR-2B." },
+  { group: "GST & month-end", key: "tally_health", label: "Tally ledger health", help: "Ledgers and items that will put vouchers in GSTR-3B uncertain transactions." },
+  { group: "Parties & bills", key: "itc_180", label: "180-day ITC alert", help: "Unpaid supplier bills whose ITC must be reversed after 180 days." },
   { group: "Parties & bills", key: "ageing", label: "Outstanding & ageing", help: "Who owes what, and how old it is." },
   { group: "Parties & bills", key: "share", label: "WhatsApp & PDF sharing", help: "Send outstanding statements to parties." },
   { group: "Parties & bills", key: "masters", label: "Masters screen", help: "Browse ledgers and stock items read from Tally." },
@@ -39,6 +43,10 @@ export function featureForPath(path) {
   if (/\/outstanding(\/|$)|party-contacts|bill-ageing/.test(p)) return "ageing";
   if (/smart-maps/.test(p)) return "smartmaps";
   if (/action-center/.test(p)) return "actions";
+  if (/\/month-end(\/|$)/.test(p)) return "month_end";
+  if (/\/followups(\/|$)/.test(p)) return "supplier_followup";
+  if (/\/tally-health(\/|$)/.test(p)) return "tally_health";
+  if (/\/itc-180(\/|$)/.test(p)) return "itc_180";
   return "";
 }
 /** Features a request needs on top of its path: starting an invoice upload needs the matching source switched on. */

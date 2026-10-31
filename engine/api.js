@@ -1,4 +1,6 @@
 // InvoiceTotally for Windows — the JSON API behind the app window (served on this PC only; see desktop/main.mjs).
+import * as HEALTH from "./tally-health.js";
+import * as TOOLS from "./accounting-tools.js";
 import { gstinContext, invoiceGstinCheck } from "./gstin-check.js";
 import { db, newId, now, jload } from "./db.js";
 import { featuresForRequest, cleanDisabled, FEATURES } from "./features.js";
@@ -115,7 +117,7 @@ function invoiceSummary(inv, gctx = null) {
     warnings: h.warnings || [], date_review:inv.date_review||invoiceDateReview(inv), page_ids: inv.page_ids, rechecked: !!h.rechecked, ai: h.ai || null,
     // every line to a ledger (stationery, packing material…): posted as an accounting voucher, not an item invoice
     as_voucher: inv.lines.length > 0 && inv.lines.every((l) => l.kind === "ledger"),
-    party_gstin: h.party_gstin || "", ledger_gstin: inv.party_ledger_gstin || null, gstin_from_tally: !!h.gstin_from_tally, gstin_check: gctx && !["pending", "reading", "error"].includes(inv.status) ? invoiceGstinCheck(inv, gctx) : null };
+    gst_check: inv.gst_check || null, party_gstin: h.party_gstin || "", ledger_gstin: inv.party_ledger_gstin || null, gstin_from_tally: !!h.gstin_from_tally, gstin_check: gctx && !["pending", "reading", "error"].includes(inv.status) ? invoiceGstinCheck(inv, gctx) : null };
 }
 
 const REVIEWABLE = ["review", "failed"];
@@ -778,6 +780,8 @@ DASH.dashboardRoutes(route,requireLicence,authorizeCompany);
 AW.accountingRoutes(route,authorizeCompany);
 OUT.outstandingRoutes(route,authorizeCompany);
 GC.gstControlRoutes(route,authorizeCompany);
+HEALTH.healthRoutes(route,authorizeCompany);
+TOOLS.toolsRoutes(route,authorizeCompany);
 // Read-only local recovery diagnostics: never exposes licence keys, raw bank data or invoice images.
 route("GET","/api/diagnostics",async({env,D})=>{
   let database="unknown";
