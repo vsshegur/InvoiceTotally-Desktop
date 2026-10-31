@@ -115,15 +115,16 @@ def bank_entries(ledger):
     return f"<ENVELOPE><BODY><DATA><COLLECTION>{''.join(out)}</COLLECTION></DATA></BODY></ENVELOPE>"
 
 
-def ecommerce_entries(date):
-    """Tally's read-only per-day Sales/Credit Note collection for duplicate prevention."""
+def ecommerce_entries(date, to=None):
+    """Tally's read-only Sales/Purchase collection for one day (or a date range) for duplicate prevention."""
     out = []
     for content in VOUCHERS:
         try:
             v = ET.fromstring(re.sub(r"&#4;", "", content)).find(".//VOUCHER")
         except ET.ParseError:
             continue
-        if v is None or v.findtext("DATE") != date:
+        d = v.findtext("DATE") if v is not None else None
+        if v is None or (d != date if not to else not (date <= (d or "") <= to)):
             continue
         out.append("<VOUCHER><DATE>" + esc(v.findtext("DATE") or "") + "</DATE>" +
                    "<VOUCHERNUMBER>" + esc(v.findtext("VOUCHERNUMBER") or "") + "</VOUCHERNUMBER>" +
@@ -269,7 +270,9 @@ class H(BaseHTTPRequestHandler):
             out = purchases_gst(frm, to)
         elif "ITECommerceExisting" in xml:
             m = re.search(r'<SVFROMDATE TYPE="Date">(\d+)', xml)
-            out = ecommerce_entries(m.group(1) if m else "")
+            t = re.search(r'<SVTODATE TYPE="Date">(\d+)', xml)
+            ranged = "##SVToDate" in xml
+            out = ecommerce_entries(m.group(1) if m else "", t.group(1) if (t and ranged) else None)
         elif "ITBankEntries" in xml:
             m = re.search(r"<CHILDOF>(.*?)</CHILDOF>", xml)
             out = bank_entries((m.group(1) if m else "").replace("&amp;", "&"))

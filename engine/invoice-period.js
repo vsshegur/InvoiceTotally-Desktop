@@ -1,11 +1,17 @@
 // Invoice date safety is local-only and deterministic. AI dates are NEVER
 // silently rewritten to fit an upload month or financial year.
 export function normalizeInvoiceDate(raw){
-  const s=String(raw??"").trim();
-  let m=/^(\d{4})-(\d{1,2})-(\d{1,2})(?:T.*)?$/.exec(s);
-  if(!m){const d=/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/.exec(s);
+  const s=String(raw??"").trim().replace(/\s+/g," ");
+  let m=/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T ].*)?$/.exec(s);
+  if(!m){const d=/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{2}|\d{4})$/.exec(s);
     if(d)m=[d[0],d[3].length===2?"20"+d[3]:d[3],d[2],d[1]];
   }
+  // "15-Sep-2026", "15 Sept 26", "15th September, 2026", "Sep 15, 2026"
+  const MON={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};
+  if(!m){const d=/^(\d{1,2})(?:st|nd|rd|th)?[-/. ]?([a-z]{3,9})[-/., ]*(\d{2}|\d{4})$/i.exec(s);
+    if(d&&MON[d[2].slice(0,3).toLowerCase()])m=[d[0],d[3].length===2?"20"+d[3]:d[3],MON[d[2].slice(0,3).toLowerCase()],d[1]];}
+  if(!m){const d=/^([a-z]{3,9})[-/. ](\d{1,2})(?:st|nd|rd|th)?,?[-/. ](\d{2}|\d{4})$/i.exec(s);
+    if(d&&MON[d[1].slice(0,3).toLowerCase()])m=[d[0],d[3].length===2?"20"+d[3]:d[3],MON[d[1].slice(0,3).toLowerCase()],d[2]];}
   if(!m)return null;
   const [year,month,day]=m.slice(1).map(Number);
   if(year<2000||year>2100||month<1||month>12||day<1||day>31)return null;

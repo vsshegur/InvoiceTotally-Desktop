@@ -79,7 +79,9 @@ export function gstIssues(inv,ctx){
 /** Adds the check to an invoice: inv.gst_check, and its errors as blockers so it can't be posted until fixed. */
 export function applyGstCheck(inv,ctx){
   const issues=gstIssues(inv,ctx);
-  inv.gst_check={clean:!issues.length,errors:issues.filter(x=>x.level==="error").map(x=>x.msg),warnings:issues.filter(x=>x.level==="warn").map(x=>x.msg)};
+  // "clean" only once the whole bill can be judged: party picked and GST worked out
+  const complete=!!inv.party_ledger&&!!inv.tax_lines;
+  inv.gst_check={clean:complete&&!issues.length,pending:!complete,errors:issues.filter(x=>x.level==="error").map(x=>x.msg),warnings:issues.filter(x=>x.level==="warn").map(x=>x.msg)};
   if(inv.steps&&inv.gst_check.errors.length){
     inv.steps.blockers.push(...inv.gst_check.errors.map(m=>"GST: "+m));
     inv.steps.ready=false;

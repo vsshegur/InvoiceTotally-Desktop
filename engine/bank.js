@@ -147,7 +147,7 @@ export async function mark(D, sid, body) {
 /** Assign one reviewed ledger to selected statement lines. No Tally write occurs here. */
 export async function assignLedger(D,sid,body){
   const st=await statement(D,sid);
-  const ids=[...new Set((Array.isArray(body.ids)?body.ids:[]).map(String))].slice(0,300);
+  const ids=[...new Set((Array.isArray(body.ids)?body.ids:[]).map(String))].slice(0,5000);
   const ledger=String(body.ledger||"").trim();
   if(!ids.length||!ledger)throw new BankError(400,"Choose statement transactions and an existing Tally ledger");
   if(ledger.toUpperCase()===st.bank_ledger.toUpperCase())throw new BankError(400,"Bank and contra ledgers must not be used as a payee ledger");

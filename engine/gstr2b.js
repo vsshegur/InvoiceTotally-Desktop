@@ -2,6 +2,7 @@
 // purchase register (inward vouchers with their GST ledgers) from Tally, the browser matches the two,
 // and the review keeps your decisions (link to another voucher, accept a difference, ignore).
 // Nothing is posted to Tally from here.
+import { indiaDate } from "./invoice-period.js";
 import { newId, now, jload } from "./db.js";
 import * as T from "./tally.js";
 import { getCompany } from "./pipeline.js";
@@ -28,8 +29,8 @@ export function booksWindow(period, months = 1, docDates = null) {
   let end = new Date(Date.UTC(+m[1], +m[2], 0) + 45 * 864e5);
   if (docDates?.max) { const e = new Date(Date.parse(docDates.max + "T00:00:00Z") + 45 * 864e5); if (e > end) end = e; }
   if (docDates?.min && docDates.min < start) start = docDates.min;
-  const today = new Date();
-  return { from: start, to: (end > today ? today : end).toISOString().slice(0, 10) };
+  const e = end.toISOString().slice(0, 10), today = indiaDate();
+  return { from: start, to: e > today ? today : e };
 }
 /** First and last day the return covers: one month, or a quarter. */
 export function returnRange(period, months = 1) {

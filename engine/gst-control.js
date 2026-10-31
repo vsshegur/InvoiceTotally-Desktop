@@ -1,5 +1,6 @@
 // Read-only GST control: compare GST portal's GSTR-1/3B summary figures to Tally
 // sales/purchase vouchers and locally imported GSTR-2B. Never files returns or edits Tally.
+import {indiaDate} from "./invoice-period.js";
 import * as TL from "../desktop/tally.mjs";
 import * as T from "./tally.js";
 import { newId, now } from "./db.js";
@@ -23,7 +24,7 @@ export const cleanSummary=(data,kind)=>{
   if(!allowed.some(k=>ret[k]!==null))throw new GstControlError("At least one GST figure is required");
   return ret;
 };
-const nowDate=()=>new Date().toISOString().slice(0,10);
+const nowDate=()=>indiaDate();
 const monthPeriod=period=>{
   const match=/^(\d{4})-(0[1-9]|1[0-2])$/.exec(String(period||""));
   if(!match)throw new GstControlError("Select a valid GST return month");

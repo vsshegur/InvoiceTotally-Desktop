@@ -460,3 +460,14 @@ From Tally's own reasons (GSTR-3B → Uncertain Transactions):
 ## Version 4.5.2 — quarterly GSTR-2B, the right GST rate on small bills
 - **Quarterly GSTR-2B (QRMP, "…_GSTR2BQ_…")** was read as its first month, so Tally was read only up to six weeks after it and bills from later in the quarter showed "Not in Tally" though they were there. It is now read as the quarter (filed with its last month), and Tally is always read up to six weeks past the latest document date. A file uploaded earlier is corrected when you press **Read Tally again**.
 - **GST rate when GSTR-2B gives none:** the rate closest to tax ÷ taxable is used. Before, the first rate within ₹1 was taken, so tiny bills (₹10 bank charge with ₹1.80 GST) went to `GSTR2B 12%` instead of `GSTR2B 18%`. Entries already posted that way are listed on the GSTR-2B → Tally page ("Posted at the wrong GST rate") with the ledger to change in Tally.
+
+## Version 4.6.0 — full review: fixes across the app
+- **Recheck in Tally** (bank statements and marketplace sales) now checks every uncertain entry, not the first 80 / 25; one Tally read per date window.
+- **Assigning a ledger** to more than 300 bank lines did only 300 — no limit now. After Import masters every waiting bill is matched again (was 25).
+- **Dates:** "today" is India's date (the app thought it was yesterday between midnight and 5:30 am), and month pickers no longer jump a month on the 31st. GST returns check opens on last month.
+- **Bill dates** written as "15-Sep-2026", "Sep 15, 2026", "15th September 2026", "2026/09/15" are understood.
+- **GST on bills:** IGST vs CGST + SGST is decided from the party's Tally ledger (not a possibly misread GSTIN on the bill); the GST rate worked out from printed tax is the closest standard rate.
+- **Duplicate guard:** before posting a bill, Tally is searched 45 days either side of its date, and the invoice number matches however it is written ("INV/0045/26-27" = "45"), by party ledger or GSTIN.
+- **Ledgers Tally refused to create** no longer stay "creating…" for ever: if the name already exists it counts as created, otherwise it can be created again (the reason is in the activity log).
+- **"Clean for GSTR-3B"** appears only once the party is picked and GST is worked out.
+- Every page was opened in a browser with data (desktop and phone width): no errors, no broken text, no sideways scrolling.

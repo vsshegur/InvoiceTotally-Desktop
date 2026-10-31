@@ -71,12 +71,15 @@ export async function recheckBank(D,env,sid){
   const st=await D.first("SELECT * FROM bank_statements WHERE id=?",sid);
   if(!st)bad("Statement not found",404);
   const c=await company(D,st.company_id),read=ensureTally(env);
-  const rows=await D.all("SELECT * FROM bank_lines WHERE statement_id=? AND status='uncertain' ORDER BY seq LIMIT 80",sid);
+  const rows=await D.all("SELECT * FROM bank_lines WHERE statement_id=? AND status='uncertain' ORDER BY seq",sid);
   if(!rows.length)return {checked:0,still_uncertain:0};
   const statements=[];
   let still=0;
+  const cache=new Map(); // one Tally read per date window, however many lines share it
   for(const x of rows){
-    const xml=await read(T.bankEntriesRequest(tallyName(c),st.bank_ledger,addDays(x.date,-7),addDays(x.date,7)));
+    const req=T.bankEntriesRequest(tallyName(c),st.bank_ledger,addDays(x.date,-7),addDays(x.date,7));
+    if(!cache.has(req))cache.set(req,await read(req));
+    const xml=cache.get(req);
     const candidates=bankVouchers(xml,st.bank_ledger).filter(y=>
       Math.abs(y.signed-r2((x.credit||0)-(x.debit||0)))<=0.01&&
       Math.abs((Date.parse(y.date+"T00:00:00Z")-Date.parse(x.date+"T00:00:00Z"))/86400000)<=7);
@@ -98,7 +101,7 @@ export async function resolveUncertainBank(D,env,sid,body){
   if(!st)bad("Bank statement not found",404);
   if(body.confirmed!==true||String(body.verification||"").trim()!=="CHECKED IN TALLY")
     bad("Confirm you inspected the target company in Tally and this entry was NOT created");
-  const ids=[...new Set(Array.isArray(body.ids)?body.ids.map(String):[])].slice(0,50);
+  const ids=[...new Set(Array.isArray(body.ids)?body.ids.map(String):[])].slice(0,2000);
   if(!ids.length)bad("Choose at least one uncertain transaction");
   const q=ids.map(()=>"?").join(",");
   const rows=await D.all("SELECT * FROM bank_lines WHERE statement_id=? AND status='uncertain' AND id IN ("+q+")",sid,...ids);

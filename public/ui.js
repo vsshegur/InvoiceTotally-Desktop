@@ -2,6 +2,10 @@
    They upgrade the page's own <input type="date|month"> and <select class="in"> in place: the original element stays
    (hidden) and keeps its value, so the rest of the app reads and sets .value and listens for change exactly as before. */
 "use strict";
+/** "2026-09" for this month + offset, in this PC's own calendar (toISOString() is UTC: before 5:30 am in India it is
+ * still yesterday, and setMonth on the 31st overflows into the next month). */
+function localMonth(offset = 0) { const d = new Date(); const t = new Date(d.getFullYear(), d.getMonth() + offset, 1); return t.getFullYear() + "-" + String(t.getMonth() + 1).padStart(2, "0"); }
+function localDate() { const d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
 (() => {
   if (typeof HTMLInputElement === "undefined" || typeof MutationObserver === "undefined" || typeof requestAnimationFrame === "undefined") return;
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

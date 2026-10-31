@@ -53,7 +53,7 @@ export async function suggestions(D,cid){
     let hits;
     if(l.kind==="item")hits=await M.stockCandidates(D,cid,l,5);
     else{
-      const pool=await D.all("SELECT name,parent,primary_group FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 LIMIT 250",cid);
+      const pool=await D.all("SELECT name,parent,primary_group FROM masters WHERE company_id=? AND kind='ledger' AND pending=0",cid);
       hits=pool.map(p=>({...p,score:M.similarity(l.description,p.name)})).sort((a,b)=>b.score-a.score).filter(x=>x.score>=35).slice(0,5);
     }
     pending.push({kind:l.kind==="item"?"stock":"charge",invoice_id:l.invoice_id,line_id:l.id,

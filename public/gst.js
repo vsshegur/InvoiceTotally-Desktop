@@ -63,7 +63,7 @@ async function viewGstUpload(cid,mode="reconcile") {
   const purchaseMode=mode==="purchase";
   const [c, existing, { parse: GP }] = await Promise.all([api(`/companies/${cid}`), api(`/companies/${cid}/gstr2b`), GstLib()]);
   const st = { items: [], error: "" };
-  const months = (() => { const out = []; const d = new Date(); d.setDate(1); for (let i = 0; i < 24; i++) { out.push(d.toISOString().slice(0, 7)); d.setMonth(d.getMonth() - 1); } return out; })();
+  const months = Array.from({ length: 24 }, (_, i) => localMonth(-i));
   const render = () => {
     const ready = st.items.length && st.items.every((x) => x.period && x.docs.length);
     app().innerHTML = topBar([[c.name, purchaseMode ? `#/c/${cid}/gstr2b-purchase` : `#/c/${cid}/gstr2b`], ["Upload GSTR-2B"]], c) + `<div class="bar"><span class="status"></span><div class="spacer"></div>

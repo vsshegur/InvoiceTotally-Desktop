@@ -12,6 +12,7 @@ function gstCheckBadge(gc) {
   if (!gc) return "";
   if (gc.errors.length) return `<div class="bad small" title="${esc(gc.errors.join("\n"))}">✗ GST: ${gc.errors.length} to fix</div>`;
   if (gc.warnings.length) return `<div class="warn small" title="${esc(gc.warnings.join("\n"))}">⚠ GST: ${gc.warnings.length} to check</div>`;
+  if (gc.pending) return `<div class="muted small" title="Checked once the party is picked and GST is calculated">GST check after review</div>`;
   return `<div class="good small" title="Party GSTIN, state, registration, IGST vs CGST+SGST and tax ledgers checked">✓ Clean for GSTR-3B</div>`;
 }
 /** The GSTIN check of an invoice's party (see engine/gstin-check.js): ✓ Verified / ✓ Check digit OK · new / ⚠ / ✗ Misread. */
@@ -1561,7 +1562,7 @@ async function viewInvoice(iid) {
       ${h.handwritten ? `<div class="alert warn" style="margin-bottom:6px">Handwritten invoice — please double-check every figure, especially the year.</div>` : ""}
       ${h.rechecked ? `<div class="alert ok" style="margin-bottom:6px">The first reading didn't add up, so it was read a second time${h.ai?.rechecked_by ? ` by ${esc(h.ai.rechecked_by)}` : ""}${(h.warnings || []).length ? " — the notes above are what still needs your eye" : " — everything adds up now"}.</div>` : ""}
       ${h.ai ? `<div class="muted" style="font-size:12.5px;margin-bottom:8px">Read by <b>${esc(h.ai.read_by)}</b>${h.ai.rechecked_by ? ` · checked by <b>${esc(h.ai.rechecked_by)}</b>` : ""}${h.ai.cost_usd ? ` · AI cost ≈ ₹${(h.ai.cost_usd * 88).toFixed(2)}` : ""}${h.ai.skipped ? `<div class="small" title="${esc(h.ai.skipped)}">Skipped first: ${esc(h.ai.skipped.slice(0, 160))}</div>` : ""}</div>` : ""}
-      ${inv.gst_check && inv.status !== "synced" ? (inv.gst_check.clean ? `<div class="alert good" style="margin-bottom:6px">✓ <b>Clean for GSTR-3B</b> — party GSTIN, state and registration, IGST vs CGST + SGST and tax ledgers all check out.</div>`
+      ${inv.gst_check && inv.status !== "synced" && (inv.gst_check.clean || inv.gst_check.errors.length || inv.gst_check.warnings.length) ? (inv.gst_check.clean ? `<div class="alert good" style="margin-bottom:6px">✓ <b>Clean for GSTR-3B</b> — party GSTIN, state and registration, IGST vs CGST + SGST and tax ledgers all check out.</div>`
         : `<div class="alert ${inv.gst_check.errors.length ? "bad" : "warn"}" style="margin-bottom:6px"><b>GST check before Tally</b><ul style="margin:6px 0 0 18px">${[...inv.gst_check.errors.map((m) => `<li>${esc(m)}</li>`), ...inv.gst_check.warnings.map((m) => `<li class="muted">${esc(m)}</li>`)].join("")}</ul></div>`) : ""}
       ${editable && !inv.steps.ready && inv.steps.blockers?.length ? `<div class="alert bad" style="margin-bottom:6px"><b>Not ready for Tally yet:</b> ${esc(inv.steps.blockers.join("; "))}.${!inv.steps.total_ok ? " Compare each line amount and the tax figures below with the image, correct them, and save." : ""}</div>` : ""}
       <div class="row">${f("number", "Invoice no.", "mono")}${f("date", "Date (YYYY-MM-DD)", "mono")}</div>

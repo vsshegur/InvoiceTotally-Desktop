@@ -5,6 +5,7 @@
 //   B. each Sundry Debtor / Creditor ledger's bill allocations (the older read; opening bills only on some setups)
 //   C. ledger closing balances (always works; one "on account" line per party, no bill detail)
 // Read-only: nothing here can post to or change Tally.
+import { indiaDate } from "./invoice-period.js";
 import * as T from "./tally.js";
 import * as TL from "../desktop/tally.mjs";
 import * as DASH from "./dashboard.js";
@@ -112,7 +113,7 @@ export async function readOutstanding(D, env, cid, opts = {}) {
   const c = await company(D, cid);
   const read = env.TALLY?.readOnly;
   if (!read) bad("Tally read-only connection is unavailable", 503);
-  const asOf = validDate(opts.asOf) ? opts.asOf : new Date().toISOString().slice(0, 10);
+  const asOf = validDate(opts.asOf) ? opts.asOf : indiaDate();
   const name = tallyName(c);
   const diag = [];
   const step = async (label, fn) => {

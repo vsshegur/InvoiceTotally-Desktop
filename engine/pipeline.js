@@ -358,11 +358,9 @@ export async function calculateTax(D, invId) {
   const inv = await loadInvoice(D, invId);
   const comp = await getCompany(D, inv.company_id);
   const vt = inv.voucher_type, h = inv.data;
-  let partySc = stateCode(h.party_gstin, h.party_state);
-  if (!partySc && inv.party_ledger) {
-    const led = await D.first("SELECT gstin, state FROM masters WHERE company_id=? AND kind='ledger' AND name=?", comp.id, inv.party_ledger);
-    if (led) partySc = stateCode(led.gstin, led.state);
-  }
+  // the party's state decides IGST vs CGST+SGST: from its Tally ledger first (verified there), then the bill
+  const led = inv.party_ledger ? await D.first("SELECT gstin, state FROM masters WHERE company_id=? AND kind='ledger' AND name=?", comp.id, inv.party_ledger) : null;
+  let partySc = (led && stateCode(led.gstin, led.state)) || stateCode(h.party_gstin, h.party_state);
   const ourSc = comp.state_code;
   const inter = partySc && ourSc ? partySc !== ourSc : !!h.igst && !(h.cgst || h.sgst);
   const r2 = (x) => Math.round(x * 100) / 100;
@@ -376,7 +374,8 @@ export async function calculateTax(D, invId) {
   const taxable = inv.lines.reduce((a, l) => a + (l.amount || 0), 0);
   if (!Object.keys(byRate).length && printedTax > 0 && taxable > 0) {
     const raw = (printedTax / taxable) * 100;
-    const std = [0.1, 0.25, 1, 1.5, 3, 5, 6, 7.5, 12, 18, 28, 40].find((r) => Math.abs(r - raw) <= 0.2);
+    // the closest standard rate (not the first within 0.2%: 0.1% and 0.25% are both within it of 0.2%)
+    const std = [0.1, 0.25, 1, 1.5, 3, 5, 6, 7.5, 12, 18, 28, 40].map((r) => [r, Math.abs(r - raw)]).sort((a, b) => a[1] - b[1]).find(([, d]) => d <= 0.2)?.[0];
     byRate[std ?? r2(raw)] = taxable;
   }
   const heads = [];
@@ -583,11 +582,20 @@ export async function jobResult(D, job, ok, response, error) {
     confirmedCreated=job.kind==="import_voucher"&&res.ok&&res.created===1&&res.altered===0;
     status=(job.kind==="import_voucher"?confirmedCreated:res.ok)?"done":"failed";
     note=res.messages.join("; ")||(status==="done"?"Created":"Tally did not confirm one new voucher; check Tally before retrying");
-    if (job.kind === "import_master" && res.ok) {
+    if (job.kind === "import_master") {
       const m = job.payload.match(/<(LEDGER|STOCKITEM|UNIT) NAME="([^"]+)"/);
-      if (m) w.push(D.stmt("UPDATE masters SET pending=0 WHERE company_id=? AND kind=? AND name=?", job.company_id,
-        { LEDGER: "ledger", STOCKITEM: "stock_item", UNIT: "unit" }[m[1]],
-        m[2].replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")));
+      if (m) {
+        const kind = { LEDGER: "ledger", STOCKITEM: "stock_item", UNIT: "unit" }[m[1]];
+        const name = m[2].replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+        // created — or already in Tally under that name: either way it exists; Import masters brings its details
+        if (res.ok || /already exists|duplicate/i.test(note))
+          w.push(D.stmt("UPDATE masters SET pending=0 WHERE company_id=? AND kind=? AND name=? AND pending=1", job.company_id, kind, name));
+        // refused for another reason: not left "being created" for ever — it can be created again after fixing
+        else if (status === "failed") {
+          w.push(D.stmt("DELETE FROM masters WHERE company_id=? AND kind=? AND name=? AND pending=1", job.company_id, kind, name));
+          w.push(D.stmt("INSERT INTO activity (batch_id, invoice_id, message, at) VALUES (?,?,?,?)", null, null, `Tally did not create ${kind === "stock_item" ? "stock item" : kind} “${name}”: ${note}`.slice(0, 500), t));
+        }
+      }
     }
     if (job.kind === "import_voucher" && job.invoice_id) {
       w.push(D.updateStmt("invoices", job.invoice_id, confirmedCreated ? { status: "synced", synced_at: t, sync_error: null } : { status: "failed", sync_error: note }));
@@ -605,6 +613,6 @@ export async function jobResult(D, job, ok, response, error) {
 }
 
 export async function rematchCompany(D, cid) {
-  const rows = await D.all("SELECT id FROM invoices WHERE company_id=? AND status='review' LIMIT 25", cid);
+  const rows = await D.all("SELECT id FROM invoices WHERE company_id=? AND status IN ('review','failed') ORDER BY created_at DESC LIMIT 2000", cid);
   for (const r of rows) await autoMatch(D, r.id, true);
 }
