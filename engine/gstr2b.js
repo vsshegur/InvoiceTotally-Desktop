@@ -236,11 +236,26 @@ export async function setTolerance(D, rid, body) {
   return { ok: true };
 }
 
-export async function remove(D, rid) {
-  const used=await D.first("SELECT id FROM gstr2b_purchase_batches WHERE return_id=? LIMIT 1",rid);
-  if(used)throw new GstError(409,"This GSTR-2B has purchase vouchers prepared for Tally. Keep the original evidence and import a fresh return separately.");
-  await D.batch([D.stmt("DELETE FROM gst_docs WHERE return_id=?", rid), D.stmt("DELETE FROM jobs WHERE invoice_id=? AND kind='export_purchase_gst' AND status IN ('pending','sent')", rid),
-    D.stmt("DELETE FROM gst_returns WHERE id=?", rid)]);
+/**
+ * Deletes a GSTR-2B from this app, with its GSTR-2B → Tally preparation when `withPrepared` (entries already posted stay
+ * in Tally; before any new post Tally is checked for the same invoice, so re-uploading can't duplicate them).
+ * Refused while an entry is being sent to Tally or its outcome is uncertain.
+ */
+export async function remove(D, rid, withPrepared = false) {
+  const g = await getReturn(D, rid);
+  const batch = await D.first("SELECT id FROM gstr2b_purchase_batches WHERE return_id=? LIMIT 1", rid);
+  const stmts = [];
+  if (batch) {
+    const c = await D.first("SELECT count(*) n, sum(status='synced') posted, sum(status IN ('queued','uncertain')) busy FROM gstr2b_purchase_vouchers WHERE batch_id=?", batch.id);
+    if (c.busy) throw new GstError(409, `${c.busy} entr${c.busy === 1 ? "y is" : "ies are"} being sent to Tally or uncertain. Finish or recheck them on GSTR-2B → Tally first.`);
+    if (!withPrepared) throw new GstError(409, `This GSTR-2B has ${c.n} entr${c.n === 1 ? "y" : "ies"} prepared for Tally (${c.posted || 0} posted). Delete them too?`);
+    stmts.push(D.stmt("DELETE FROM jobs WHERE kind='import_gstr2b_purchase' AND status IN ('pending','failed') AND invoice_id IN (SELECT id FROM gstr2b_purchase_vouchers WHERE batch_id=?)", batch.id),
+      D.stmt("DELETE FROM gstr2b_purchase_vouchers WHERE batch_id=?", batch.id), D.stmt("DELETE FROM gstr2b_purchase_batches WHERE id=?", batch.id));
+  }
+  stmts.push(D.stmt("DELETE FROM gst_docs WHERE return_id=?", rid), D.stmt("DELETE FROM jobs WHERE invoice_id=? AND kind='export_purchase_gst' AND status IN ('pending','sent')", rid),
+    D.stmt("DELETE FROM gst_returns WHERE id=?", rid));
+  await D.batch(stmts);
+  await D.log(`Deleted GSTR-2B ${g.period} (${g.filename || ""})${batch ? " with its GSTR-2B → Tally preparation" : ""}`, {});
   return { ok: true };
 }
 
@@ -256,5 +271,5 @@ export function gstRoutes(route) {
   route("POST", "/api/gstr2b/:rid/decide", async ({ D, p, body }) => json(await decide(D, p.rid, body)));
   route("POST", "/api/gstr2b/:rid/tolerance", async ({ D, p, body }) => json(await setTolerance(D, p.rid, body)));
   route("POST", "/api/gstr2b/:rid/tally", async ({ D, p }) => { await askTally(D, p.rid); return json({ ok: true }); });
-  route("DELETE", "/api/gstr2b/:rid", async ({ D, p }) => json(await remove(D, p.rid)));
+  route("DELETE", "/api/gstr2b/:rid", async ({ D, p, url }) => json(await remove(D, p.rid, url.searchParams.get("with_prepared") === "1")));
 }

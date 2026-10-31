@@ -98,7 +98,7 @@ test("prepare, create purchase ledger, map input taxes, approve, queue, verify a
  try{
   const prepared=await G.prepare(D,cid,{return_id:"apr-gst2b"});
   const SG=await import("../engine/gstr2b.js");
-  await assert.rejects(()=>SG.remove(D,"apr-gst2b"),/purchase vouchers prepared/);
+  await assert.rejects(()=>SG.remove(D,"apr-gst2b"),/prepared for Tally/);
   const again=await G.prepare(D,cid,{return_id:"apr-gst2b"});
   assert.equal(again.id,prepared.id);
   const d=await G.view(D,prepared.id);
@@ -149,6 +149,44 @@ test("prepare, create purchase ledger, map input taxes, approve, queue, verify a
   assert.equal((await D.first("SELECT status FROM gstr2b_purchase_vouchers WHERE id=?",p38.id)).status,"ready");
   await assert.rejects(()=>G.setParty(D,prepared.id,{id:p149.id,ledger:"Vanita Textile"}),/cannot be remapped/);
   await assert.rejects(()=>G.prepare(D,cid,{return_id:"wrong-id"}),/not found/);
+ }finally{DB.close();}
+});
+test("one entry already in Tally holds back only that entry; an amount-only pair still posts; delete takes the preparation with it",async()=>{
+ const {DB,D}=await fixture();
+ try{
+  // a pair on amount alone (invoice no. differs — last month's identical bill) is not proof it is in Tally
+  assert.equal(G.classify({status:"probable",mid:"35",method:"auto"}).reason,undefined);
+  assert.match(G.classify({status:"matched",mid:"35"}).reason,/Already in Tally/);
+  assert.match(G.classify({status:"probable",mid:"35",method:"manual"}).reason,/Already in Tally/);
+  assert.match(G.classify({status:"mismatch",mid:"35",level:1}).reason,/Already in Tally/);
+  const prepared=await G.prepare(D,cid,{return_id:"apr-gst2b"});
+  await G.createPurchaseLedger(D,prepared.id);
+  for(const job of await D.all("SELECT * FROM jobs WHERE kind='import_master'"))await P.jobResult(D,job,true,goodResponse);
+  await G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input SGST",igst:"Input IGST",round:"Round Off",rcm_igst:"RCM IGST Payable"});
+  const rows=(await G.view(D,prepared.id)).rows,p149=rows.find(r=>r.supplier_invoice==="149"),p38=rows.find(r=>r.supplier_invoice==="38");
+  // the books were read again after preparing: 38 is now matched, 149 only paired on amount
+  await D.run("UPDATE gst_docs SET status='matched',mid='501',level=0 WHERE id='doc38'");
+  await D.run("UPDATE gst_docs SET status='probable',mid='502',method='auto' WHERE id='doc149'");
+  const out=await G.queue(D,prepared.id,{ids:[p149.id,p38.id],confirmed:true,confirmedDate:true});
+  assert.equal(out.queued,1);
+  assert.equal(out.skipped_count,1);
+  assert.equal(out.skipped[0].invoice,"38");
+  assert.match(out.skipped[0].reason,/Already in Tally/);
+  const after=await D.first("SELECT status,error FROM gstr2b_purchase_vouchers WHERE id=?",p38.id);
+  assert.equal(after.status,"blocked");
+  assert.match(after.error,/Already in Tally/);
+  assert.equal((await D.first("SELECT status FROM gstr2b_purchase_vouchers WHERE id=?",p149.id)).status,"queued");
+  // all asked entries refused for the same reason: one clear error, not a silent zero
+  await assert.rejects(()=>G.queue(D,prepared.id,{ids:[p38.id],confirmed:true,confirmedDate:true}),/not ready/);
+  const SG=await import("../engine/gstr2b.js");
+  await assert.rejects(()=>SG.remove(D,"apr-gst2b",true),/being sent to Tally/);
+  const j=await D.first("SELECT * FROM jobs WHERE kind='import_gstr2b_purchase' AND invoice_id=?",p149.id);
+  await G.jobResult(D,j,true,goodResponse);
+  await assert.rejects(()=>SG.remove(D,"apr-gst2b"),/1 posted\). Delete them too/);
+  assert.deepEqual(await SG.remove(D,"apr-gst2b",true),{ok:true});
+  for(const t of ["gst_returns","gst_docs","gstr2b_purchase_batches","gstr2b_purchase_vouchers"])
+   assert.equal((await D.first(`SELECT count(*) n FROM ${t}`)).n,0,t);
+  assert.equal((await D.first("SELECT count(*) n FROM jobs WHERE kind='import_gstr2b_purchase' AND status='pending'")).n,0);
  }finally{DB.close();}
 });
 test("GSTR-2B purchase APIs require licence, company scope, and posting permission",async()=>{

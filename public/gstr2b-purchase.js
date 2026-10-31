@@ -266,7 +266,8 @@ async function viewGstr2bPurchaseBatch(id){
       try{await api("/gstr2b-purchases/"+id+"/mapping",{body:fields});}
       catch(e){return toast("GST ledgers: "+e.message,true);}
     }
-    const result=await run("post",{ids,confirmed:true,confirmedDate:true},"Queued "+ids.length+" entr"+(ids.length===1?"y":"ies")+" for Tally");
+    const result=await run("post",{ids,confirmed:true,confirmedDate:true},r=>"Queued "+r.queued+" for Tally"+
+      (r.skipped_count?" · "+r.skipped_count+" held back — the reason is on each (filter: All entries)":""));
     if(result)for(const x of ids)G2B_UI.selected.delete(x);
   };
   $("#g2bPost").onclick=()=>submit([...G2B_UI.selected].filter(x=>eligibleIds.has(x)),false);

@@ -43,7 +43,11 @@ function matchedCandidates(ledgers,gstin){
 
 /** The voucher a GSTR-2B document becomes, or why it can't go to Tally from here. */
 export function classify(d){
-  if(d.mid||d.status==="matched")return {reason:"Already in Tally: matched to a Tally voucher in GSTR-2B reconciliation."};
+  // In Tally already: matched, linked by hand, or the same invoice number with different amounts. A pair made only
+  // on amount and date (status "probable", invoice no. differs) may be another bill — e.g. last month's identical
+  // subscription — so it does not stop posting; the live Tally check by invoice number still runs before each post.
+  if(d.status==="matched"||(d.mid&&d.method==="manual")||(d.status==="mismatch"&&+d.level>=1))
+    return {reason:"Already in Tally: matched to a Tally voucher in GSTR-2B reconciliation."};
   if(d.status==="ignored"||d.status==="accepted")return {reason:"Excluded in GSTR-2B reconciliation (accepted or ignored)."};
   if(d.sec==="IMPG")return {vtype:"Journal",jkind:"impg"};
   if(d.sec==="ISD")return {vtype:"Journal",jkind:d.note==="C"?"isd_cn":"isd"};
@@ -144,10 +148,10 @@ export async function list(D,cid){
   return batches;
 }
 const ROWS_SQL="SELECT v.*,d.sec source_section,d.note source_note,d.typ source_type,d.onum original_invoice,d.odt original_date,"+
-  "d.itc source_itc,d.rsn source_reason,d.rev source_reverse,d.status source_status,d.mid source_mid,d.compare source_compare,d.rates source_rates "+
+  "d.itc source_itc,d.rsn source_reason,d.rev source_reverse,d.status source_status,d.mid source_mid,d.level source_level,d.method source_method,d.compare source_compare,d.rates source_rates "+
   "FROM gstr2b_purchase_vouchers v JOIN gst_docs d ON d.id=v.doc_id WHERE v.batch_id=? ORDER BY v.seq";
 const docOf=r=>({sec:r.source_section,note:r.source_note,itc:r.source_itc,rev:r.source_reverse,
-  status:r.source_status,mid:r.source_mid,compare:r.source_compare,ctin:r.supplier_gstin,
+  status:r.source_status,mid:r.source_mid,level:r.source_level,method:r.source_method,compare:r.source_compare,ctin:r.supplier_gstin,
   num:r.supplier_invoice,dt:r.date,txval:r.taxable,val:r.invoice,igst:r.igst,cgst:r.cgst,sgst:r.sgst,cess:r.cess});
 /**
  * Batches prepared by earlier versions: documents they blocked (reverse charge, ITC not available,
@@ -427,30 +431,35 @@ export async function queue(D,id,input){
   const opts={companyState:companyState(c),reg:companyRegistration({gstin:c.gstin,settings:jload(c.settings,{})})};
   const regTypes=new Map((await D.all("SELECT name,reg_type FROM masters WHERE company_id=? AND kind='ledger' AND reg_type IS NOT NULL",b.company_id)).map(x=>[x.name,x.reg_type]));
   const journals=new Map((await D.all("SELECT source_key,voucher_number FROM gstr2b_purchase_vouchers WHERE batch_id=? AND jkind='rcm'",id)).map(x=>[x.source_key,x.voucher_number]));
-  const stmts=[];
+  const stmts=[],skipped=[];
+  let queued=0;
   for(const r of rows){
-    if(!approvedStates.has(r.status))throw new Purchase2bError(r.supplier_invoice+" is not ready to post ("+r.status+")");
+    // a problem with one entry is reported on that entry; the others still go
+    const skip=(reason,status)=>{skipped.push({id:r.id,invoice:r.supplier_invoice,reason});
+      stmts.push(D.updateStmt("gstr2b_purchase_vouchers",r.id,{...(status?{status}:{}),error:reason}));};
+    if(!approvedStates.has(r.status)){skipped.push({id:r.id,invoice:r.supplier_invoice,reason:"not ready to post ("+r.status+")"});continue;}
     const d=docOf(r),cls=classify(d);
-    if(cls.reason)throw new Purchase2bError(r.supplier_invoice+": "+cls.reason+" Refresh the GSTR-2B evidence.");
+    if(cls.reason){skip(cls.reason+" Refresh the GSTR-2B evidence if that's wrong.","blocked");continue;}
     const problem=dataProblem(d,r);
-    if(problem)throw new Purchase2bError(r.supplier_invoice+": "+problem);
+    if(problem){skip(problem,"blocked");continue;}
     if(needsParty(r)){
       const supplier=await D.first("SELECT name,gstin FROM masters WHERE company_id=? AND kind='ledger' AND pending=0 AND LOWER(name)=LOWER(?)",b.company_id,r.party_ledger||"");
-      if(!supplier||!eq(supplier.gstin,r.supplier_gstin))
-        throw new Purchase2bError(r.supplier_invoice+" supplier GSTIN no longer matches Tally ledger; correct mapping.");
-      if(Object.values(mapping).some(x=>eq(x,r.party_ledger)))
-        throw new Purchase2bError(r.supplier_invoice+" supplier ledger is also selected as a tax/rounding ledger");
+      if(!supplier||!eq(supplier.gstin,r.supplier_gstin)){skip("Supplier GSTIN no longer matches the Tally ledger; pick the supplier again.","review");continue;}
+      if(Object.values(mapping).some(x=>eq(x,r.party_ledger))){skip("Supplier ledger is also chosen as a GST / round-off ledger.");continue;}
     }
     let xml;
     try{xml=voucherXml(tallyCompany(c),{...r,journal_number:journals.get(r.source_key+"|RCM"),itc_reason:r.source_reason,party_reg_type:regTypes.get(r.party_ledger)},mapping,opts);}
-    catch(e){throw new Purchase2bError(r.supplier_invoice+": "+e.message);}
+    catch(e){skip(e.message);continue;}
     stmts.push(D.stmt("DELETE FROM jobs WHERE invoice_id=? AND kind='import_gstr2b_purchase' AND status IN ('pending','failed')",r.id));
     stmts.push(D.insertStmt("jobs",{id:newId(),company_id:b.company_id,kind:"import_gstr2b_purchase",
       invoice_id:r.id,payload:xml,status:"pending",created_at:now()+r.seq*.001,updated_at:now()}));
     stmts.push(D.updateStmt("gstr2b_purchase_vouchers",r.id,{status:"queued",error:null}));
+    queued++;
   }
   for(let i=0;i<stmts.length;i+=60)await D.batch(stmts.slice(i,i+60));
-  return {queued:rows.length};
+  // a mapping problem (a GST ledger not chosen) applies to every entry: say so once instead of per entry
+  if(!queued&&skipped.length&&new Set(skipped.map(x=>x.reason)).size===1)throw new Purchase2bError(skipped[0].reason);
+  return {queued,skipped:skipped.slice(0,200),skipped_count:skipped.length};
 }
 // One read of Tally's inward register serves the next postings for a short while; every voucher this
 // app creates meanwhile is added to it, so a second copy of the same document is still caught.
@@ -468,7 +477,7 @@ export async function beforePosting(D,job,tallyCompanyName,readOnly){
   const r=must(await D.first("SELECT * FROM gstr2b_purchase_vouchers WHERE id=?",job.invoice_id),"GSTR-2B purchase not found");
   if(r.status!=="queued")throw new Purchase2bError("Invoice was not queued");
   const batchRow=await batch(D,r.batch_id);
-  const doc=await D.first("SELECT sec,note,mid,status,itc,rev,compare,onum FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,batchRow.return_id);
+  const doc=await D.first("SELECT sec,note,mid,status,level,method,itc,rev,compare,onum FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,batchRow.return_id);
   if(!doc)return {duplicate:true,message:"GSTR-2B source document is missing; posting blocked"};
   const cls=classify({...doc,ctin:r.supplier_gstin});
   if(cls.reason)return {duplicate:true,message:cls.reason+" Posting blocked."};

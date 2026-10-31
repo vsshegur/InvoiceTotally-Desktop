@@ -120,7 +120,15 @@ async function viewGstUpload(cid,mode="reconcile") {
     let last = null;
     try {
       for (const x of st.items) {
-        if(!purchaseMode)for (const old of existing.filter((r) => r.period === x.period)) await api(`/gstr2b/${old.id}`, { method: "DELETE" });
+        if(!purchaseMode)for (const old of existing.filter((r) => r.period === x.period)) {
+          // a fresh file replaces the old one; if the old one was prepared for GSTR-2B → Tally, ask first
+          try { await api(`/gstr2b/${old.id}`, { method: "DELETE", quiet: true }); }
+          catch (e) {
+            if (!/prepared for Tally/.test(e.message)) throw e;
+            if (!confirm(`The GSTR-2B already here for ${GP.periodLabel(x.period)}: ${e.message}\n\nOK replaces it (entries already posted stay in Tally and are not posted twice). Cancel keeps both.`)) continue;
+            await api(`/gstr2b/${old.id}?with_prepared=1`, { method: "DELETE" });
+          }
+        }
         status.textContent = `Saving ${GP.periodLabel(x.period)}…`;
         const r = await api(`/companies/${cid}/gstr2b`, { body: { period: x.period, months: x.months || 1, gstin: x.gstin, kind: x.kind, filename: x.filename, source: x.source, gendt: x.gendt, rejected: x.rejected } });
         for (let i = 0; i < x.docs.length; i += 500) await api(`/gstr2b/${r.id}/docs`, { body: { part: i / 500, docs: x.docs.slice(i, i + 500) } });
@@ -338,7 +346,18 @@ async function viewGst(rid) {
   keymap.arrowup = () => { GST_UI.sel = Math.max(0, GST_UI.sel - 1); route(); };
   $("#g-tol").onchange = async (e) => { await act(() => api(`/gstr2b/${rid}/tolerance`, { body: { tol: +e.target.value } }), "Matching again…"); route(); };
   $("#g-tally").onclick = async () => { await act(() => api(`/gstr2b/${rid}/tally`, { body: {} }), c.tally_status === "ok" ? "Reading from Tally…" : "Queued — runs when TallyPrime is open"); refresh(); };
-  if ($("#g-del")) $("#g-del").onclick = async () => { if (confirm(`Delete GSTR-2B ${label} here? Nothing in Tally changes.`)) { await api(`/gstr2b/${rid}`, { method: "DELETE" }); location.hash = `#/c/${c.id}/gstr2b`; } };
+  if ($("#g-del")) $("#g-del").onclick = async () => {
+    if (!confirm(`Delete GSTR-2B ${label} from this app? Nothing in Tally changes.`)) return;
+    try { await api(`/gstr2b/${rid}`, { method: "DELETE", quiet: true }); }
+    catch (e) {
+      // prepared for GSTR-2B → Tally: say how many, and delete those too only when asked
+      if (!/prepared for Tally/.test(e.message)) return toast(e.message, true);
+      if (!confirm(e.message + "\n\nEntries already posted stay in Tally. If you upload this GSTR-2B again, Tally is checked for each invoice before posting, so nothing is posted twice.")) return;
+      try { await api(`/gstr2b/${rid}?with_prepared=1`, { method: "DELETE" }); } catch (e2) { return toast(e2.message, true); }
+    }
+    toast("GSTR-2B deleted");
+    location.hash = `#/c/${c.id}/gstr2b`;
+  };
   $("#g-xl").onclick = () => gstExport({ c, s, r, sm, label, GM, XW });
   $("#g-sup").onclick = () => gstSuppliers({ c, r, label, GM });
   if (reading) every(4000, refresh);

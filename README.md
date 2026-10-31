@@ -471,3 +471,8 @@ From Tally's own reasons (GSTR-3B → Uncertain Transactions):
 - **Ledgers Tally refused to create** no longer stay "creating…" for ever: if the name already exists it counts as created, otherwise it can be created again (the reason is in the activity log).
 - **"Clean for GSTR-3B"** appears only once the party is picked and GST is worked out.
 - Every page was opened in a browser with data (desktop and phone width): no errors, no broken text, no sideways scrolling.
+
+## Version 4.6.1 — GSTR-2B: delete, and posting the rest when one entry is already in Tally
+- **Delete GSTR-2B** did nothing once it had been prepared for GSTR-2B → Tally (the refusal wasn't shown). It now says how many entries are prepared and posted, and deletes them too when you confirm. Entries already posted stay in Tally; if you upload the same GSTR-2B again, Tally is checked for each invoice before posting, so nothing goes in twice. Not allowed while an entry is being sent or is uncertain.
+- **Post** stopped with an error when one selected entry was already in Tally, and nothing was posted. Now that entry is held back with the reason shown on it, and every other selected entry is posted.
+- **"Need a look" pairs on amount only** (invoice number differs) — such as a monthly bill of the same amount a month apart — no longer count as "already in Tally": they post, after the usual Tally check by invoice number. The matcher now pairs on amount alone only when the dates are within 10 days (was 31). Press **Read Tally again** on the GSTR-2B to refresh older matches.
