@@ -168,7 +168,7 @@ export async function matchValueLedger(D, cid, vt, line, partyLedger, settings =
   }
   const def = settings[`default_${vt.toLowerCase()}_ledger`];
   if (def && (await exists(D, cid, "ledger", def))) return { ledger: def, state: "resolved" };
-  const pool = await D.all("SELECT name FROM masters WHERE company_id=? AND kind='ledger' AND primary_group=? LIMIT 200", cid, accountGroup(vt));
+  const pool = await D.all("SELECT name FROM masters WHERE company_id=? AND kind='ledger' AND primary_group=? ORDER BY name", cid, accountGroup(vt));
   if (!pool.length) return { ledger: null, state: "suspense" };
   if (line.gst_rate != null) {
     const r = String(+line.gst_rate);
@@ -194,7 +194,7 @@ export async function matchTaxLedger(D, cid, head, rate, vt) {
     return hits[0] ? { ledger: hits[0].name, method: "Named for it" } : { ledger: null, method: "Not found" };
   }
   const alt = { SGST: ["SGST", "UTGST"], CGST: ["CGST"], IGST: ["IGST"], CESS: ["CESS"] }[head];
-  let pool = await D.all(`SELECT name FROM masters WHERE company_id=? AND kind='ledger' AND (${alt.map(() => "uname LIKE ?").join(" OR ")}) LIMIT 100`,
+  let pool = await D.all(`SELECT name FROM masters WHERE company_id=? AND kind='ledger' AND (${alt.map(() => "uname LIKE ?").join(" OR ")})`,
     cid, ...alt.map((a) => `%${a}%`));
   const dt = await D.all("SELECT name FROM masters WHERE company_id=? AND kind='ledger' AND primary_group='Duties & Taxes' LIMIT 1", cid);
   if (dt.length) {

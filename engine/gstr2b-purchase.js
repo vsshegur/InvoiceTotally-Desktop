@@ -207,6 +207,24 @@ export async function view(D,id){
       Object.assign(r,{party_ledger:matches[0].name,status:"ready",error:null});
     }
   }
+  // posted earlier to a rate ledger that doesn't fit the GST on the document (versions before 4.5.2 could pick 12% for a
+  // tiny 18% bill): list them so the voucher can be altered in Tally
+  const posted=rows.filter(r=>r.status==="synced"&&r.vtype!=="Journal");
+  if(posted.length){
+    const payloads=new Map();
+    for(let k=0;k<posted.length;k+=400){
+      const part=posted.slice(k,k+400).map(r=>r.id);
+      for(const j of await D.all(`SELECT invoice_id,payload FROM jobs WHERE kind='import_gstr2b_purchase' AND status='done' AND invoice_id IN (${part.map(()=>"?").join(",")})`,...part))payloads.set(j.invoice_id,j.payload);
+    }
+    for(const r of posted){
+      const xml=payloads.get(r.id);if(!xml)continue;
+      const used=[...new Set([...xml.matchAll(/<LEDGERNAME>(GSTR2B [^<]+)<\/LEDGERNAME>/g)].map(m=>m[1].replace(/&amp;/g,"&")))].sort();
+      let right=[];try{right=rowLedgers(r).map(l=>l.name).sort();}catch{continue;}
+      if(used.length&&right.length&&used.join("|")!==right.join("|"))
+        r.wrong_rate={posted:used,correct:right,message:"Posted to "+used.join(", ")+" but the GST on it is "+right.join(", ").replace(/GSTR2B (RCM )?/g,"")+
+          " — in Tally, alter voucher "+(r.voucher_number||"")+" and change the ledger to "+right.join(", ")+"."};
+    }
+  }
   const mapping=jload(b.mapping,{});
   const lookup=new Map(masters.map(m=>[m.name.toLowerCase(),m]));
   const needed=new Map();
@@ -227,6 +245,7 @@ export async function view(D,id){
   for(const r of rows.filter(r=>r.status==="review"&&needsParty(r)&&!r.party_ledger))supplierIssues[r.id]=supplierIssue(masters,r);
   const stats={};
   for(const r of rows)stats[r.status]=(stats[r.status]||0)+1;
+  const wrongRate=rows.filter(r=>r.wrong_rate).length;
   const active=rows.filter(r=>["ready","review","failed"].includes(r.status));
   const needs=new Set();
   for(const r of active){
@@ -242,7 +261,7 @@ export async function view(D,id){
   return {id:b.id,company:{id:c.id,name:c.name,gstin:c.gstin,tally_company:tallyCompany(c),state:companyState(c)},return:returnInfo[0]||{},
     period:b.period,mapping,mappingNeeded:[...MAP_KEYS].filter(k=>needs.has(k)),rows,masters:masters.filter(x=>!x.pending),
     ledgers,ledgersReady:ledgers.every(l=>l.state==="present"),ledgersPending:ledgers.some(l=>l.state==="pending"),
-    supplierOptions,supplierIssues,stats};
+    supplierOptions,supplierIssues,stats,wrong_rate:wrongRate};
 }
 function supplierIssue(masters,r){
   const similarlyNamed=masters.filter(x=>creditor(x)&&normName(x.name)===normName(r.supplier_name));
@@ -300,8 +319,7 @@ export async function saveMapping(D,id,input){
   const taxSide=["igst","cgst","sgst","cess","round"].map(k=>mapping[k]).filter(Boolean).map(x=>x.toLowerCase());
   if(new Set(taxSide).size!==taxSide.length)
     throw new Purchase2bError("Input GST and round-off ledgers must be distinct from each other");
-  for(const h of HEADS)if(mapping["rcm_"+h]&&eq(mapping["rcm_"+h],mapping[h]))
-    throw new Purchase2bError("RCM "+h.toUpperCase()+" payable must be a different ledger from Input "+h.toUpperCase());
+  // RCM payable may be the same ledger as the input one: many books keep a single CGST / SGST / IGST ledger.
   await D.run("UPDATE gstr2b_purchase_batches SET mapping=? WHERE id=?",JSON.stringify(mapping),id);
   return {ok:true,mapping};
 }

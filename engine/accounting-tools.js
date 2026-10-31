@@ -1,6 +1,7 @@
 // Month-end closing, the 180-day ITC rule and supplier follow-up — built on what the app already holds
 // (GSTR-2B and its matching, postings, bank lines, marketplace vouchers) and, for unpaid bills, Tally's bills report.
 import {jload,now} from "./db.js";
+import {indiaDate} from "./invoice-period.js";
 import {cleanGstin} from "./gst.js";
 import {invoiceKey} from "../public/gstr2b.js";
 import {supplierMessage} from "../public/gstmatch.js";
@@ -13,7 +14,7 @@ const json=(x,status=200)=>new Response(JSON.stringify(x),{status,headers:{"cont
 const r2=(x)=>Math.round((+x||0)*100)/100;
 const HEADS=["igst","cgst","sgst","cess"];
 const okPeriod=(p)=>/^\d{4}-(0[1-9]|1[0-2])$/.test(String(p||""));
-const prevMonth=()=>{const d=new Date();d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()-1);return d.toISOString().slice(0,7);};
+const prevMonth=()=>{const [y,m]=indiaDate().split("-").map(Number);return new Date(Date.UTC(y,m-2,1)).toISOString().slice(0,7);};
 const addDays=(iso,n)=>new Date(Date.parse(iso+"T00:00:00Z")+n*864e5).toISOString().slice(0,10);
 const monthLabel=(p)=>new Date(p+"-01T00:00:00Z").toLocaleString("en-IN",{month:"long",year:"numeric",timeZone:"UTC"});
 
@@ -113,7 +114,7 @@ export async function itc180(D,env,cid,{days=150,outstanding=null}={}){
   const o=outstanding||await OUT.readOutstandingCached(D,env,cid);
   const pay=o.sides?.payable?.parties||[];
   const ledgers=new Map((await D.all("SELECT name,gstin FROM masters WHERE company_id=? AND kind='ledger'",cid)).map(r=>[r.name,cleanGstin(r.gstin)]));
-  const today=new Date().toISOString().slice(0,10);
+  const today=indiaDate();
   const rows=[];
   for(const p of pay)for(const b of p.bills||[]){
     if(!(b.amount>0)||b.days_old==null||b.days_old<days||!b.date)continue;

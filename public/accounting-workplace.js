@@ -32,8 +32,7 @@ async function companyAccounting(c,el,tab){
       '<label class="field"><span>In the other company: '+esc(c.name)+'\'s ledger</span><input class="in" id="interLedgerB" list="interListB" placeholder="Start typing the ledger name"><datalist id="interListB"></datalist></label>'+
       '<div class="field" style="grid-column:1/-1"><button class="btn primary" id="compare" style="align-self:flex-start">Read Tally &amp; compare</button></div></div></div>'+
       '<div id="interResult" style="margin-top:14px"></div>';
-    const previous=new Date();previous.setMonth(previous.getMonth()-1);
-    $("#interMonth",el).value=previous.toISOString().slice(0,7);
+    $("#interMonth",el).value=localMonth(-1);
     const nowD=new Date(),curFy=nowD.getMonth()>=3?nowD.getFullYear():nowD.getFullYear()-1;
     $("#interFy",el).innerHTML=[0,1,2,3,4,5].map(k=>curFy-k).map(y=>'<option value="'+y+'">FY '+y+'-'+String(y+1).slice(2)+'</option>').join("");
     let icMode="month";

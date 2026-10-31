@@ -263,12 +263,24 @@ export function fromWorkbook(sheets) {
     const value = (r || []).slice(1).find((x) => String(x ?? "").trim());
     if (label && value != null) info[label] = String(value).trim();
   }
-  let period = "";
-  const tp = info["tax period"] || "", fy = info["financial year"] || "";
-  const mi = MONTHS.findIndex((m) => tp.toLowerCase().startsWith(m.toLowerCase().slice(0, 3)));
-  const fyStart = +(/(\d{4})/.exec(fy)?.[1] || 0);
-  if (mi >= 0 && fyStart) period = `${mi + 1 >= 4 ? fyStart : fyStart + 1}-${String(mi + 1).padStart(2, "0")}`;
-  return { kind: "GSTR-2B", gstin: cleanGstin(info["gstin"]), period, gendt: isoDate(info["date of generation"]), docs, rejected: 0 };
+  const { period, months } = taxPeriod(info["tax period"] || "", info["financial year"] || "");
+  return { kind: "GSTR-2B", gstin: cleanGstin(info["gstin"]), period, months, gendt: isoDate(info["date of generation"]), docs, rejected: 0 };
+}
+
+/**
+ * "September" → 2026-09 (one month). A quarterly GSTR-2B (QRMP, file "…_GSTR2BQ_…") names the quarter —
+ * "July - September", "Jul-Sep" — and is filed with the quarter's last month: → 2026-09, 3 months.
+ */
+export function taxPeriod(tp, fy, filename = "") {
+  const t = String(tp || "").toLowerCase();
+  const found = [];
+  for (const m of t.matchAll(/[a-z]{3,}/g)) { const i = MONTHS.findIndex((x) => m[0].startsWith(x.toLowerCase().slice(0, 3))); if (i >= 0) found.push(i); }
+  const fyStart = +(/(\d{4})/.exec(String(fy || ""))?.[1] || 0);
+  if (!found.length || !fyStart) return { period: "", months: 1 };
+  let last = found[found.length - 1], months = 1;
+  if (found.length > 1) months = ((last - found[0] + 12) % 12) + 1;
+  else if (/gstr2bq|quarter/i.test(filename + " " + t)) { last = [2, 2, 2, 5, 5, 5, 8, 8, 8, 11, 11, 11][last]; months = 3; } // Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec
+  return { period: `${last + 1 >= 4 ? fyStart : fyStart + 1}-${String(last + 1).padStart(2, "0")}`, months };
 }
 
 // ---------------------------------------------------------------------------- invoice numbers

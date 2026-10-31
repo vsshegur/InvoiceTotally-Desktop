@@ -181,8 +181,10 @@ const GST_INVOICE_STATUS={matched:"Matched",tax_mismatch:"Amount mismatch",gstin
 const GST_HEADERS=["taxable","igst","cgst","sgst","cess"];
 const GST_ITC=["itcIgst","itcCgst","itcSgst","itcCess"];
 async function companyGstControl(c,el){
-  const d=new Date(),defaultPeriod=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
-  const period=sessionStorage.getItem("it_gst_control_period_"+c.id)||defaultPeriod;
+  // returns are filed for the month just ended
+  const defaultPeriod=localMonth(-1);
+  let saved=null;try{saved=sessionStorage.getItem("it_gst_control_period_"+c.id);}catch{}
+  const period=saved||defaultPeriod;
   el.innerHTML='<div class="gst-wrap">'+
     '<div class="gst-head"><div><h2 style="margin:0">GST reconciliation</h2>'+
     '<p class="muted small" style="margin:4px 0 0">Compare Tally sales and purchases with your GSTR-1, GSTR-3B and GSTR-2B. Nothing is filed or posted.</p></div>'+

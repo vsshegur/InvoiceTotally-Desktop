@@ -148,7 +148,7 @@ export function compare(d, b, tol = 1) {
 // GST journals the app posts from GSTR-2B (reverse-charge tax, ISD, import IGST) are numbered "G2BJ-…".
 export const isGstr2bJournal = (b) => b.kind === "jv" && /^G2BJ-/i.test(String(b.number || ""));
 
-export function reconcile(docs, books0, { tol = 1, period = "", usedElsewhere = new Set() } = {}) {
+export function reconcile(docs, books0, { tol = 1, period = "", usedElsewhere = new Set(), range: given = null } = {}) {
   const results = new Map();
   const used = new Set();
   // Reverse charge: the purchase carries no GST (the supplier didn't charge it); the GST is in the
@@ -226,7 +226,7 @@ export function reconcile(docs, books0, { tol = 1, period = "", usedElsewhere = 
   for (const d of docs) if (d.compare === false) results.set(d.id, { status: "info", mid: null, level: 0, diffs: [], notes: [d.sec === "IMPG" ? "Import of goods (ICEGATE) — not compared with Tally" : "Input Service Distributor credit — not compared with Tally"], method: "" });
 
   // Tally vouchers of this month (by supplier invoice date) that no 2B document claimed
-  const range = periodRange(period);
+  const range = given || periodRange(period); // a quarterly GSTR-2B covers three months
   const booksOnly = books.filter((b) => !used.has(b.id) && !usedElsewhere.has(b.id) && b.tax > 0 &&
     (!range || (b.dt >= range.from && b.dt <= range.to)));
   // the same supplier invoice entered twice in Tally shows up here as the leftover copy

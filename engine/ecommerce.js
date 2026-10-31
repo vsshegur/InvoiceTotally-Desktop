@@ -190,11 +190,14 @@ export async function beforePosting(D,job,tc,readFromTally) {
 export async function recheck(D,id,env) {
   const b=await batch(D,id),c=await company(D,b.company_id);
   if (!env.TALLY?.readOnly) throw new EcommerceError("Read-only Tally connection is unavailable");
-  const rows=await D.all("SELECT * FROM ecommerce_vouchers WHERE batch_id=? AND status IN ('uncertain','duplicate') ORDER BY seq LIMIT 25",id);
+  const rows=await D.all("SELECT * FROM ecommerce_vouchers WHERE batch_id=? AND status IN ('uncertain','duplicate') ORDER BY seq",id);
   if (!rows.length) throw new EcommerceError("No uncertain or duplicate vouchers need rechecking");
   const result={present:0,ready:0};
+  const replies=new Map(); // one Tally read per date
   for(const row of rows) {
-    const reply=await env.TALLY.readOnly(ecommerceExistingRequest(c.tally_company || c.name,row.date));
+    const req=ecommerceExistingRequest(c.tally_company || c.name,row.date);
+    if(!replies.has(req))replies.set(req,await env.TALLY.readOnly(req));
+    const reply=replies.get(req);
     const matching=parseExistingVouchers(reply).some(e=>eq(e.number,row.number)||eq(e.reference,row.number)||(e.narration||"").includes(row.number));
     if(matching) result.present++;else result.ready++;
     await D.update("ecommerce_vouchers",row.id,

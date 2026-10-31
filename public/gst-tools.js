@@ -6,7 +6,7 @@ const GT = {
   dmy: (d) => (d ? String(d).split("-").reverse().join("-") : ""),
   icon: { ok: ["good", "✓"], warn: ["warn", "!"], bad: ["bad", "✗"], none: ["muted", "–"], manual: ["muted", "☐"], todo: ["warn", "○"] },
   href: (cid, link) => (!link ? "" : /^(p2b|g|b|s|e)\//.test(link) ? "#/" + link : `#/c/${cid}/${link}`),
-  prevMonth() { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); },
+  prevMonth() { return localMonth(-1); },
   shift(p, n) { const [y, m] = p.split("-").map(Number); const d = new Date(Date.UTC(y, m - 1 + n, 1)); return d.toISOString().slice(0, 7); },
 };
 let MONTH_END_PERIOD = null;

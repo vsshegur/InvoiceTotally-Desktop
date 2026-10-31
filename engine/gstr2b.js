@@ -2,6 +2,7 @@
 // purchase register (inward vouchers with their GST ledgers) from Tally, the browser matches the two,
 // and the review keeps your decisions (link to another voucher, accept a difference, ignore).
 // Nothing is posted to Tally from here.
+import { indiaDate } from "./invoice-period.js";
 import { newId, now, jload } from "./db.js";
 import * as T from "./tally.js";
 import { getCompany } from "./pipeline.js";
@@ -16,14 +17,26 @@ const str = (s, n) => String(s ?? "").slice(0, n);
 const SECS = new Set(["B2B", "B2BA", "CDNR", "CDNRA", "ECO", "ECOA", "ISD", "IMPG"]);
 export const STATUSES = new Set(["new", "matched", "mismatch", "probable", "missing", "info", "accepted", "ignored"]);
 
-/** Books window: six months before the return month (late filers) to six weeks after (late booking). */
-export function booksWindow(period) {
+/**
+ * Books window: six months before the return's first month (late filers) to six weeks after its last (late booking).
+ * A quarterly GSTR-2B (months = 3) starts two months earlier. Never shorter than the documents' own dates need.
+ */
+export function booksWindow(period, months = 1, docDates = null) {
   const m = /^(\d{4})-(\d{2})$/.exec(period || "");
   if (!m) throw new GstError(400, "Return period missing");
-  const start = new Date(Date.UTC(+m[1], +m[2] - 1 - 6, 1)).toISOString().slice(0, 10);
-  const end = new Date(Date.UTC(+m[1], +m[2], 0) + 45 * 864e5);
-  const today = new Date();
-  return { from: start, to: (end > today ? today : end).toISOString().slice(0, 10) };
+  const span = Math.max(1, Math.min(12, +months || 1));
+  let start = new Date(Date.UTC(+m[1], +m[2] - span - 6, 1)).toISOString().slice(0, 10);
+  let end = new Date(Date.UTC(+m[1], +m[2], 0) + 45 * 864e5);
+  if (docDates?.max) { const e = new Date(Date.parse(docDates.max + "T00:00:00Z") + 45 * 864e5); if (e > end) end = e; }
+  if (docDates?.min && docDates.min < start) start = docDates.min;
+  const e = end.toISOString().slice(0, 10), today = indiaDate();
+  return { from: start, to: e > today ? today : e };
+}
+/** First and last day the return covers: one month, or a quarter. */
+export function returnRange(period, months = 1) {
+  const [y, mo] = String(period).split("-").map(Number);
+  const span = Math.max(1, +months || 1);
+  return { from: new Date(Date.UTC(y, mo - span, 1)).toISOString().slice(0, 10), to: new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10) };
 }
 
 async function getReturn(D, rid) { return must(await D.first("SELECT * FROM gst_returns WHERE id=?", rid), "GSTR-2B not found"); }
@@ -34,8 +47,9 @@ export async function create(D, cid, body) {
   const period = String(body.period || "");
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) throw new GstError(400, "Pick the month this GSTR-2B is for");
   const id = newId();
-  const w = booksWindow(period);
-  await D.insert("gst_returns", { id, company_id: c.id, period, gstin: str(body.gstin, 15).toUpperCase(), kind: body.kind === "GSTR-2A" ? "GSTR-2A" : "GSTR-2B",
+  const months = +body.months === 3 ? 3 : 1;
+  const w = booksWindow(period, months);
+  await D.insert("gst_returns", { id, company_id: c.id, period, months, gstin: str(body.gstin, 15).toUpperCase(), kind: body.kind === "GSTR-2A" ? "GSTR-2A" : "GSTR-2B",
     filename: str(body.filename || "GSTR-2B", 160), source: body.source === "excel" ? "excel" : "json", gendt: iso(body.gendt), rejected: Math.max(0, +body.rejected || 0),
     stage: "uploading", books_from: w.from, books_to: w.to, tol: Math.min(100, Math.max(0, +body.tol || 1)), created_at: now() });
   return { id };
@@ -81,7 +95,14 @@ export async function start(D, rid) {
 export async function askTally(D, rid) {
   const g = await getReturn(D, rid);
   const c = await getCompany(D, g.company_id);
-  const w = booksWindow(g.period);
+  // a quarterly file saved by an earlier version as its first month: fix it (period = the quarter's last month)
+  if (/gstr2bq/i.test(g.filename || "") && (+g.months || 1) === 1) {
+    const [y, mo] = g.period.split("-").map(Number), last = Math.ceil(mo / 3) * 3;
+    g.period = `${y}-${String(last).padStart(2, "0")}`; g.months = 3;
+    await D.update("gst_returns", rid, { period: g.period, months: 3 });
+  }
+  const dates = await D.first("SELECT min(dt) min, max(dt) max FROM gst_docs WHERE return_id=? AND dt IS NOT NULL", rid);
+  const w = booksWindow(g.period, g.months, dates);
   const t = now();
   await D.batch([
     D.stmt("DELETE FROM jobs WHERE company_id=? AND kind='export_purchase_gst' AND status='pending' AND invoice_id=?", c.id, rid),
@@ -125,7 +146,7 @@ export async function view(D, rid) {
   const [[g], docs] = await D.many([["SELECT * FROM gst_returns WHERE id=?", rid], ["SELECT * FROM gst_docs WHERE return_id=? ORDER BY seq", rid]]);
   must(g, "GSTR-2B not found");
   for (const d of docs) { d.diffs = jload(d.diffs, []); d.notes = jload(d.notes, []); d.rev = !!d.rev; d.compare = !!d.compare; }
-  return { ...g, summary: jload(g.summary, null), docs };
+  return { ...g, summary: jload(g.summary, null), range: (+g.months || 1) > 1 ? returnRange(g.period, g.months) : null, docs };
 }
 
 /** What the browser needs to match: the vouchers read from Tally, the ledgers, and vouchers other months already claimed. */

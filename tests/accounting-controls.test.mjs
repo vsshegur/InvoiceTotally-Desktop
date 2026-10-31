@@ -287,7 +287,9 @@ test("pre-post invoice guard blocks actual Tally duplicates but not same amount 
     '<PARTYLEDGERNAME>SUPPLIER A</PARTYLEDGERNAME></VOUCHER></BODY></ENVELOPE>';
   const identity=DUP.identifyVoucher(xml);
   assert.deepEqual(identity,{date:"20260910",number:"SY/244",reference:"SY/244",
-    party:"SUPPLIER A",type:"Purchase"});
+    party:"SUPPLIER A",type:"Purchase",gstin:""});
+  // the same bill typed by hand days later, number written differently
+  assert.equal(DUP.exactDuplicate(identity,[{date:"20260913",number:"77",reference:"sy-0244",type:"Purchase",party:"SUPPLIER A"}]).number,"77");
   const existing=[
     {date:"20260910",number:"TALLY 0001",reference:"SY/244",type:"Purchase",party:"SUPPLIER A"},
     {date:"20260910",number:"SY/244",reference:"SY/244",type:"Purchase",party:"SUPPLIER B"},
@@ -300,7 +302,8 @@ test("pre-post invoice guard blocks actual Tally duplicates but not same amount 
     '<PARTYLEDGERNAME>SUPPLIER A</PARTYLEDGERNAME></VOUCHER></COLLECTION></ENVELOPE>';
   const job={payload:xml};
   assert.equal((await DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async request=>{
-    assert.match(request,/ITECommerceExisting/);return reply;
+    assert.match(request,/ITECommerceExisting/);
+    assert.match(request,/<SVFROMDATE TYPE="Date">20260727<\/SVFROMDATE><SVTODATE TYPE="Date">20261025</,"45 days either side");return reply;
   })).duplicate,true);
   assert.equal((await DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async()=>
     "<ENVELOPE><COLLECTION></COLLECTION></ENVELOPE>")).duplicate,false);

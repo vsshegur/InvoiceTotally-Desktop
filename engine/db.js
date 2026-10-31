@@ -152,6 +152,7 @@ export const MIGRATIONS = [
   "ALTER TABLE bank_lines ADD COLUMN confirmed_new INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE gst_docs ADD COLUMN rates TEXT",
   "ALTER TABLE masters ADD COLUMN reg_type TEXT",
+  "ALTER TABLE gst_returns ADD COLUMN months INTEGER DEFAULT 1",
   "ALTER TABLE masters ADD COLUMN tax_type TEXT",
   "ALTER TABLE masters ADD COLUMN duty_head TEXT",
   "ALTER TABLE masters ADD COLUMN gst_app TEXT",

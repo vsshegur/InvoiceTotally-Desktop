@@ -90,18 +90,18 @@ export function ecommerceVoucher(company, row, mapping, reg = null) {
 
 // A read-only per-company Tally collection, used immediately before EVERY posting, even
 // if the voucher was queued yesterday while Tally was offline. Never silently duplicate.
-export function ecommerceExistingRequest(company, date) {
-  const d = tallyDate(date);
+export function ecommerceExistingRequest(company, date, toDate = null) {
+  const d = tallyDate(date), e = tallyDate(toDate || date);
   return '<ENVELOPE><HEADER><VERSION>1</VERSION><TALLYREQUEST>Export</TALLYREQUEST>' +
     '<TYPE>Collection</TYPE><ID>ITECommerceExisting</ID></HEADER><BODY><DESC><STATICVARIABLES>' +
     '<SVEXPORTFORMAT>$$SysName:XML</SVEXPORTFORMAT><SVCURRENTCOMPANY>' + esc(company) +
     '</SVCURRENTCOMPANY><SVFROMDATE TYPE="Date">' + d +
-    '</SVFROMDATE><SVTODATE TYPE="Date">' + d + '</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE>' +
+    '</SVFROMDATE><SVTODATE TYPE="Date">' + e + '</SVTODATE></STATICVARIABLES><TDL><TDLMESSAGE>' +
     '<COLLECTION NAME="ITECommerceExisting" ISMODIFY="No"><TYPE>Voucher</TYPE>' +
     '<FILTER>ITECommerceDateFilter</FILTER>' +
-    '<FETCH>Date,VoucherNumber,VoucherTypeName,PartyLedgerName,Amount,Reference,Narration</FETCH>' +
+    '<FETCH>Date,VoucherNumber,VoucherTypeName,PartyLedgerName,Amount,Reference,Narration,PartyGSTIN</FETCH>' +
     '</COLLECTION><SYSTEM TYPE="Formulae" NAME="ITECommerceDateFilter">' +
-    '$Date = ##SVFromDate</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
+    (toDate ? '$Date >= ##SVFromDate AND $Date <= ##SVToDate' : '$Date = ##SVFromDate') + '</SYSTEM></TDLMESSAGE></TDL></DESC></BODY></ENVELOPE>';
 }
 
 // Used with exportData's read-only response. Match on document identity, never only the amount.
@@ -115,7 +115,7 @@ export function parseExistingVouchers(xml) {
   for (const m of input.matchAll(/<VOUCHER\b[^>]*>([\s\S]*?)<\/VOUCHER>/gi)) {
     const tag = (n) => un(new RegExp("<" + n + ">([\\s\\S]*?)</" + n + ">", "i").exec(m[1])?.[1] || "").trim();
     out.push({ number: tag("VOUCHERNUMBER"), type: tag("VOUCHERTYPENAME"),
-      date: tag("DATE"), reference: tag("REFERENCE"), narration: tag("NARRATION"), party: tag("PARTYLEDGERNAME"), amount: Number(tag("AMOUNT")) || 0 });
+      date: tag("DATE"), reference: tag("REFERENCE"), narration: tag("NARRATION"), party: tag("PARTYLEDGERNAME"), gstin: tag("PARTYGSTIN").toUpperCase(), amount: Number(tag("AMOUNT")) || 0 });
   }
   return out;
 }
