@@ -109,6 +109,10 @@ export const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS dashboard_balances (
     company_id TEXT NOT NULL, ledger TEXT NOT NULL, parent TEXT, amount REAL NOT NULL, fetched_at REAL,
     PRIMARY KEY(company_id, ledger))`,
+  `CREATE TABLE IF NOT EXISTS supplier_followups (
+    company_id TEXT NOT NULL, book_id TEXT NOT NULL, gstin TEXT, party TEXT, num TEXT, dt TEXT, val REAL, tax REAL,
+    first_period TEXT, last_period TEXT, status TEXT NOT NULL DEFAULT 'open', messaged_at REAL, fixed_period TEXT, created_at REAL,
+    PRIMARY KEY(company_id, book_id))`,
   `CREATE TABLE IF NOT EXISTS gst_control (
     id TEXT PRIMARY KEY, company_id TEXT NOT NULL, period TEXT NOT NULL, gstin TEXT, portal_gstr1 TEXT,
     portal_gstr3b TEXT, tally_sales TEXT, tally_purchases TEXT, result TEXT, reviewed_at REAL, updated_at REAL,
@@ -148,6 +152,9 @@ export const MIGRATIONS = [
   "ALTER TABLE bank_lines ADD COLUMN confirmed_new INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE gst_docs ADD COLUMN rates TEXT",
   "ALTER TABLE masters ADD COLUMN reg_type TEXT",
+  "ALTER TABLE masters ADD COLUMN tax_type TEXT",
+  "ALTER TABLE masters ADD COLUMN duty_head TEXT",
+  "ALTER TABLE masters ADD COLUMN gst_app TEXT",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN rates TEXT",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN rcm INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN itc_n INTEGER NOT NULL DEFAULT 0",

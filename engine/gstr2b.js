@@ -158,6 +158,16 @@ export async function saveMatches(D, rid, body) {
       JSON.stringify((r.diffs || []).slice(0, 10)), JSON.stringify((r.notes || []).map((n) => str(n, 200)).slice(0, 8)), Math.max(0, Math.min(2, +r.level || 0)), String(r.id), rid));
   }
   stmts.push(D.updateStmt("gst_returns", rid, { matched_at: now(), summary: JSON.stringify(body.summary || null), books_only: JSON.stringify((body.books_only || []).slice(0, 3000)) }));
+  // supplier follow-up: invoices in Tally that the supplier has not filed (open), and ones now found in a GSTR-2B (fixed)
+  for (const r of res) if (r.mid && ["matched", "probable", "mismatch"].includes(r.status))
+    stmts.push(D.stmt("UPDATE supplier_followups SET status='fixed', fixed_period=? WHERE company_id=? AND book_id=? AND status='open'", g.period, g.company_id, str(r.mid, 60)));
+  for (const b of (body.books_only_items || []).slice(0, 3000)) {
+    if (!b?.id) continue;
+    stmts.push(D.stmt(`INSERT INTO supplier_followups (company_id, book_id, gstin, party, num, dt, val, tax, first_period, last_period, status, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,'open',?) ON CONFLICT(company_id, book_id) DO UPDATE SET gstin=excluded.gstin, party=excluded.party, num=excluded.num,
+      dt=excluded.dt, val=excluded.val, tax=excluded.tax, last_period=excluded.last_period, status='open', fixed_period=NULL`,
+      g.company_id, str(b.id, 60), str(b.gstin, 15).toUpperCase(), str(b.party, 200), str(b.num, 60), iso(b.dt), r2(b.val), r2(b.tax), g.period, g.period, now()));
+  }
   for (let i = 0; i < stmts.length; i += 90) await D.batch(stmts.slice(i, i + 90));
   return { ok: true, saved: res.length, period: g.period };
 }

@@ -444,3 +444,11 @@ From Tally's own reasons (GSTR-3B → Uncertain Transactions):
 - **"Taxability Type is invalid or not specified"** (Flipkart / Meesho fee lines, expenses) — each such line carries Taxable, the GST rate and Goods/Services.
 - GSTIN from Tally: when the bill's GSTIN is missing or misread, the matched ledger's GSTIN is used (the AI's reading is kept for reference); when the bill shows a *different valid* GSTIN, the invoice waits with a "Use GSTIN from Tally" button (Party step and invoice page).
 - RCM at any rate: `GSTR2B RCM 5%`, `GSTR2B RCM 18%` …
+
+## Version 4.5.0 — month-end, GST checks before posting, Tally ledger health, 180-day ITC, supplier follow-up; reorganised
+- **Clean for GSTR-3B (before posting):** every bill is checked the way Tally's GSTR-3B checks it afterwards — party ledger GSTIN present and valid, registration type, state, IGST vs CGST + SGST by the party's state, CGST = SGST, tax ledgers under Duties & Taxes and the right head, stock items with a GST rate, unregistered parties charging GST. Errors hold the bill back with the exact fix; the invoice list shows "✓ Clean for GSTR-3B".
+- **Tally ledger health:** parties without a GSTIN (with the GSTIN seen on their bills or in GSTR-2B), wrong state, registration type, the same GSTIN on two ledgers, GST tax ledgers not set as GST, fee/expense ledgers without GST details, stock items without GST rate/HSN — each with what to change in Tally. Import masters now also reads each ledger's GST details.
+- **Month-end closing:** a checklist per month (GSTR-2B matched and posted, bills posted, GST checks, bank posted with nothing in Suspense, marketplace sales, suppliers asked, ledger health, Tally's uncertain transactions) and a GSTR-3B estimate: output tax, ITC from GSTR-2B, reverse charge, estimated cash to pay.
+- **180-day ITC:** unpaid supplier bills 150+ days old from Tally, the date to pay by, and the GST at stake (from the app's bills or GSTR-2B).
+- **Supplier follow-up:** invoices in your books that suppliers haven't filed, kept from each GSTR-2B match, with a WhatsApp message per supplier, "asked" tracking, and closing by themselves when a later GSTR-2B has them.
+- **Reorganised:** Home (this month's closing, what to post, GST health, what needs you), and the sidebar by job: Post to Tally · GST · Parties & bills · Setup.

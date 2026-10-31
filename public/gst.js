@@ -155,7 +155,8 @@ async function gstData(rid, GM) {
   if (fresh) {
     const r = GM.reconcile(s.docs, books, opts);
     const summary = GM.summarize(s.docs, r.results, r.booksOnly, r.byMid);
-    await api(`/gstr2b/${rid}/matches`, { body: { results: [...r.results].map(([id, x]) => ({ id, ...x })), summary, books_only: r.booksOnly.map((b) => b.id) }, quiet: true });
+    await api(`/gstr2b/${rid}/matches`, { body: { results: [...r.results].map(([id, x]) => ({ id, ...x })), summary, books_only: r.booksOnly.map((b) => b.id),
+      books_only_items: r.booksOnly.map((b) => ({ id: b.id, gstin: b.gstin, party: b.party, num: b.num || b.number, dt: b.dt, val: b.val, tax: b.tax })) }, quiet: true });
     s = await api(`/gstr2b/${rid}`, { quiet: true });
   }
   const r = GM.reconcile(s.docs, books, opts);

@@ -7,6 +7,7 @@ import { cleanGstin, gstinValid, stateCode, stateName } from "./gst.js";
 import { parseAmount } from "./num.js";
 import {normalizeInvoiceDate,invoiceDateReview} from "./invoice-period.js";
 import {normalizePurchase} from "./line-normalize.js";
+import {gstContext,applyGstCheck} from "./gst-preflight.js";
 
 const STALE = 240; // seconds before a claimed unit is considered abandoned
 const TRIES = 4;   // a file or invoice is tried this many times, then shown as failed with the reason (never endless)
@@ -282,6 +283,7 @@ export async function loadInvoice(D, invId) {
   inv.date_review=invoiceDateReview(inv);
   inv.steps = stepStatus(inv);
   inv.computed_total = computedTotal(inv);
+  applyGstCheck(inv, await gstContext(D, inv.company_id, [inv]));
   return inv;
 }
 
@@ -309,6 +311,7 @@ export async function loadBatchInvoices(D, batchId, statuses = null) {
     inv.steps = stepStatus(inv);
     inv.computed_total = computedTotal(inv);
   }
+  if (invs.length) { const ctx = await gstContext(D, invs[0].company_id, invs); for (const inv of invs) applyGstCheck(inv, ctx); }
   return invs;
 }
 
@@ -434,10 +437,10 @@ export async function storeMastersChunk(D, cid, jobKind, rows, part) {
   for (const r of rows) {
     if (!r.name) continue;
     stmts.push(D.stmt("DELETE FROM masters WHERE company_id=? AND kind=? AND name=? AND pending=1", cid, kind, r.name));
-    stmts.push(D.stmt(`INSERT INTO masters (company_id, kind, name, uname, parent, primary_group, gstin, state, hsn, gst_rate, unit, reg_type, pending)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)`, cid, kind, r.name, M.norm(r.name), r.parent || "",
+    stmts.push(D.stmt(`INSERT INTO masters (company_id, kind, name, uname, parent, primary_group, gstin, state, hsn, gst_rate, unit, reg_type, tax_type, duty_head, gst_app, pending)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0)`, cid, kind, r.name, M.norm(r.name), r.parent || "",
       kind === "ledger" ? T.resolvePrimary(groups, r.parent || "") : null, cleanGstin(r.gstin) || null, r.state || null,
-      r.hsn || null, r.gst_rate ?? null, r.unit || null, r.reg_type || null));
+      r.hsn || null, r.gst_rate ?? null, r.unit || null, r.reg_type || null, r.tax_type || null, r.duty_head || null, r.gst_app || null));
   }
   await D.batch(stmts);
 }

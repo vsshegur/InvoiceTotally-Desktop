@@ -7,6 +7,13 @@
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/** "Clean in GSTR-3B" — the GST checks Tally makes afterwards, done before posting (engine/gst-preflight.js). */
+function gstCheckBadge(gc) {
+  if (!gc) return "";
+  if (gc.errors.length) return `<div class="bad small" title="${esc(gc.errors.join("\n"))}">✗ GST: ${gc.errors.length} to fix</div>`;
+  if (gc.warnings.length) return `<div class="warn small" title="${esc(gc.warnings.join("\n"))}">⚠ GST: ${gc.warnings.length} to check</div>`;
+  return `<div class="good small" title="Party GSTIN, state, registration, IGST vs CGST+SGST and tax ledgers checked">✓ Clean for GSTR-3B</div>`;
+}
 /** The GSTIN check of an invoice's party (see engine/gstin-check.js): ✓ Verified / ✓ Check digit OK · new / ⚠ / ✗ Misread. */
 function gstinBadge(ck, withDetail = false) {
   if (!ck) return "";
@@ -209,7 +216,7 @@ const routes = [
   [/^#\/admin$/, viewAdmin],
   [/^#\/admin\/u\/([^/]+)$/, (e) => viewAdminUser(decodeURIComponent(e))],
   [/^#\/c\/(\w+)$/, (cid) => viewCompany(cid, "overview")],
-  [/^#\/c\/(\w+)\/(overview|batches|ageing|settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|diagnostics)$/, viewCompany],
+  [/^#\/c\/(\w+)\/(overview|monthend|batches|ageing|settings|masters|jobs|bank|gstr2b|ecommerce|gstcontrol|smartmaps|actions|intercompany|diagnostics|followup|health|itc180)$/, viewCompany],
   [/^#\/c\/(\w+)\/bank\/upload$/, (cid) => viewBankUpload(cid)],
   [/^#\/c\/(\w+)\/ecommerce\/upload$/, (cid) => viewEcommerceUpload(cid)],
   [/^#\/e\/(\w+)$/, (id) => viewEcommerceBatch(id)],
@@ -641,28 +648,32 @@ function companyModal() {
 // ---------------------------------------------------------------------------
 // The company's navigation, grouped by what the person is doing. Diagnostics is deliberately the last item.
 const COMPANY_NAV = [
-  [null, [["overview", "Overview", "⌂"], ["actions", "Action Center", "◎"]]],
-  ["Post to Tally", [["batches", "Invoices", "▤"], ["bank", "Bank statements", "▥"], ["ecommerce", "E-Commerce → Tally", "⇄"]]],
-  ["Reconcile", [["gstr2b", "GSTR-2B", "§"], ["gstcontrol", "GST reconciliation", "≡"], ["intercompany", "Inter-company", "⇋"]]],
-  ["Parties & bills", [["ageing", "Outstanding & ageing", "₹"], ["masters", "Masters", "☰"], ["smartmaps", "Smart matching", "✦"]]],
-  ["System", [["jobs", "Tally log", "⟲"], ["settings", "Settings", "⚙"], ["diagnostics", "Diagnostics", "✚"]]],
+  [null, [["overview", "Home", "⌂"], ["monthend", "Month-end", "◷"], ["actions", "Action Center", "◎"]]],
+  ["Post to Tally", [["batches", "Invoices & GSTR-2B", "▤"], ["bank", "Bank statements", "▥"], ["ecommerce", "Marketplace sales", "⇄"]]],
+  ["GST", [["gstr2b", "GSTR-2B matching", "§"], ["followup", "Supplier follow-up", "✉"], ["gstcontrol", "GST returns check", "≡"], ["health", "Tally ledger health", "✓"]]],
+  ["Parties & bills", [["ageing", "Outstanding & ageing", "₹"], ["itc180", "180-day ITC", "⏱"], ["intercompany", "Inter-company", "⇋"]]],
+  ["Setup", [["masters", "Masters", "☰"], ["smartmaps", "Remembered choices", "✦"], ["settings", "Settings", "⚙"], ["jobs", "Tally log", "⟲"], ["diagnostics", "Diagnostics", "✚"]]],
 ];
 // Admin can switch features off per user (ME.licence.disabled_features); hidden here and refused by the API.
-const TAB_FEATURE = { settings: "company_settings", "gstr2b-purchase": "gstr2b_purchase", actions: "actions", masters: "masters", smartmaps: "smartmaps", batches: "invoices|gstr2b_purchase", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
+const TAB_FEATURE = { monthend: "month_end", followup: "supplier_followup", health: "tally_health", itc180: "itc_180", settings: "company_settings", "gstr2b-purchase": "gstr2b_purchase", actions: "actions", masters: "masters", smartmaps: "smartmaps", batches: "invoices|gstr2b_purchase", bank: "bank", ecommerce: "ecommerce", gstr2b: "gstr2b", gstcontrol: "gstcontrol", intercompany: "intercompany", ageing: "ageing" };
 // "a|b" = allowed when either is on (the Invoices page serves both the invoice upload and the GSTR-2B upload)
 const featureOn = (k) => !k || !!ME?.licence?.admin || k.split("|").some((x) => !(ME?.licence?.disabled_features || []).includes(x));
 const TAB_INFO = {
-  overview: ["Overview", "Where things stand for this company, and where to start."],
+  overview: ["Home", "This month, what needs you, and where to start."],
+  monthend: ["Month-end closing", "Everything to finish for a month, and what GSTR-3B is likely to be."],
+  followup: ["Supplier follow-up", "Invoices in your books that suppliers haven't filed — ITC waiting on them."],
+  health: ["Tally ledger health", "Masters that would put vouchers into GSTR-3B uncertain transactions, with the fix."],
+  itc180: ["180-day ITC", "Unpaid supplier bills whose input tax credit is lost after 180 days."],
   actions: ["Action Center", "Everything that needs a decision, in one list."],
-  batches: ["Invoices", "Read purchase and sales invoices, check them, and post them to Tally."],
+  batches: ["Invoices & GSTR-2B", "Bills from photos, PDFs or Excel — or the whole GSTR-2B — checked and posted to Tally."],
   bank: ["Bank statements", "Match a bank statement to ledgers and bills, then post the entries."],
-  ecommerce: ["E-Commerce → Tally", "Offline Meesho, Flipkart and Amazon sales and settlements."],
-  gstr2b: ["GSTR-2B", "Compare the GST portal's purchase data with what is booked in Tally."],
-  gstcontrol: ["GST reconciliation", "GSTR-1, GSTR-2B and GSTR-3B against your books."],
+  ecommerce: ["Marketplace sales", "Meesho, Flipkart and Amazon GST reports posted to Tally."],
+  gstr2b: ["GSTR-2B matching", "Compare the GST portal's purchase data with what is booked in Tally."],
+  gstcontrol: ["GST returns check", "GSTR-1, GSTR-2B and GSTR-3B against your books."],
   intercompany: ["Inter-company reconciliation", "Check that two of your companies agree on what they owe each other."],
   ageing: ["Outstanding & ageing", "Who owes you and whom you owe, how old it is — and share it on WhatsApp or as a PDF."],
   masters: ["Masters", "Ledgers, stock items, groups and units read from Tally."],
-  smartmaps: ["Smart matching", "What the app has learned about your ledgers and items."],
+  smartmaps: ["Remembered choices", "What the app fills in by itself — parties, ledgers, items — and suggestions to review."],
   jobs: ["Tally log", "Everything sent to Tally, and what came back."],
   settings: ["Settings", "This company's names, defaults and invoice readers."],
   diagnostics: ["Diagnostics", "Health of this app, its database, backups and the Tally connection."],
@@ -705,27 +716,46 @@ async function viewCompany(cid, tab) {
   if (tab === "ecommerce") return companyEcommerce(c, el);
   if (tab === "gstcontrol") return companyGstControl(c, el);
   if (tab === "smartmaps") return companySmartMappings(c, el);
+  if (tab === "monthend") return companyMonthEnd(c, el);
+  if (tab === "followup") return companyFollowup(c, el);
+  if (tab === "health") return companyHealth(c, el);
+  if (tab === "itc180") return companyItc180(c, el);
 }
 
 // The company's home: what to do, and what is waiting.
 async function companyOverview(c, el) {
-  const [ac, batches, stmts] = await Promise.all([
-    api(`/companies/${c.id}/action-center`).catch(() => null),
-    api(`/companies/${c.id}/batches`).catch(() => []),
-    api(`/companies/${c.id}/bank`).catch(() => []),
+  const [ac, batches, stmts, month] = await Promise.all([
+    featureOn("actions") ? api(`/companies/${c.id}/action-center`).catch(() => null) : null,
+    featureOn("invoices") ? api(`/companies/${c.id}/batches`).catch(() => []) : [],
+    featureOn("bank") ? api(`/companies/${c.id}/bank`).catch(() => []) : [],
+    featureOn("month_end") ? api(`/companies/${c.id}/month-end`, { quiet: true }).catch(() => null) : null,
   ]);
   const help = tallyHelp(c);
   const todo = ac ? Object.values(ac.counts).reduce((a, b) => a + b, 0) : 0;
   const tile = (href, icon, title, text) => `<a class="tile" href="${href}"><span class="ti">${icon}</span><b>${title}</b><span class="muted small">${text}</span></a>`;
+  const rupees = (n) => "₹" + Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 0 });
+  const open = month ? month.steps.filter((x) => ["warn", "bad", "todo"].includes(x.state)) : [];
+  const stepOf = (k) => month?.steps.find((x) => x.key === k);
   el.innerHTML = (help ? `<div class="alert warn" style="margin-bottom:14px">${help}</div>` : "") +
     (!c.masters.ledger ? `<div class="alert warn" style="margin-bottom:14px">${c.pending_jobs ? "Reading your ledgers and stock items from Tally…" : "Masters aren't imported yet. Press <b>Import masters</b> (top right) so entries can be matched to your ledgers and stock items."}</div>` : "") +
-    `<div class="eyebrow" style="margin-bottom:8px">Start something</div>
+    (month ? `<div class="card ov-month"><div><div class="eyebrow">${esc(month.label)} closing</div>
+        <h2 style="margin:4px 0 6px">${month.done} of ${month.of} done${month.gstr3b ? ` <span class="muted small" style="font-weight:400">· GSTR-3B cash ≈ ${rupees(month.gstr3b.cash_estimate)}</span>` : ""}</h2>
+        ${open.length ? `<ul class="small" style="margin:0;padding-left:18px">${open.slice(0, 4).map((x) => `<li><b>${esc(x.title)}</b> <span class="muted">— ${esc(x.detail)}</span></li>`).join("")}</ul>` : `<div class="good small">✓ Everything this app can check is done.</div>`}</div>
+        <a class="btn primary" href="#/c/${c.id}/monthend">Open month-end →</a></div>` : "") +
+    `<div class="eyebrow" style="margin:18px 0 8px">Post to Tally</div>
     <div class="tiles">
-      ${[["invoices", `#/c/${c.id}/upload`, "▤", "Upload invoices", "PDF, photo or Excel purchase and sales invoices"],
-        ["bank", `#/c/${c.id}/bank/upload`, "▥", "Upload a bank statement", "Match it to ledgers and bills, then post"],
-        ["ageing", `#/c/${c.id}/ageing`, "₹", "Outstanding & ageing", "Receivables and payables — share on WhatsApp or PDF"],
-        ["intercompany", `#/c/${c.id}/intercompany`, "⇋", "Inter-company check", "Do two of your companies agree?"],
-        ["gstcontrol", `#/c/${c.id}/gstcontrol`, "≡", "GST reconciliation", "GSTR-1, 2B and 3B against your books"]]
+      ${[["invoices", `#/c/${c.id}/upload`, "▤", "Upload bills", "Photos, PDFs or Excel — purchase and sales"],
+        ["gstr2b_purchase", `#/c/${c.id}/gstr2b-purchase`, "§", "GSTR-2B → Tally", "Every GSTR-2B entry as a Tally voucher"],
+        ["bank", `#/c/${c.id}/bank/upload`, "▥", "Upload a bank statement", "Excel, CSV, .xls or PDF — any bank"],
+        ["ecommerce", `#/c/${c.id}/ecommerce/upload`, "⇄", "Marketplace sales", "Meesho, Flipkart, Amazon GST reports"]]
+        .filter((t) => featureOn(t[0])).map((t) => tile(...t.slice(1))).join("")}
+    </div>
+    <div class="eyebrow" style="margin:18px 0 8px">GST health</div>
+    <div class="tiles">
+      ${[["tally_health", `#/c/${c.id}/health`, "✓", "Tally ledger health", stepOf("health") ? esc(stepOf("health").detail) : "Ledgers that would make vouchers uncertain"],
+        ["supplier_followup", `#/c/${c.id}/followup`, "✉", "Supplier follow-up", month?.followups?.open ? `${month.followups.open} invoice(s) · ITC ${rupees(month.followups.tax)} waiting` : "Invoices suppliers haven't filed"],
+        ["itc_180", `#/c/${c.id}/itc180`, "⏱", "180-day ITC", "Unpaid supplier bills before ITC is lost"],
+        ["gstcontrol", `#/c/${c.id}/gstcontrol`, "≡", "GST returns check", "GSTR-1, 2B and 3B against your books"]]
         .filter((t) => featureOn(t[0])).map((t) => tile(...t.slice(1))).join("")}
     </div>
     <div class="cols-ov">
@@ -735,7 +765,7 @@ async function companyOverview(c, el) {
           : `<div class="card empty">Nothing is waiting. 🎉</div>`}</section>
       <section><div class="eyebrow" style="margin:18px 0 8px">Recent</div>
         <div class="card flush"><table class="grid"><tbody>
-        ${batches.slice(0, 4).map((b) => `<tr class="click" data-href="#/b/${b.id}"><td>Invoices · <b>${esc(b.name)}</b></td><td class="muted num">${ago(b.created_at)}</td></tr>`).join("")}
+        ${batches.slice(0, 4).map((b) => `<tr class="click" data-href="#/b/${b.id}"><td>Bills · <b>${esc(b.name)}</b></td><td class="muted num">${ago(b.created_at)}</td></tr>`).join("")}
         ${(Array.isArray(stmts) ? stmts : []).slice(0, 3).map((s) => `<tr class="click" data-href="#/s/${s.id}"><td>Bank · <b>${esc(s.name)}</b></td><td class="muted num">${ago(s.created_at)}</td></tr>`).join("")}
         ${!batches.length && !(Array.isArray(stmts) && stmts.length) ? `<tr><td class="muted">Nothing uploaded yet.</td></tr>` : ""}</tbody></table></div></section>
     </div>`;
@@ -1052,10 +1082,10 @@ async function viewBatch(bid) {
       <b>${esc(f.filename)}</b>: ${esc(f.note)} <span class="muted">(try ${f.attempts || 1} of 4 — it tries again by itself in a moment)</span></div></div>`).join("")}
     ${failedFiles.map((f) => `<div style="padding:8px 16px 0"><div class="alert bad">${esc(f.filename)}: ${esc(f.error || "failed")}</div></div>`).join("")}
     ${b.invoices.length ? `<div style="padding:14px 16px 4px" class="eyebrow">${b.invoices.length} invoice${b.invoices.length > 1 ? "s" : ""}</div>
-    <table class="grid"><thead><tr><th>Invoice</th><th>Date</th><th>Party</th><th title="Check digit of the GSTIN read from the invoice, and whether your Tally masters or GSTR-2B already have it">GSTIN check</th><th class="num">Lines</th><th class="num">Total</th><th>State</th></tr></thead><tbody>
+    <table class="grid"><thead><tr><th>Invoice</th><th>Date</th><th>Party</th><th title="GSTIN check digit / Tally / GSTR-2B, and the GST checks Tally's GSTR-3B makes (Clean for GSTR-3B)">GSTIN &amp; GST check</th><th class="num">Lines</th><th class="num">Total</th><th>State</th></tr></thead><tbody>
     ${b.invoices.map((i) => `<tr class="click" data-href="#/i/${i.id}"><td><b>${esc(i.number || "—")}</b>${i.warnings.length ? ` <span class="warn" title="${esc(i.warnings.join("\n"))}">⚠</span>` : ""}${i.date_review?.needs_review?` <span class="bad" title="${esc(i.date_review.reasons.join("\n"))}">⚠ Have a look</span>`:""}</td>
       <td class="mono">${fmtDate(i.date)}</td><td>${esc(i.party_name || "—")}${i.party_ledger ? ` <span class="faint">→</span> <span class="muted">${esc(i.party_ledger)}</span>` : ""}</td>
-      <td>${i.party_gstin ? `<div class="mono small">${esc(i.party_gstin)}</div>` : ""}${i.gstin_from_tally ? '<span class="good small" title="Taken from the party\'s Tally ledger">✓ From Tally</span>' : gstinBadge(i.gstin_check)}</td>
+      <td>${i.party_gstin ? `<div class="mono small">${esc(i.party_gstin)}</div>` : ""}${i.gstin_from_tally ? '<span class="good small" title="Taken from the party\'s Tally ledger">✓ From Tally</span>' : gstinBadge(i.gstin_check)}${i.status === "synced" ? "" : gstCheckBadge(i.gst_check)}</td>
       <td class="num">${i.lines || ""}</td><td class="num">${["pending", "reading"].includes(i.status) ? "" : money(i.total)}</td>
       <td class="${i.status === "synced" ? "good" : i.status === "failed" || i.status === "error" ? "bad" : ""}">${["pending", "reading"].includes(i.status) ? '<span class="spin" style="display:inline-block;vertical-align:-2px"></span> ' : ""}${esc(i.state)}${i.error ? `<div class="muted" style="font-size:12px">${esc(i.error)}</div>` : ""}</td></tr>`).join("")}
     </tbody></table>` : ""}`;
@@ -1531,6 +1561,8 @@ async function viewInvoice(iid) {
       ${h.handwritten ? `<div class="alert warn" style="margin-bottom:6px">Handwritten invoice — please double-check every figure, especially the year.</div>` : ""}
       ${h.rechecked ? `<div class="alert ok" style="margin-bottom:6px">The first reading didn't add up, so it was read a second time${h.ai?.rechecked_by ? ` by ${esc(h.ai.rechecked_by)}` : ""}${(h.warnings || []).length ? " — the notes above are what still needs your eye" : " — everything adds up now"}.</div>` : ""}
       ${h.ai ? `<div class="muted" style="font-size:12.5px;margin-bottom:8px">Read by <b>${esc(h.ai.read_by)}</b>${h.ai.rechecked_by ? ` · checked by <b>${esc(h.ai.rechecked_by)}</b>` : ""}${h.ai.cost_usd ? ` · AI cost ≈ ₹${(h.ai.cost_usd * 88).toFixed(2)}` : ""}${h.ai.skipped ? `<div class="small" title="${esc(h.ai.skipped)}">Skipped first: ${esc(h.ai.skipped.slice(0, 160))}</div>` : ""}</div>` : ""}
+      ${inv.gst_check && inv.status !== "synced" ? (inv.gst_check.clean ? `<div class="alert good" style="margin-bottom:6px">✓ <b>Clean for GSTR-3B</b> — party GSTIN, state and registration, IGST vs CGST + SGST and tax ledgers all check out.</div>`
+        : `<div class="alert ${inv.gst_check.errors.length ? "bad" : "warn"}" style="margin-bottom:6px"><b>GST check before Tally</b><ul style="margin:6px 0 0 18px">${[...inv.gst_check.errors.map((m) => `<li>${esc(m)}</li>`), ...inv.gst_check.warnings.map((m) => `<li class="muted">${esc(m)}</li>`)].join("")}</ul></div>`) : ""}
       ${editable && !inv.steps.ready && inv.steps.blockers?.length ? `<div class="alert bad" style="margin-bottom:6px"><b>Not ready for Tally yet:</b> ${esc(inv.steps.blockers.join("; "))}.${!inv.steps.total_ok ? " Compare each line amount and the tax figures below with the image, correct them, and save." : ""}</div>` : ""}
       <div class="row">${f("number", "Invoice no.", "mono")}${f("date", "Date (YYYY-MM-DD)", "mono")}</div>
       ${editable&&(dateReview.needs_review||dateReview.reasons?.length)?`<div class="alert warn" style="margin-bottom:12px">
