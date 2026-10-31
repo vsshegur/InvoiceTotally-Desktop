@@ -182,6 +182,8 @@ test("one entry already in Tally holds back only that entry; an amount-only pair
   await assert.rejects(()=>SG.remove(D,"apr-gst2b",true),/being sent to Tally/);
   const j=await D.first("SELECT * FROM jobs WHERE kind='import_gstr2b_purchase' AND invoice_id=?",p149.id);
   await G.jobResult(D,j,true,goodResponse);
+  // the run is over: Tally's purchases are read again so the GSTR-2B match shows what was posted
+  assert.equal((await D.first("SELECT count(*) n FROM jobs WHERE kind='export_purchase_gst' AND invoice_id='apr-gst2b' AND status='pending'")).n,1);
   await assert.rejects(()=>SG.remove(D,"apr-gst2b"),/1 posted\). Delete them too/);
   assert.deepEqual(await SG.remove(D,"apr-gst2b",true),{ok:true});
   for(const t of ["gst_returns","gst_docs","gstr2b_purchase_batches","gstr2b_purchase_vouchers"])

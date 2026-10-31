@@ -177,6 +177,17 @@ async function gstData(rid, GM) {
   return { s, ctx, books, r, summary };
 }
 
+/** For an invoice the match can't find in Tally: what GSTR-2B → Tally did with it. */
+function postingNote(d) {
+  const p = d.posting;
+  if (!p) return "";
+  const what = `${p.vtype || "Purchase"} ${p.number || ""}`.trim();
+  if (p.status === "synced") return `Posted from GSTR-2B → Tally as ${what}, but not found in the last read of Tally. Press “Read Tally again”. If it still isn't found, it was deleted or changed in Tally (party or supplier invoice no.) — “Check posted entries” on GSTR-2B → Tally makes it ready to post again.`;
+  const state = { duplicate: "not posted — the app found it already in Tally", blocked: "held back", failed: "Tally refused it", uncertain: "Tally didn't confirm — press Recheck",
+    queued: "being posted now", ready: "ready, not posted yet", review: "waiting for a supplier ledger" }[p.status] || p.status;
+  return `GSTR-2B → Tally: ${state}${p.error ? ` — ${p.error}` : ""}`;
+}
+
 async function viewGst(rid) {
   const { parse: GP, match: GM, xlsx: XW } = await GstLib();
   const { s, ctx, books, r, summary } = await gstData(rid, GM);
@@ -218,7 +229,7 @@ async function viewGst(rid) {
         <td class="num">${money(b.val)}</td><td class="num">${money(b.tax)}</td><td>${gstChip("books")}<div class="muted" style="font-size:12px;max-width:260px">${esc(b.why || "")}</div></td></tr>`;
     }
     const d = x.d;
-    const note = (d.notes || [])[0] || (d.diffs || []).map((f) => `${GM.HEAD_LABEL[f.field] || f.field} ${money(f.b2b)} vs ${money(f.books)}`)[0] || "";
+    const note = (x.st === "missing" && postingNote(d)) || (d.notes || [])[0] || (d.diffs || []).map((f) => `${GM.HEAD_LABEL[f.field] || f.field} ${money(f.b2b)} vs ${money(f.books)}`)[0] || "";
     return `<tr class="click ${sel}" data-i="${i}"><td><b>${esc(d.name || "—")}</b><div class="muted mono" style="font-size:11.5px">${esc(d.ctin)}${d.note ? ` · ${d.note === "C" ? "Credit note" : "Debit note"}` : ""}${d.sec.endsWith("A") ? " · amended" : ""}</div></td>
       <td class="mono" style="white-space:nowrap">${esc(d.num)}</td><td class="mono" style="white-space:nowrap">${fmtDate(d.dt)}</td><td class="num">${money(d.val || d.txval)}</td>
       <td class="num">${money(gstTax(d))}${d.itc === "N" ? `<div class="warn" style="font-size:11px">ITC not available</div>` : ""}</td>
@@ -288,7 +299,8 @@ async function viewGst(rid) {
           </details>`:""}
         ${b ? `<div class="muted" style="font-size:12.5px;margin-top:8px">Tally: ${esc(b.vtype || "")} <b>${esc(b.number || "")}</b> dated ${fmtDate(b.date)} · ${esc(b.party || "")}${d.method === "manual" ? " · linked by you" : ""}</div>` : ""}
         ${(d.notes || []).length ? `<ul class="notes">${d.notes.map((n) => `<li>${esc(n)}</li>`).join("")}</ul>` : ""}
-        ${st === "missing" && d.compare !== false ? `<div class="alert warn" style="margin-top:10px">${d.itc === "N" ? "This invoice is in GSTR-2B but its credit is not available." : `Your supplier filed this invoice but it isn't in Tally. Enter the purchase (ITC ${money(gstTax(d))}) or link it below if it's already there under another number.`}</div>` : ""}
+        ${st === "missing" && postingNote(d) ? `<div class="alert ${["duplicate", "failed", "blocked"].includes(d.posting.status) ? "bad" : "warn"}" style="margin-top:10px">${esc(postingNote(d))}${d.posting.status === "duplicate" ? `<div style="margin-top:6px">If that Tally voucher is a different bill, open GSTR-2B → Tally and press <b>Recheck</b>: it will be ready to post again.</div>` : ""}</div>` : ""}
+        ${st === "missing" && d.compare !== false && !d.posting ? `<div class="alert warn" style="margin-top:10px">${d.itc === "N" ? "This invoice is in GSTR-2B but its credit is not available." : `Your supplier filed this invoice but it isn't in Tally. Enter the purchase (ITC ${money(gstTax(d))}) or link it below if it's already there under another number.`}</div>` : ""}
       </div></div>
       ${cands.length ? `<div class="box"><div class="bh"><b>${b ? "Or link a different voucher" : "Vouchers of this supplier in Tally"}</b><span class="muted">best first</span></div><div class="bb">${cands.map(({ b: y, c: cmp }) =>
         `<div class="billrow"><span class="mono">${esc(y.num || y.number)}</span><span class="muted">${fmtDate(y.dt)}</span><span class="muted" style="font-size:12px">${esc(y.vtype)} ${esc(y.number || "")}</span><span class="spacer"></span>
