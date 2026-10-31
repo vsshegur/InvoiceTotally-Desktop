@@ -63,7 +63,10 @@ export function rateSplit(row){
     return parts;
   }
   const tax=round2((+row.igst||0)+(+row.cgst||0)+(+row.sgst||0));
-  const rate=STD_RATES.find(r=>Math.abs(taxable*r/100-tax)<=Math.max(1,tax*0.005));
+  // the standard rate closest to tax ÷ taxable, allowing for rounding (paise per head; ½% of the tax on big bills).
+  // Not "the first rate within ₹1": on a ₹10 bank charge with ₹1.80 GST, 12% (₹1.20) is within ₹1 but 18% is the rate.
+  const best=STD_RATES.map(r=>({r,gap:Math.abs(taxable*r/100-tax)})).sort((a,b)=>a.gap-b.gap)[0];
+  const rate=best.gap<=Math.max(0.05,tax*0.005)?best.r:undefined;
   if(rate===undefined)
     throw new Error("This invoice has more than one GST rate (tax is "+(tax/taxable*100).toFixed(2)+
       "% of taxable value) and the file does not give the split. Upload the GSTR-2B JSON, or the Excel with its Rate column.");

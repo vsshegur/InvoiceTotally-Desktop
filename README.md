@@ -456,3 +456,7 @@ From Tally's own reasons (GSTR-3B → Uncertain Transactions):
 ## Version 4.5.1 — GSTR-2B: GST ledgers saved on Post
 - "Choose the Input CGST ledger before posting" appeared when the GST ledgers were picked but **Save GST ledgers** wasn't pressed. Post now saves the ledgers shown first, and obvious ones (IGST / CGST / SGST / Round Off) are pre-selected.
 - RCM payable may be the same ledger as the input one (books with a single CGST / SGST / IGST ledger).
+
+## Version 4.5.2 — quarterly GSTR-2B, the right GST rate on small bills
+- **Quarterly GSTR-2B (QRMP, "…_GSTR2BQ_…")** was read as its first month, so Tally was read only up to six weeks after it and bills from later in the quarter showed "Not in Tally" though they were there. It is now read as the quarter (filed with its last month), and Tally is always read up to six weeks past the latest document date. A file uploaded earlier is corrected when you press **Read Tally again**.
+- **GST rate when GSTR-2B gives none:** the rate closest to tax ÷ taxable is used. Before, the first rate within ₹1 was taken, so tiny bills (₹10 bank charge with ₹1.80 GST) went to `GSTR2B 12%` instead of `GSTR2B 18%`. Entries already posted that way are listed on the GSTR-2B → Tally page ("Posted at the wrong GST rate") with the ledger to change in Tally.

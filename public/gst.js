@@ -50,7 +50,12 @@ async function gstReadFile(file, GP) {
     try { obj = JSON.parse(await file.text()); } catch { throw new Error(`${file.name}: not a valid JSON file`); }
     return [{ ...GP.fromJson(obj), filename: file.name, source: "json" }];
   }
-  if (k === "xlsx" || k === "xls") return [{ ...GP.fromWorkbook(await Ingest.workbook(file)), filename: file.name, source: "excel" }];
+  if (k === "xlsx" || k === "xls") {
+    const x = GP.fromWorkbook(await Ingest.workbook(file));
+    // the portal names a quarterly file "…_GSTR2BQ_…"
+    if (/gstr2bq/i.test(file.name) && x.months === 1 && x.period) { const [y, m] = x.period.split("-").map(Number); const last = Math.ceil(m / 3) * 3; x.period = `${y}-${String(last).padStart(2, "0")}`; x.months = 3; }
+    return [{ ...x, filename: file.name, source: "excel" }];
+  }
   throw new Error(`${file.name}: choose the JSON or Excel file downloaded from the GST portal`);
 }
 
@@ -117,7 +122,7 @@ async function viewGstUpload(cid,mode="reconcile") {
       for (const x of st.items) {
         if(!purchaseMode)for (const old of existing.filter((r) => r.period === x.period)) await api(`/gstr2b/${old.id}`, { method: "DELETE" });
         status.textContent = `Saving ${GP.periodLabel(x.period)}…`;
-        const r = await api(`/companies/${cid}/gstr2b`, { body: { period: x.period, gstin: x.gstin, kind: x.kind, filename: x.filename, source: x.source, gendt: x.gendt, rejected: x.rejected } });
+        const r = await api(`/companies/${cid}/gstr2b`, { body: { period: x.period, months: x.months || 1, gstin: x.gstin, kind: x.kind, filename: x.filename, source: x.source, gendt: x.gendt, rejected: x.rejected } });
         for (let i = 0; i < x.docs.length; i += 500) await api(`/gstr2b/${r.id}/docs`, { body: { part: i / 500, docs: x.docs.slice(i, i + 500) } });
         await api(`/gstr2b/${r.id}/start`, { body: {} });
         last = r.id;
@@ -150,7 +155,7 @@ async function gstData(rid, GM) {
   let s = await api(`/gstr2b/${rid}`);
   const ctx = await api(`/gstr2b/${rid}/context`);
   const books = GM.buildBooks(ctx.books, ctx.ledgers, ctx.rules||[]);
-  const opts = { tol: s.tol ?? 1, period: s.period, usedElsewhere: new Set(ctx.elsewhere) };
+  const opts = { tol: s.tol ?? 1, period: s.period, usedElsewhere: new Set(ctx.elsewhere), range: s.range || null };
   const fresh = ctx.books_at && (!s.matched_at || ctx.books_at > s.matched_at || s.docs.some((d) => d.status === "new") || s.summary?.calculation_version !== 2);
   if (fresh) {
     const r = GM.reconcile(s.docs, books, opts);
