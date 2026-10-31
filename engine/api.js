@@ -115,7 +115,7 @@ function invoiceSummary(inv, gctx = null) {
     warnings: h.warnings || [], date_review:inv.date_review||invoiceDateReview(inv), page_ids: inv.page_ids, rechecked: !!h.rechecked, ai: h.ai || null,
     // every line to a ledger (stationery, packing material…): posted as an accounting voucher, not an item invoice
     as_voucher: inv.lines.length > 0 && inv.lines.every((l) => l.kind === "ledger"),
-    party_gstin: h.party_gstin || "", gstin_check: gctx && !["pending", "reading", "error"].includes(inv.status) ? invoiceGstinCheck(inv, gctx) : null };
+    party_gstin: h.party_gstin || "", ledger_gstin: inv.party_ledger_gstin || null, gstin_from_tally: !!h.gstin_from_tally, gstin_check: gctx && !["pending", "reading", "error"].includes(inv.status) ? invoiceGstinCheck(inv, gctx) : null };
 }
 
 const REVIEWABLE = ["review", "failed"];
@@ -449,7 +449,7 @@ route("GET", "/api/batches/:bid/review/:step", async ({ D, p }) => {
     for (const i of invs) {
       const h = i.data, k = partyKey(h);
       const g = groups[k] ||= { key: k, name: h.party_name, gstin: h.party_gstin, gstin_valid: h.party_gstin ? gstinValid(h.party_gstin) : null,
-        gstin_check: invoiceGstinCheck(i, gctx),
+        gstin_check: invoiceGstinCheck(i, gctx), ledger_gstin: i.party_ledger ? gctx.byLedger.get(i.party_ledger) || null : null,
         address: h.party_address, state: h.party_state, ledger: i.party_ledger, method: i.party_method, proposed: i.party_proposed, invoice_ids: [], total: 0 };
       g.invoice_ids.push(i.id);
       g.total += h.total || 0;
@@ -520,6 +520,17 @@ route("POST", "/api/batches/:bid/party-fix", async ({ D, p, body }) => {
   stmts.push(D.stmt("INSERT INTO activity (batch_id, invoice_id, message, at) VALUES (?,?,?,?)", p.bid, null, "Party details corrected", now()));
   await D.batch(stmts);
   return json({ ok: true });
+});
+// "Use GSTIN from Tally": the party ledger's GSTIN (and state) replace what the AI read on these invoices.
+route("POST", "/api/invoices/gstin-from-tally", async ({ D, body }) => {
+  const ids = (body.invoice_ids || []).slice(0, 2000);
+  let changed = 0;
+  for (const iid of ids) {
+    const inv = must(await D.first("SELECT status FROM invoices WHERE id=?", iid));
+    if (["queued", "synced"].includes(inv.status)) continue;
+    if (await P.gstinFromLedger(D, iid, true)) changed++;
+  }
+  return json({ ok: true, changed });
 });
 route("POST", "/api/batches/:bid/party", async ({ D, p, body }) => {
   const b = must(await D.first("SELECT * FROM batches WHERE id=?", p.bid));

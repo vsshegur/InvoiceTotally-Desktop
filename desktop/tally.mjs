@@ -258,7 +258,7 @@ export function masterRows(kind, reply) {
     const name = nodeName(n);
     if (!name) return false;
     const row = { name, parent: first(n, "PARENT") };
-    if (tag === "LEDGER") { row.gstin = first(n, "PARTYGSTIN", "GSTIN"); row.state = first(n, "LEDSTATENAME", "STATENAME", "STATE"); }
+    if (tag === "LEDGER") { row.gstin = first(n, "PARTYGSTIN", "GSTIN"); row.state = first(n, "LEDSTATENAME", "STATENAME", "STATE"); row.reg_type = first(n, "GSTREGISTRATIONTYPE"); }
     if (tag === "STOCKITEM") { row.hsn = first(n, "HSNCODE", "HSN"); row.gst_rate = gstRate(n); row.unit = first(n, "BASEUNITS"); }
     out.push(row);
     return false;

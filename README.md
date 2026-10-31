@@ -435,3 +435,12 @@ in an audit of the recent accounting modules:
 - Bank posting check: two entries of the same amount on the same day are told apart by their UPI / IMPS / NEFT reference or by the names in a bank narration (Kotak and others print the UPI reference without a "Ref" label).
 - Bank statements: old Excel `.xls` files (real Excel 97–2003, and the HTML / text files banks name `.xls`) are read; more column names are recognised (Txn Posted Date, Narrative, Money In/Out, Amount in Rs, Transaction Type …); headings split over two rows are read as one.
 - Invoices from images/PDF: a GSTIN check column — ✓ Verified (check digit OK and the same GSTIN is on your Tally ledger or in your GSTR-2B), ✓ Check digit OK · new, ⚠ differs from the Tally ledger, ✗ misread (with "did you mean" from the GSTINs you already have and a one-click fix on the Party step).
+
+## Version 4.4.1 — no more "Uncertain transactions" in GSTR-3B
+From Tally's own reasons (GSTR-3B → Uncertain Transactions):
+- **"GST Registration Details of the Company are invalid or not specified"** — every voucher now names your GST registration as TallyPrime 3+ expects (`Maharashtra Registration`, GSTIN, state). If your Tally calls it something else, set it in Settings → "GST registration name in Tally".
+- **"GST Registration Details of the Party are invalid or not specified"** — the party's registration type, GSTIN and state are sent, taken from the party's Tally ledger (where you verified the GSTIN), not from the AI's reading. Ledgers without a GSTIN go as Unregistered; Composition dealers as Composition (read with Import masters).
+- **"Mismatch … Place of Supply (Solapur / Maharashtra)"** — place of supply is always a state: our state for purchases, the customer's for sales. A city read off the bill is ignored.
+- **"Taxability Type is invalid or not specified"** (Flipkart / Meesho fee lines, expenses) — each such line carries Taxable, the GST rate and Goods/Services.
+- GSTIN from Tally: when the bill's GSTIN is missing or misread, the matched ledger's GSTIN is used (the AI's reading is kept for reference); when the bill shows a *different valid* GSTIN, the invoice waits with a "Use GSTIN from Tally" button (Party step and invoice page).
+- RCM at any rate: `GSTR2B RCM 5%`, `GSTR2B RCM 18%` …

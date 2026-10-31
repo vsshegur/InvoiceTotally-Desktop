@@ -1,6 +1,6 @@
 // One Tally voucher per GSTR-2B document (plus a GST journal for reverse charge). No stock
 // quantities can be inferred from GSTR-2B. Never alter existing vouchers.
-import {esc,tallyDate,purchaseGstRequest} from "./tally.js";
+import {esc,tallyDate,purchaseGstRequest,gstHeader,companyRegXml,gstLineXml} from "./tally.js";
 import {stateName} from "./gst.js";
 import {parseXml,purchaseGstRows,walk} from "../desktop/tally.mjs";
 
@@ -18,12 +18,12 @@ export const makeVoucherNumber=(period,source)=>{
 // voucher — the same shape as invoices read from images, which Tally's GST reports classify
 // correctly. Taxable value goes to one purchase ledger per GST rate ("GSTR2B 18%"), each created
 // in Tally with that rate, so Tally never has to guess the rate (no "uncertain transactions").
-const ledger=(name,value,isParty=false,reference="")=> {
+const ledger=(name,value,isParty=false,reference="",gst="")=> {
   if(!name||!Number.isFinite(value))throw new Error("Invalid Tally ledger or posting amount");
   return "<LEDGERENTRIES.LIST><LEDGERNAME>"+esc(name)+"</LEDGERNAME>"+
     "<ISDEEMEDPOSITIVE>"+(value<0?"Yes":"No")+"</ISDEEMEDPOSITIVE>"+
     (isParty?"<ISPARTYLEDGER>Yes</ISPARTYLEDGER>":"")+
-    "<AMOUNT>"+round2(value).toFixed(2)+"</AMOUNT>"+
+    "<AMOUNT>"+round2(value).toFixed(2)+"</AMOUNT>"+gst+
     (isParty?"<BILLALLOCATIONS.LIST><NAME>"+esc(reference)+"</NAME><BILLTYPE>New Ref</BILLTYPE>"+
       "<AMOUNT>"+round2(value).toFixed(2)+"</AMOUNT></BILLALLOCATIONS.LIST>":"")+
     "</LEDGERENTRIES.LIST>";
@@ -118,7 +118,7 @@ export function purchaseVoucherXml(company,row,mapping,opts={}){
   for(const p of parts){
     const name=rateLedgerName(p.rate,rcm);
     if(name.toLowerCase()===party.toLowerCase())throw new Error("Supplier ledger cannot be a purchase ledger");
-    lines.push(ledger(name,-direction*p.taxable));total=round2(total-direction*p.taxable);
+    lines.push(ledger(name,-direction*p.taxable,false,"",gstLineXml(p.rate,rcm?"Services":"Goods")));total=round2(total-direction*p.taxable);
   }
   if(!rcm){
     for(const head of HEADS){
@@ -138,8 +138,9 @@ export function purchaseVoucherXml(company,row,mapping,opts={}){
   }
   if(Math.abs(total)>0.01)throw new Error(type+" voucher does not balance to zero");
   const d=formatDate(r.date);
-  const ourState=opts.companyState||"";
+  const ourState=opts.reg?.state||opts.companyState||"";
   const supplierState=stateName(String(r.supplier_gstin||"").slice(0,2))||"";
+  // purchases: the place of supply is where we receive the goods — our state — unless GSTR-2B names another state
   const pos=posName(r.pos,ourState||supplierState);
   const what=type==="Debit Note"?"credit note ":type==="Credit Note"?"debit note ":"invoice ";
   const narration="GSTR-2B "+String(r.period||"")+": supplier "+what+r.supplier_invoice+" dated "+r.date+
@@ -151,10 +152,7 @@ export function purchaseVoucherXml(company,row,mapping,opts={}){
     "<VOUCHERTYPENAME>"+type+"</VOUCHERTYPENAME><VOUCHERNUMBER>"+esc(r.voucher_number)+"</VOUCHERNUMBER>"+
     "<REFERENCE>"+esc(r.supplier_invoice)+"</REFERENCE><REFERENCEDATE>"+d+"</REFERENCEDATE>"+
     "<PARTYLEDGERNAME>"+esc(party)+"</PARTYLEDGERNAME><PARTYNAME>"+esc(party)+"</PARTYNAME>"+
-    "<PARTYGSTIN>"+esc(r.supplier_gstin)+"</PARTYGSTIN><GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE>"+
-    (supplierState?"<STATENAME>"+esc(supplierState)+"</STATENAME>":"")+
-    "<COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>"+
-    (pos?"<PLACEOFSUPPLY>"+esc(pos)+"</PLACEOFSUPPLY>":"")+
+    gstHeader({vtype:type,party:{gstin:r.supplier_gstin,state:supplierState,regType:r.party_reg_type},reg:opts.reg||null,pos})+
     "<PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW><ISINVOICE>No</ISINVOICE>"+
     "<NARRATION>"+esc(narration)+"</NARRATION>"+
     lines.join("")+"</VOUCHER>";
@@ -172,7 +170,7 @@ export const JOURNAL_NATURE={
   isd_cn:["Reversal of Input Tax Credit","Others"],
   impg:["Increase of Input Tax Credit","Import of Goods"],
 };
-export function journalXml(company,row,mapping){
+export function journalXml(company,row,mapping,opts={}){
   const kind=row.jkind;
   if(!JOURNAL_NATURE[kind])throw new Error("Unknown GSTR-2B journal");
   const d=formatDate(row.date);
@@ -207,12 +205,13 @@ export function journalXml(company,row,mapping){
     "<VOUCHERTYPENAME>Journal</VOUCHERTYPENAME><VOUCHERNUMBER>"+esc(row.voucher_number)+"</VOUCHERNUMBER>"+
     "<REFERENCE>"+esc(row.supplier_invoice)+"</REFERENCE><REFERENCEDATE>"+d+"</REFERENCEDATE>"+
     "<STATADJUSTMENTTYPE>"+esc(nature)+"</STATADJUSTMENTTYPE><ADDITIONALNATURE>"+esc(additional)+"</ADDITIONALNATURE>"+
+    companyRegXml(opts.reg||null)+
     "<PERSISTEDVIEW>Accounting Voucher View</PERSISTEDVIEW><ISINVOICE>No</ISINVOICE>"+
     "<NARRATION>"+esc(narration)+"</NARRATION>"+lines.join("")+"</VOUCHER>";
   return envelopeOf(company,xml);
 }
 export function voucherXml(company,row,mapping,opts={}){
-  return row.vtype==="Journal"?journalXml(company,row,mapping):purchaseVoucherXml(company,row,mapping,opts);
+  return row.vtype==="Journal"?journalXml(company,row,mapping,opts):purchaseVoucherXml(company,row,mapping,opts);
 }
 /** Ledger master for "GSTR2B 18%": Purchase Accounts, GST applicable at that rate (reverse charge for RCM). */
 export function rateLedgerMaster(company,{name,rate,rcm}){

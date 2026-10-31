@@ -847,6 +847,7 @@ async function companySettings(c, el) {
     <div class="field"><label>Company name</label><input class="in" name="name" value="${esc(c.name)}"></div>
     <div class="field"><label>Company name in Tally (must match exactly)</label><input class="in" name="tally_company" value="${esc(c.tally_company || "")}"></div>
     <div class="field"><label>Your GSTIN</label><input class="in mono" name="gstin" value="${esc(c.gstin || "")}" maxlength="15"></div>
+    <div class="field"><label>GST registration name in Tally <span class="muted small">(Tally: GST Registration — usually “${esc((c.state_name || "State") + " Registration")}”)</span></label><input class="in" name="gst_registration_name" value="${esc(s.gst_registration_name || "")}" placeholder="${esc((c.state_name || "Maharashtra") + " Registration")}"></div>
     <div class="field"><label>Default purchase ledger</label><select class="in" name="default_purchase_ledger">${opts("Purchase Accounts", s.default_purchase_ledger)}</select></div>
     <div class="field"><label>Default sales ledger</label><select class="in" name="default_sales_ledger">${opts("Sales Accounts", s.default_sales_ledger)}</select></div>
     <label style="display:flex;gap:8px;margin:8px 0"><input type="checkbox" name="send_descriptions" ${s.send_descriptions !== false ? "checked" : ""}> Send the invoice's item description under each stock item</label>
@@ -881,7 +882,7 @@ async function companySettings(c, el) {
     e.preventDefault(); const f = e.target;
     await act(() => api(`/companies/${c.id}`, { method: "PATCH", body: { name: f.name.value, tally_company: f.tally_company.value, gstin: f.gstin.value,
       settings: { default_purchase_ledger: f.default_purchase_ledger.value, default_sales_ledger: f.default_sales_ledger.value, send_descriptions: f.send_descriptions.checked, round_off: f.round_off.checked,
-        ai_order: order } } }), "Saved");
+        gst_registration_name: f.gst_registration_name.value.trim(), ai_order: order } } }), "Saved");
     route();
   };
   if ($("#del")) $("#del").onclick = async () => { if (confirm(`Delete ${c.name} and all its data in this app? (Nothing in Tally is touched. It still counts towards your company limit.)`)) { await api(`/companies/${c.id}`, { method: "DELETE" }); location.hash = "#/"; } };
@@ -1054,7 +1055,7 @@ async function viewBatch(bid) {
     <table class="grid"><thead><tr><th>Invoice</th><th>Date</th><th>Party</th><th title="Check digit of the GSTIN read from the invoice, and whether your Tally masters or GSTR-2B already have it">GSTIN check</th><th class="num">Lines</th><th class="num">Total</th><th>State</th></tr></thead><tbody>
     ${b.invoices.map((i) => `<tr class="click" data-href="#/i/${i.id}"><td><b>${esc(i.number || "—")}</b>${i.warnings.length ? ` <span class="warn" title="${esc(i.warnings.join("\n"))}">⚠</span>` : ""}${i.date_review?.needs_review?` <span class="bad" title="${esc(i.date_review.reasons.join("\n"))}">⚠ Have a look</span>`:""}</td>
       <td class="mono">${fmtDate(i.date)}</td><td>${esc(i.party_name || "—")}${i.party_ledger ? ` <span class="faint">→</span> <span class="muted">${esc(i.party_ledger)}</span>` : ""}</td>
-      <td>${i.party_gstin ? `<div class="mono small">${esc(i.party_gstin)}</div>` : ""}${gstinBadge(i.gstin_check)}</td>
+      <td>${i.party_gstin ? `<div class="mono small">${esc(i.party_gstin)}</div>` : ""}${i.gstin_from_tally ? '<span class="good small" title="Taken from the party\'s Tally ledger">✓ From Tally</span>' : gstinBadge(i.gstin_check)}</td>
       <td class="num">${i.lines || ""}</td><td class="num">${["pending", "reading"].includes(i.status) ? "" : money(i.total)}</td>
       <td class="${i.status === "synced" ? "good" : i.status === "failed" || i.status === "error" ? "bad" : ""}">${["pending", "reading"].includes(i.status) ? '<span class="spin" style="display:inline-block;vertical-align:-2px"></span> ' : ""}${esc(i.state)}${i.error ? `<div class="muted" style="font-size:12px">${esc(i.error)}</div>` : ""}</td></tr>`).join("")}
     </tbody></table>` : ""}`;
@@ -1204,7 +1205,7 @@ function reviewParty(ctx) {
       });
       panel = `<div class="box"><div class="bh"><span class="eyebrow">Extracted party</span><span><a class="btn sm" id="fixParty" title="Correct a misread name or GSTIN">✎ Fix</a> <a class="btn sm" href="#/i/${g.invoice_ids[0]}">View invoice ↗</a></span></div><div class="bb">
         <div class="big">${esc(g.name || "(no name)")}</div>
-        <div class="kv"><div><span>GSTIN</span><span class="mono">${esc(g.gstin || "—")}</span></div><div><span>Check</span><span>${gstinBadge(g.gstin_check, true)}${(g.gstin_check?.suggestions || []).map((x) => ` <button class="btn sm" data-usegstin="${esc(x.gstin)}">Use ${esc(x.gstin)}</button>`).join("")}</span></div>
+        <div class="kv"><div><span>GSTIN</span><span class="mono">${esc(g.gstin || "—")}</span></div>${g.ledger_gstin ? `<div><span>In Tally</span><span class="mono">${esc(g.ledger_gstin)} ${g.ledger_gstin !== g.gstin ? `<button class="btn sm primary" id="gstinFromTally">Use GSTIN from Tally</button>` : '<span class="good">✓ same</span>'}</span></div>` : ""}<div><span>Check</span><span>${gstinBadge(g.gstin_check, true)}${(g.gstin_check?.suggestions || []).map((x) => ` <button class="btn sm" data-usegstin="${esc(x.gstin)}">Use ${esc(x.gstin)}</button>`).join("")}</span></div>
           <div><span>State</span><span>${esc(g.state || "—")}</span></div><div><span>Found on</span><span>${g.invoice_ids.length} invoice(s)</span></div></div>
         ${g.address ? `<div class="muted" style="margin-top:8px;font-size:13px">${esc(g.address)}</div>` : ""}
         <p class="muted small" style="margin-top:8px">If the AI misread the name or GSTIN, fix it here first — the correction is saved on every invoice from this party and used for the ledger below.</p></div></div>
@@ -1224,6 +1225,10 @@ function reviewParty(ctx) {
       $("#apply").onclick = apply; keymap.enter = apply;
     }
     $("#fixParty")?.addEventListener("click", (e) => { e.preventDefault(); fixPartyModal(bid, g); });
+    $("#gstinFromTally")?.addEventListener("click", async () => {
+      await act(() => api(`/invoices/gstin-from-tally`, { body: { invoice_ids: g.invoice_ids } }), `GSTIN ${g.ledger_gstin} from Tally put on ${g.invoice_ids.length} invoice(s)`);
+      route();
+    });
     $$("[data-usegstin]").forEach((bt) => bt.onclick = async () => {
       await act(() => api(`/batches/${bid}/party-fix`, { body: { invoice_ids: g.invoice_ids, gstin: bt.dataset.usegstin } }), "GSTIN corrected on " + g.invoice_ids.length + " invoice(s)");
       route();
@@ -1533,7 +1538,7 @@ async function viewInvoice(iid) {
         <div class="small muted" style="margin-top:4px">This is mandatory for handwritten or suspicious dates. If the date is outside the selected month, correct it or use the regular mixed-invoice mode in a new batch.</div>
       </div>`:""}
       <div class="row">${f("party_name", b.voucher_type === "Purchase" ? "Supplier name" : "Customer name")}
-        <div class="field"><label>GSTIN ${gstinBadge(inv.gstin_check)}</label><input class="in mono" data-h="party_gstin" value="${esc(h.party_gstin || "")}" maxlength="15" ${ro}></div></div>
+        <div class="field"><label>GSTIN ${inv.data?.gstin_from_tally && inv.party_ledger_gstin === inv.data.party_gstin ? '<span class="good">✓ from Tally ledger</span>' : gstinBadge(inv.gstin_check)}${inv.party_ledger_gstin && inv.party_ledger_gstin !== inv.data?.party_gstin && !ro ? ` <button class="btn sm primary" id="gstinFromTally" type="button" title="Tally ledger ${esc(inv.party_ledger)}: ${esc(inv.party_ledger_gstin)}">Use ${esc(inv.party_ledger_gstin)} from Tally</button>` : ""}</label><input class="in mono" data-h="party_gstin" value="${esc(h.party_gstin || "")}" maxlength="15" ${ro}></div></div>
       <div class="row">${f("party_state", "State")}${f("place_of_supply", "Place of supply")}</div>
       <div class="field"><label>Tally ledger</label><div>${inv.party_ledger ? `<span class="state-resolved">${esc(inv.party_ledger)}</span> <span class="muted">· ${esc(inv.party_method || "")}</span>` : `<span class="state-suspense">not matched yet</span>`}</div></div>
       <h2 style="margin-top:14px">Lines</h2>
@@ -1552,6 +1557,10 @@ async function viewInvoice(iid) {
       ${inv.activity.length ? `<h2 style="margin-top:16px">Activity</h2><div class="muted" style="font-size:12.5px">${inv.activity.map((a) => `${ago(a.at)} — ${esc(a.message)}`).join("<br>")}</div>` : ""}
     </div></div>`;
   wireTop(c);
+  $("#gstinFromTally")?.addEventListener("click", async () => {
+    await act(() => api(`/invoices/gstin-from-tally`, { body: { invoice_ids: [inv.id] } }), "GSTIN taken from the Tally ledger");
+    route();
+  });
   wireViewer(app());
   keymap.Escape = () => history.back();
   if (!editable) { $("#back").onclick = async () => { await api(`/invoices/${iid}/back-to-review`, { method: "POST" }); route(); }; return; }

@@ -1,4 +1,5 @@
 // Local-only Meesho/Flipkart monthly sales batches. No remote APIs or AI.
+import { companyRegistration } from "./tally.js";
 import { newId, now } from "./db.js";
 import { parseMeesho, parseFlipkart, parseAmazon } from "./ecommerce-parse.js";
 import { ecommerceNumber, ecommerceVoucher, ecommerceExistingRequest, parseExistingVouchers } from "./ecommerce-tally.js";
@@ -166,7 +167,8 @@ export async function post(D,id,input) {
   if(!selected.length) throw new EcommerceError("No ready vouchers selected");
   const stmts = [];
   for(const r of selected) {
-    const xml = ecommerceVoucher(c.tally_company || c.name,{...r,items:items(r.items)},mapping);
+    const xml = ecommerceVoucher(c.tally_company || c.name,{...r,items:items(r.items)},mapping,
+      companyRegistration({gstin:c.gstin,settings:typeof c.settings==="string"?JSON.parse(c.settings||"{}"):c.settings}));
     stmts.push(D.stmt("DELETE FROM jobs WHERE invoice_id=? AND kind='import_ecommerce' AND status IN ('pending','failed')",r.id));
     stmts.push(D.insertStmt("jobs",{id:newId(),company_id:b.company_id,kind:"import_ecommerce",invoice_id:r.id,
       payload:xml,status:"pending",created_at:now()+r.seq*.001,updated_at:now()}));

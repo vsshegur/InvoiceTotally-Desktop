@@ -1,6 +1,6 @@
 // Offline e-commerce vouchers. PackPilot's GST/state grouping is preserved; each approved
 // voucher is sent alone through InvoiceTotally's guarded Tally "Create" path.
-import { esc, tallyDate } from "./tally.js";
+import { esc, tallyDate, companyRegXml, companyRegistration } from "./tally.js";
 import { round2, stateFromGstin, STATE_BY_CODE } from "./ecommerce-core.js";
 
 const money = (n) => round2(n).toFixed(2);
@@ -21,7 +21,7 @@ export function ecommerceNumber(platform, year, month, state, rate) {
     "-" + String(month).padStart(2, "0") + "-" + code + "-" + String(Math.round(+rate * 100)).padStart(4, "0");
 }
 
-export function ecommerceVoucher(company, row, mapping) {
+export function ecommerceVoucher(company, row, mapping, reg = null) {
   const amount = round2(row.invoice), isReturn = amount < -0.005;
   if (Math.abs(amount) < 0.005) throw new Error("Zero-value voucher");
   const kind = isReturn ? "Credit Note" : "Sales";
@@ -77,7 +77,7 @@ export function ecommerceVoucher(company, row, mapping) {
     '<VOUCHERTYPENAME>' + kind + '</VOUCHERTYPENAME><VOUCHERNUMBER>' + esc(row.number) + '</VOUCHERNUMBER>' +
     '<REFERENCE>' + esc(row.number) + '</REFERENCE><REFERENCEDATE>' + d + '</REFERENCEDATE>' +
     '<PARTYLEDGERNAME>' + esc(party) + '</PARTYLEDGERNAME>' +
-    '<STATENAME>' + esc(row.state) + '</STATENAME><PLACEOFSUPPLY>' + esc(row.state) + '</PLACEOFSUPPLY>' +
+    '<STATENAME>' + esc(row.state) + '</STATENAME><PLACEOFSUPPLY>' + esc(row.state) + '</PLACEOFSUPPLY>' + companyRegXml(reg) +
     '<PERSISTEDVIEW>' + view + '</PERSISTEDVIEW><ISINVOICE>' + (stock ? "Yes" : "No") + '</ISINVOICE>' +
     (stock ? '<VCHENTRYMODE>Item Invoice</VCHENTRYMODE>' : "") +
     '<NARRATION>' + esc(narr) + '</NARRATION>' +

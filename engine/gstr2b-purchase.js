@@ -8,7 +8,7 @@
 import {newId,now,jload} from "./db.js";
 import {gstinValid,cleanGstin,stateName} from "./gst.js";
 import * as P from "./pipeline.js";
-import {parseImportResponse} from "./tally.js";
+import {parseImportResponse,companyRegistration} from "./tally.js";
 import {
   PURCHASE_LEDGER,HEADS,round2,sourceKey,makeVoucherNumber,JOURNAL_PREFIX,
   validatePurchaseValues,voucherXml,rateLedgerMaster,rowLedgers,rateSplit,existingGstr2bRequest,
@@ -406,7 +406,8 @@ export async function queue(D,id,input){
   if(rows.length!==ids.length)throw new Purchase2bError("Some selected invoices are not in this batch");
   rows.sort((a,b)=>a.seq-b.seq);
   await assertLedgersReady(D,b.company_id,rows);
-  const opts={companyState:companyState(c)};
+  const opts={companyState:companyState(c),reg:companyRegistration({gstin:c.gstin,settings:jload(c.settings,{})})};
+  const regTypes=new Map((await D.all("SELECT name,reg_type FROM masters WHERE company_id=? AND kind='ledger' AND reg_type IS NOT NULL",b.company_id)).map(x=>[x.name,x.reg_type]));
   const journals=new Map((await D.all("SELECT source_key,voucher_number FROM gstr2b_purchase_vouchers WHERE batch_id=? AND jkind='rcm'",id)).map(x=>[x.source_key,x.voucher_number]));
   const stmts=[];
   for(const r of rows){
@@ -423,7 +424,7 @@ export async function queue(D,id,input){
         throw new Purchase2bError(r.supplier_invoice+" supplier ledger is also selected as a tax/rounding ledger");
     }
     let xml;
-    try{xml=voucherXml(tallyCompany(c),{...r,journal_number:journals.get(r.source_key+"|RCM"),itc_reason:r.source_reason},mapping,opts);}
+    try{xml=voucherXml(tallyCompany(c),{...r,journal_number:journals.get(r.source_key+"|RCM"),itc_reason:r.source_reason,party_reg_type:regTypes.get(r.party_ledger)},mapping,opts);}
     catch(e){throw new Purchase2bError(r.supplier_invoice+": "+e.message);}
     stmts.push(D.stmt("DELETE FROM jobs WHERE invoice_id=? AND kind='import_gstr2b_purchase' AND status IN ('pending','failed')",r.id));
     stmts.push(D.insertStmt("jobs",{id:newId(),company_id:b.company_id,kind:"import_gstr2b_purchase",

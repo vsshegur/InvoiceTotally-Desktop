@@ -2,6 +2,7 @@
 
 export const esc = (v) => String(v ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const amt = (v) => (Math.round((+v + Number.EPSILON) * 100) / 100).toFixed(2);
+import { STATES as STATE_NAMES } from "./gst.js";
 const qtyStr = (v) => { v = +v; return Number.isInteger(v) ? String(v) : String(+v.toFixed(3)); };
 
 export function tallyDate(d) {
@@ -119,9 +120,63 @@ export const voucherTotal = (lines, taxLines) =>
  * services…) it is an accounting voucher, as it would be keyed in Tally: party Cr with the bill reference, each line
  * Dr to its ledger, then the GST ledgers and round off — supplier invoice no. and date on top, the lines in the narration.
  */
+/**
+ * The company's own GST registration as TallyPrime 3 and later want it on every GST voucher ("Maharashtra Registration").
+ * Without it Tally lists the voucher under GSTR-3B "Uncertain transactions — GST Registration Details of the Company are
+ * invalid or not specified". { gstin, state, name } — name defaults to "<State> Registration", Tally's own default.
+ */
+export function companyRegistration(c) {
+  const gstin = String(c?.gstin || "").toUpperCase().trim();
+  const state = c?.state || STATE_NAMES[gstin.slice(0, 2)] || "";
+  if (!gstin || !state) return null;
+  const name = String(c?.settings?.gst_registration_name || c?.gst_registration_name || "").trim() || `${state} Registration`;
+  return { gstin, state, name };
+}
+/** Valid state name, or "" ("Solapur", a city, is not a place of supply). */
+export function stateOf(v) {
+  const t = String(v || "").trim();
+  if (!t) return "";
+  const code = /^(\d{1,2})\b/.exec(t)?.[1];
+  if (code && STATE_NAMES[code.padStart(2, "0")]) return STATE_NAMES[code.padStart(2, "0")];
+  const name = t.replace(/^\d+\s*[-–:]\s*/, "").toLowerCase();
+  return Object.values(STATE_NAMES).find((s) => s.toLowerCase() === name) || "";
+}
+/**
+ * GST details at the top of a voucher: the party's registration (type, GSTIN, state), the place of supply, and our own
+ * registration. party: { gstin, state, regType }. Purchases: place of supply is our state unless the bill names another
+ * state; sales: the customer's state.
+ */
+export function gstHeader({ vtype, party = {}, reg = null, pos = "" }) {
+  const gstin = String(party.gstin || "").toUpperCase().trim();
+  const pstate = stateOf(party.state) || STATE_NAMES[gstin.slice(0, 2)] || "";
+  const regType = /composition/i.test(party.regType || "") ? "Composition" : gstin ? "Regular" : "Unregistered/Consumer";
+  const purchase = /^(purchase|debit note|journal)$/i.test(vtype || "") || /purchase/i.test(vtype || "");
+  const place = stateOf(pos) || (purchase ? reg?.state || pstate : pstate || reg?.state) || "";
+  let x = `<GSTREGISTRATIONTYPE>${regType}</GSTREGISTRATIONTYPE>` + (pstate ? `<STATENAME>${esc(pstate)}</STATENAME>` : "") +
+    "<COUNTRYOFRESIDENCE>India</COUNTRYOFRESIDENCE>" + (gstin ? `<PARTYGSTIN>${esc(gstin)}</PARTYGSTIN>` : "") +
+    (place ? `<PLACEOFSUPPLY>${esc(place)}</PLACEOFSUPPLY>` : "");
+  return x + companyRegXml(reg);
+}
+export function companyRegXml(reg) {
+  if (!reg) return "";
+  return `<GSTREGISTRATION TAXTYPE="GST" TAXREGISTRATION="${esc(reg.gstin)}">${esc(reg.name)}</GSTREGISTRATION>` +
+    `<CMPGSTIN>${esc(reg.gstin)}</CMPGSTIN><CMPGSTREGISTRATIONTYPE>Regular</CMPGSTREGISTRATIONTYPE><CMPGSTSTATE>${esc(reg.state)}</CMPGSTSTATE>`;
+}
+/**
+ * GST treatment written on a ledger line (fees, freight, a "GSTR2B 18%" purchase ledger…), so Tally knows it is taxable at
+ * this rate even when the ledger itself has no GST details ("Taxability Type is invalid or not specified").
+ */
+export function gstLineXml(rate, supply = "Services") {
+  if (rate == null || !Number.isFinite(+rate)) return "";
+  const r = +rate;
+  const heads = [["CGST", r / 2], ["SGST/UTGST", r / 2], ["IGST", r], ["Cess", 0]].map(([h, v]) =>
+    `<RATEDETAILS.LIST><GSTRATEDUTYHEAD>${h}</GSTRATEDUTYHEAD><GSTRATEVALUATIONTYPE>Based on Value</GSTRATEVALUATIONTYPE><GSTRATE>${qtyStr(v)}</GSTRATE></RATEDETAILS.LIST>`).join("");
+  return `<GSTOVRDNTAXABILITY>${r > 0 ? "Taxable" : "Nil Rated"}</GSTOVRDNTAXABILITY><GSTOVRDNTYPEOFSUPPLY>${supply}</GSTOVRDNTYPEOFSUPPLY>` + heads;
+}
+
 export const isLedgerOnly = (lines) => lines.length > 0 && lines.every((l) => l.kind === "ledger");
 
-export function voucher(company, vtype, inv, partyLedger, lines, taxLines, { sendDescriptions = true, units = {} } = {}) {
+export function voucher(company, vtype, inv, partyLedger, lines, taxLines, { sendDescriptions = true, units = {}, reg = null, supplyOf = () => "Services" } = {}) {
   vtype = /^sale/i.test(vtype) ? "Sales" : "Purchase";
   const side = vtype === "Purchase" ? -1 : 1;
   const total = voucherTotal(lines, taxLines);
@@ -135,8 +190,11 @@ export function voucher(company, vtype, inv, partyLedger, lines, taxLines, { sen
     `<PARTYNAME>${esc(partyLedger)}</PARTYNAME><PERSISTEDVIEW>${view}</PERSISTEDVIEW><ISINVOICE>${asVoucher ? "No" : "Yes"}</ISINVOICE>` +
     (asVoucher ? "" : "<VCHENTRYMODE>Item Invoice</VCHENTRYMODE>");
   if (vtype === "Purchase") x += `<REFERENCE>${esc(inv.number)}</REFERENCE><REFERENCEDATE>${date}</REFERENCEDATE>`;
-  if (inv.party_gstin) x += `<PARTYGSTIN>${esc(inv.party_gstin)}</PARTYGSTIN>`;
-  if (inv.party_state) x += `<STATENAME>${esc(inv.party_state)}</STATENAME><PLACEOFSUPPLY>${esc(inv.place_of_supply || inv.party_state)}</PLACEOFSUPPLY>`;
+  x += gstHeader({ vtype, party: { gstin: inv.party_gstin, state: inv.party_state, regType: inv.party_reg_type }, reg, pos: inv.place_of_supply });
+  // the one GST rate of the bill, for ledger lines that don't carry their own
+  const taxed = taxLines.filter((t) => ["IGST", "CGST", "SGST"].includes(t.head) && +t.amount);
+  const rates = [...new Set(taxed.map((t) => (t.head === "IGST" ? +t.rate : 2 * +t.rate)))];
+  const billRate = rates.length === 1 ? rates[0] : taxed.length ? null : 0;
   const narration = inv.narration || (asVoucher && sendDescriptions ? lineNarration(lines) : "");
   if (narration) x += `<NARRATION>${esc(narration)}</NARRATION>`;
 
@@ -148,7 +206,9 @@ export function voucher(company, vtype, inv, partyLedger, lines, taxLines, { sen
   for (const l of lines) {
     const a = side * (+l.amount || 0);
     if (l.kind === "ledger") {
-      x += `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(l.ledger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(a)}</ISDEEMEDPOSITIVE><AMOUNT>${amt(a)}</AMOUNT></LEDGERENTRIES.LIST>`;
+      const rate = l.gst_rate != null && l.gst_rate !== "" ? +l.gst_rate : billRate;
+      x += `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(l.ledger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(a)}</ISDEEMEDPOSITIVE><AMOUNT>${amt(a)}</AMOUNT>` +
+        `${gstLineXml(rate, supplyOf(l.ledger))}</LEDGERENTRIES.LIST>`;
       continue;
     }
     const unit = units[l.stock_item] || l.unit || "";
