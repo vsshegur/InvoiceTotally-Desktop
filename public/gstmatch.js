@@ -209,7 +209,9 @@ export function reconcile(docs, books0, { tol = 1, period = "", usedElsewhere = 
       const b = withRcm(d, b0);
       const c = compare(d, b, tol);
       if (c.level > 0) pairs.push({ d, b, c });
-      else if (c.ok && c.taxGap <= tol && c.dateGap <= 31 && totals(d) > 0) pairs.push({ d, b, c, amountOnly: true });
+      // same supplier, same tax, no invoice number in common: only when the dates are close — a monthly bill of the same
+      // amount (subscription, rent, bank charges) a month apart is a different bill
+      else if (c.ok && c.taxGap <= tol && c.dateGap <= 10 && totals(d) > 0) pairs.push({ d, b, c, amountOnly: true });
     }
   }
   pairs.sort((x, y) => y.c.score - x.c.score);
