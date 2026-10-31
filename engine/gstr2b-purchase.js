@@ -300,8 +300,7 @@ export async function saveMapping(D,id,input){
   const taxSide=["igst","cgst","sgst","cess","round"].map(k=>mapping[k]).filter(Boolean).map(x=>x.toLowerCase());
   if(new Set(taxSide).size!==taxSide.length)
     throw new Purchase2bError("Input GST and round-off ledgers must be distinct from each other");
-  for(const h of HEADS)if(mapping["rcm_"+h]&&eq(mapping["rcm_"+h],mapping[h]))
-    throw new Purchase2bError("RCM "+h.toUpperCase()+" payable must be a different ledger from Input "+h.toUpperCase());
+  // RCM payable may be the same ledger as the input one: many books keep a single CGST / SGST / IGST ledger.
   await D.run("UPDATE gstr2b_purchase_batches SET mapping=? WHERE id=?",JSON.stringify(mapping),id);
   return {ok:true,mapping};
 }

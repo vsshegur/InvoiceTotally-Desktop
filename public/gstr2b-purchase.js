@@ -43,6 +43,15 @@ async function viewGstr2bPurchaseChoose(cid){
     }catch(e){btn.disabled=false;toast(e.message,true);}
   });
 }
+/** An obvious ledger for a GST head when none is saved yet ("Input CGST", "CGST", "Round Off"…). */
+function g2bGuess(k,list){
+  const head=k.replace(/^rcm_/,"");
+  const re={igst:/igst|integrated/i,cgst:/cgst|central/i,sgst:/sgst|utgst|state tax/i,cess:/\bcess\b/i,round:/round/i}[head];
+  if(!re)return "";
+  const hits=list.filter(n=>re.test(n));
+  if(k.startsWith("rcm_"))return hits.find(n=>/rcm|reverse|payable|output/i.test(n))||hits.find(n=>!/input/i.test(n))||hits[0]||"";
+  return hits.find(n=>/input/i.test(n))||hits.find(n=>!/output|rcm|payable/i.test(n))||hits[0]||"";
+}
 const g2bKind=r=>r.vtype==="Journal"?"Journal":r.rcm?"RCM":r.vtype;
 const g2bPostable=r=>["ready","failed"].includes(r.status);
 function g2bFilter(rows){
@@ -137,7 +146,7 @@ async function viewGstr2bPurchaseBatch(id){
     const list=k==="round"?otherMasters.filter(n=>/round/i.test(n)).concat(otherMasters.filter(n=>!/round/i.test(n))):k==="impg_credit"?otherMasters:taxMasters;
     return '<div class="field" style="display:inline-flex;flex-direction:column;gap:5px;margin:6px 12px 6px 0"><label>'+esc(G2B_MAP_LABEL[k]||k)+'</label>'+
       '<select class="in" data-map="'+k+'" style="max-width:270px;min-width:180px"><option value="">Choose Tally ledger…</option>'+
-      list.map(x=>'<option'+(x===mapping[k]?' selected':'')+'>'+esc(x)+'</option>').join("")+'</select></div>';
+      list.map(x=>'<option'+(x===(mapping[k]||g2bGuess(k,list))?' selected':'')+'>'+esc(x)+'</option>').join("")+'</select></div>';
   }).join("");
   const allMapped=(d.mappingNeeded||[]).every(k=>mapping[k]);
   const filterSel=(id,val,opts)=>'<select class="in" id="'+id+'" style="max-width:240px">'+opts.map(([v,l])=>'<option value="'+v+'"'+(v===val?' selected':'')+'>'+esc(l)+'</option>').join("")+'</select>';
@@ -161,7 +170,7 @@ async function viewGstr2bPurchaseBatch(id){
     '<div class="card" style="padding:14px;margin:12px 0"><h3 style="margin:0 0 6px">3. GST ledgers</h3>'+
     (maps||'<p class="muted">No GST ledger mapping needed for the remaining entries.</p>')+
     ((d.mappingNeeded||[]).length?'<div><button class="btn" id="g2bSaveMapping">Save GST ledgers</button> '+
-      (allMapped?'<span class="good small">✓ Saved</span>':'<span class="warn small">Save the missing ledgers before posting</span>')+'</div>':'')+'</div>'+
+      (allMapped?'<span class="good small">✓ Saved</span>':'<span class="warn small">Not saved yet — Save, or just Post: the ledgers shown are saved first</span>')+'</div>':'')+'</div>'+
     '<div class="g2b-sticky card" style="padding:12px;margin:14px 0">'+
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">'+
     '<div><b>4. Post to Tally</b> <span class="muted small" id="g2bSelection"></span></div>'+
@@ -247,6 +256,12 @@ async function viewGstr2bPurchaseBatch(id){
       selected[0].vtype+" "+selected[0].supplier_invoice+" · "+selected[0].supplier_name+" · "+g2bMoney(selected[0].invoice)+" dated "+selected[0].date:
       Object.entries(byType).map(([k,n])=>n+" × "+k).join("\n");
     if(!confirm("POST TO TALLY:\n"+desc+"\n\nEach is posted on its own document date. Tally is checked for the same document before each one. Continue?"))return;
+    // the GST ledgers chosen on screen are saved first, so a pick that wasn't saved never blocks posting
+    const fields={};$$("[data-map]").forEach(el=>fields[el.dataset.map]=el.value);
+    if(Object.keys(fields).length&&Object.entries(fields).some(([k,v])=>v!==(mapping[k]||""))){
+      try{await api("/gstr2b-purchases/"+id+"/mapping",{body:fields});}
+      catch(e){return toast("GST ledgers: "+e.message,true);}
+    }
     const result=await run("post",{ids,confirmed:true,confirmedDate:true},"Queued "+ids.length+" entr"+(ids.length===1?"y":"ies")+" for Tally");
     if(result)for(const x of ids)G2B_UI.selected.delete(x);
   };

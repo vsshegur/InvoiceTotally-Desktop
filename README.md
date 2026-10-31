@@ -452,3 +452,7 @@ From Tally's own reasons (GSTR-3B → Uncertain Transactions):
 - **180-day ITC:** unpaid supplier bills 150+ days old from Tally, the date to pay by, and the GST at stake (from the app's bills or GSTR-2B).
 - **Supplier follow-up:** invoices in your books that suppliers haven't filed, kept from each GSTR-2B match, with a WhatsApp message per supplier, "asked" tracking, and closing by themselves when a later GSTR-2B has them.
 - **Reorganised:** Home (this month's closing, what to post, GST health, what needs you), and the sidebar by job: Post to Tally · GST · Parties & bills · Setup.
+
+## Version 4.5.1 — GSTR-2B: GST ledgers saved on Post
+- "Choose the Input CGST ledger before posting" appeared when the GST ledgers were picked but **Save GST ledgers** wasn't pressed. Post now saves the ledgers shown first, and obvious ones (IGST / CGST / SGST / Round Off) are pre-selected.
+- RCM payable may be the same ledger as the input one (books with a single CGST / SGST / IGST ledger).

@@ -61,3 +61,12 @@ test("GSTR-2B vouchers and journals carry the same registration details; RCM at 
   assert.match(j, /<CMPGSTIN>27ACKPS3168H1Z6<\/CMPGSTIN>/);
   assert.equal(TL.validatePosting(j, CO), "Journal voucher");
 });
+
+test("RCM journal can use the same CGST / SGST ledgers as input tax (single GST ledgers in Tally)", () => {
+  const row = { period: "2026-07", date: "2026-07-05", supplier_gstin: SUP, supplier_invoice: "GTA-2", vtype: "Journal", jkind: "rcm",
+    voucher_number: "G2BJ-2607-00000002", taxable: 5000, invoice: 5000, igst: 0, cgst: 125, sgst: 125, cess: 0 };
+  const j = G.journalXml(CO, row, { cgst: "CGST", sgst: "SGST", rcm_cgst: "CGST", rcm_sgst: "SGST" }, { reg });
+  assert.equal(TL.validatePosting(j, CO), "Journal voucher");
+  assert.match(j, /<LEDGERNAME>CGST<\/LEDGERNAME><ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE><AMOUNT>-125.00<\/AMOUNT>/);
+  assert.match(j, /<LEDGERNAME>CGST<\/LEDGERNAME><ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE><AMOUNT>125.00<\/AMOUNT>/);
+});

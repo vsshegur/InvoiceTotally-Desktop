@@ -187,7 +187,6 @@ export function journalXml(company,row,mapping,opts={}){
     for(const h of heads){
       const out=mapping["rcm_"+h];
       if(!out)throw new Error("Choose the reverse-charge "+h.toUpperCase()+" payable ledger before posting");
-      if(out.toLowerCase()===String(mapping[h]).toLowerCase())throw new Error("Reverse-charge payable and Input "+h.toUpperCase()+" must be different ledgers");
       lines.push(ledger(out,round2(row[h])));total=round2(total+round2(row[h]));
     }
   }else{
