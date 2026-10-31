@@ -112,6 +112,9 @@ export function buildBooks(rows, ledgers = [], rulesInput = []) {
   return out;
 }
 const days = (a, b) => (a && b ? Math.round(Math.abs(Date.parse(a) - Date.parse(b)) / 864e5) : 0);
+const fyOf = (s) => { const m = /^(\d{4})-(\d{2})/.exec(String(s || "")); return m ? +m[1] - (+m[2] < 4 ? 1 : 0) : null; };
+/** Same number, different financial year, more than 60 days apart: the supplier started numbering again in April. */
+export const otherYear = (a, b) => { const x = fyOf(a), y = fyOf(b); return x != null && y != null && x !== y && days(a, b) > 60; };
 const normName = (s) => String(s || "").toLowerCase().replace(/\b(m\/s|the|pvt|private|ltd|limited|llp|co|company|and|&)\b|[^a-z0-9]/g, "");
 
 // which Tally voucher kinds can carry each 2B document
@@ -123,7 +126,8 @@ function kindsFor(d) {
 
 /** Compare one 2B document with one Tally voucher → { level, diffs, ok, score, dateGap }. */
 export function compare(d, b, tol = 1) {
-  const level = Math.max(sameInvoice(d.num, b.num), d.onum ? sameInvoice(d.onum, b.num) : 0);
+  let level = Math.max(sameInvoice(d.num, b.num), d.onum ? sameInvoice(d.onum, b.num) : 0);
+  if (level && otherYear(d.dt, b.dt)) level = 0;
   const diffs = [];
   for (const h of HEADS) if (Math.abs((d[h] || 0) - (b[h] || 0)) > tol) diffs.push({ field: h, b2b: d[h] || 0, books: b[h] || 0 });
   const taxGap = Math.abs(totals(d) - b.tax);
@@ -192,14 +196,18 @@ export function reconcile(docs, books0, { tol = 1, period = "", usedElsewhere = 
   };
 
   // manual links stay as they are
+  // "Not this voucher" rules out that voucher only (d.rejected); the invoice still matches its own voucher once it is in
+  // Tally. Older versions saved it as "never match" (manual, missing, no voucher): those now match only the same
+  // invoice number, so an invoice posted later is found.
+  const notAgain = new Set();
   for (const d of active) {
     if (d.method === "manual" && d.mid && byMid.has(d.mid)) { const b = withRcm(d, byMid.get(d.mid)); settle(d, b, compare(d, b, tol), "manual"); }
-    else if (d.method === "manual" && d.status === "missing") { results.set(d.id, { status: "missing", mid: null, level: 0, diffs: [], notes: notesFor(d), method: "manual" }); }
+    else if (d.method === "manual" && d.status === "missing") notAgain.add(d.id);
   }
   const candidates = (d) => {
     const pool = [...(byGstin.get(d.ctin) || []), ...(byGstin.get("~" + normName(d.name)) || [])];
-    const kinds = kindsFor(d);
-    return pool.filter((b) => !used.has(b.id) && kinds.includes(b.kind));
+    const kinds = kindsFor(d), rejected = new Set(Array.isArray(d.rejected) ? d.rejected.map(String) : []);
+    return pool.filter((b) => !used.has(b.id) && kinds.includes(b.kind) && !rejected.has(String(b.id)));
   };
   // every pair, strongest first: number match, then closeness of tax, then date
   const pairs = [];
@@ -208,6 +216,7 @@ export function reconcile(docs, books0, { tol = 1, period = "", usedElsewhere = 
     for (const b0 of candidates(d)) {
       const b = withRcm(d, b0);
       const c = compare(d, b, tol);
+      if (notAgain.has(d.id)) { if (c.level === 2 && c.dateGap <= 60) pairs.push({ d, b, c }); continue; }
       if (c.level > 0) pairs.push({ d, b, c });
       // same supplier, same tax, no invoice number in common: only when the dates are close — a monthly bill of the same
       // amount (subscription, rent, bank charges) a month apart is a different bill
@@ -224,7 +233,7 @@ export function reconcile(docs, books0, { tol = 1, period = "", usedElsewhere = 
     }
     settle(p.d, p.b, p.c, p.amountOnly ? "amount" : "number");
   }
-  for (const d of active) if (!results.has(d.id)) results.set(d.id, { status: "missing", mid: null, level: 0, diffs: [], notes: notesFor(d), method: "" });
+  for (const d of active) if (!results.has(d.id)) results.set(d.id, { status: "missing", mid: null, level: 0, diffs: [], notes: notesFor(d), method: notAgain.has(d.id) ? "manual" : "" });
   for (const d of docs) if (d.compare === false) results.set(d.id, { status: "info", mid: null, level: 0, diffs: [], notes: [d.sec === "IMPG" ? "Import of goods (ICEGATE) — not compared with Tally" : "Input Service Distributor credit — not compared with Tally"], method: "" });
 
   // Tally vouchers of this month (by supplier invoice date) that no 2B document claimed

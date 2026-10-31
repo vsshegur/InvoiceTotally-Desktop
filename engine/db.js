@@ -161,6 +161,7 @@ export const MIGRATIONS = [
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN itc_n INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN jkind TEXT",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN pos TEXT",
+  "ALTER TABLE gst_docs ADD COLUMN rejected TEXT",
   "CREATE INDEX IF NOT EXISTS ix_bank_key ON bank_lines(company_id, key)",
   "CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs(status, created_at)",
 ];

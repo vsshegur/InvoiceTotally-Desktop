@@ -473,17 +473,20 @@ async function register(cacheKey,request,readOnly){
   return rows;
 }
 export function forgetRegister(){registers.clear();}
+/** "… — Tally Purchase 35 dated 12 Aug 2025, supplier invoice 12, party X" */
+const foundText=f=>f.reason+" — Tally "+[f.vtype,f.number].filter(Boolean).join(" ")+(f.date?" dated "+f.date:"")+
+  (f.ref?", supplier invoice "+f.ref:"")+(f.party?", "+f.party:"");
 export async function beforePosting(D,job,tallyCompanyName,readOnly){
   const r=must(await D.first("SELECT * FROM gstr2b_purchase_vouchers WHERE id=?",job.invoice_id),"GSTR-2B purchase not found");
   if(r.status!=="queued")throw new Purchase2bError("Invoice was not queued");
   const batchRow=await batch(D,r.batch_id);
-  const doc=await D.first("SELECT sec,note,mid,status,level,method,itc,rev,compare,onum FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,batchRow.return_id);
+  const doc=await D.first("SELECT sec,note,mid,status,level,method,itc,rev,compare,onum,odt FROM gst_docs WHERE id=? AND return_id=?",r.doc_id,batchRow.return_id);
   if(!doc)return {duplicate:true,message:"GSTR-2B source document is missing; posting blocked"};
   const cls=classify({...doc,ctin:r.supplier_gstin});
   if(cls.reason)return {duplicate:true,message:cls.reason+" Posting blocked."};
   const existing=await register(job.company_id+"|"+tallyCompanyName,existingGstr2bRequest(tallyCompanyName,r.date),readOnly);
-  const found=findExistingPurchase({...r,original_invoice:doc.onum},existing);
-  return found?{duplicate:true,message:found.reason+" ("+found.number+", "+found.date+")"}:{duplicate:false};
+  const found=findExistingPurchase({...r,original_invoice:doc.onum,original_date:doc.odt},existing);
+  return found?{duplicate:true,message:foundText(found)}:{duplicate:false};
 }
 const KIND={"Debit Note":"dn","Credit Note":"cn","Journal":"jv"};
 export async function jobResult(D,job,accepted,xml,error,duplicate=false,uncertainFlag=false){
@@ -506,6 +509,16 @@ export async function jobResult(D,job,accepted,xml,error,duplicate=false,uncerta
     for(const reg of registers.values())reg.rows.push({number:r.voucher_number,date:r.date,kind:KIND[r.vtype]||"inv",vtype:r.vtype,
       ref:r.supplier_invoice,party:r.party_ledger||"",gstin:r.supplier_gstin||""});
   }
+  // last of a posting run: read Tally's purchases again, so the GSTR-2B match shows what was just posted
+  try{
+    const v=await D.first("SELECT batch_id FROM gstr2b_purchase_vouchers WHERE id=?",job.invoice_id);
+    const left=v&&await D.first("SELECT count(*) n FROM gstr2b_purchase_vouchers WHERE batch_id=? AND status='queued'",v.batch_id);
+    const posted=v&&await D.first("SELECT count(*) n FROM gstr2b_purchase_vouchers WHERE batch_id=? AND status='synced'",v.batch_id);
+    if(v&&!left.n&&posted.n){
+      const b=await D.first("SELECT return_id FROM gstr2b_purchase_batches WHERE id=?",v.batch_id);
+      if(b&&await D.first("SELECT id FROM gst_returns WHERE id=?",b.return_id))await (await import("./gstr2b.js")).askTally(D,b.return_id);
+    }
+  }catch{/* the match can still be refreshed by hand (Read Tally again) */}
   return status;
 }
 /**
@@ -516,7 +529,7 @@ export async function recheck(D,id,env,input={}){
   const {batch:b,company:c}=await companyBatch(D,id);
   if(!env.TALLY?.readOnly)throw new Purchase2bError("Tally read-only connection is unavailable");
   const states=input.includePosted?["uncertain","duplicate","synced"]:["uncertain","duplicate"];
-  const rows=await D.all("SELECT v.*,d.onum original_invoice FROM gstr2b_purchase_vouchers v JOIN gst_docs d ON d.id=v.doc_id WHERE v.batch_id=? AND v.status IN ("+
+  const rows=await D.all("SELECT v.*,d.onum original_invoice,d.odt original_date FROM gstr2b_purchase_vouchers v JOIN gst_docs d ON d.id=v.doc_id WHERE v.batch_id=? AND v.status IN ("+
     states.map(()=>"?").join(",")+") ORDER BY v.seq",id,...states);
   const counts={present:0,ready:0,posted:0,removed:0};
   const cache=new Map();
@@ -538,7 +551,7 @@ export async function recheck(D,id,env,input={}){
     else counts.ready++;
     await D.update("gstr2b_purchase_vouchers",r.id,{
       status:found?"duplicate":"ready",error:found?
-        "Voucher exists in Tally; verify whether it was previously posted. No automatic repost.":
+        foundText(found)+". Not posted again.":
         "No matching Tally voucher found on fresh check. Review again before explicitly queuing."
     });
   }

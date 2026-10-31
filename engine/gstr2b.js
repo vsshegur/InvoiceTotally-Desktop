@@ -6,6 +6,8 @@ import { indiaDate } from "./invoice-period.js";
 import { newId, now, jload } from "./db.js";
 import * as T from "./tally.js";
 import { getCompany } from "./pipeline.js";
+import { cleanGstin } from "./gst.js";
+import { sourceKey as postingKey } from "./gstr2b-purchase-tally.js";
 
 export class GstError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json", "cache-control": "no-store" } });
@@ -145,8 +147,26 @@ export async function list(D, cid) {
 export async function view(D, rid) {
   const [[g], docs] = await D.many([["SELECT * FROM gst_returns WHERE id=?", rid], ["SELECT * FROM gst_docs WHERE return_id=? ORDER BY seq", rid]]);
   must(g, "GSTR-2B not found");
-  for (const d of docs) { d.diffs = jload(d.diffs, []); d.notes = jload(d.notes, []); d.rev = !!d.rev; d.compare = !!d.compare; }
+  for (const d of docs) { d.diffs = jload(d.diffs, []); d.notes = jload(d.notes, []); d.rejected = jload(d.rejected, []); d.rev = !!d.rev; d.compare = !!d.compare; }
+  await addPosting(D, g.company_id, docs);
   return { ...g, summary: jload(g.summary, null), range: (+g.months || 1) > 1 ? returnRange(g.period, g.months) : null, docs };
+}
+
+/**
+ * What GSTR-2B → Tally did with each document (by supplier GSTIN, invoice no. and date, so it is found whichever
+ * upload of the same GSTR-2B it was posted from): d.posting = {status, error, vtype, number, date, posted_at}.
+ */
+async function addPosting(D, cid, docs) {
+  const rows = await D.all(`SELECT source_key, status, error, vtype, voucher_number, date, posted_at FROM gstr2b_purchase_vouchers
+    WHERE company_id=? AND (jkind IS NULL OR jkind<>'rcm')`, cid);
+  if (!rows.length) return;
+  const by = new Map(rows.map((r) => [r.source_key, r]));
+  for (const d of docs) {
+    const key = postingKey(cleanGstin(d.ctin) || "IMPORT", d.num, d.dt) +
+      (d.sec === "ISD" ? "|ISD" : d.sec === "IMPG" ? "|IMPG" : ["CDNR", "CDNRA"].includes(d.sec) ? "|" + (d.note || "N") : "");
+    const r = by.get(key);
+    if (r) d.posting = { status: r.status, error: r.error || "", vtype: r.vtype, number: r.voucher_number, date: r.date, posted_at: r.posted_at };
+  }
 }
 
 /** What the browser needs to match: the vouchers read from Tally, the ledgers, and vouchers other months already claimed. */
@@ -171,7 +191,7 @@ export async function saveMatches(D, rid, body) {
   for (const r of res) {
     const status = ["matched", "mismatch", "probable", "missing", "info"].includes(r.status) ? r.status : "missing";
     stmts.push(D.stmt(`UPDATE gst_docs SET status=?, mid=?, level=?, diffs=?, notes=?, method=? WHERE id=? AND return_id=?
-      AND (method IS NULL OR method<>'manual') AND status NOT IN ('accepted','ignored')`,
+      AND (method IS NULL OR method<>'manual' OR (status='missing' AND mid IS NULL)) AND status NOT IN ('accepted','ignored')`,
       status, r.mid ? str(r.mid, 30) : null, Math.max(0, Math.min(2, +r.level || 0)), JSON.stringify((r.diffs || []).slice(0, 10)),
       JSON.stringify((r.notes || []).map((n) => str(n, 200)).slice(0, 8)), str(r.method, 20), String(r.id), rid));
     // manual rows: refresh the differences/notes against the voucher they're linked to
@@ -215,7 +235,17 @@ export async function decide(D, rid, body) {
     if (!mid || ids.length !== 1) throw new GstError(400, "Link one invoice to one voucher");
     sql = "UPDATE gst_docs SET mid=?, method='manual', status='matched'"; args.push(mid);
   } else if (a === "unlink") sql = "UPDATE gst_docs SET mid=NULL, method=NULL, status='new'";
-  else if (a === "missing") sql = "UPDATE gst_docs SET mid=NULL, method='manual', status='missing'";
+  else if (a === "missing") {
+    // "Not this voucher": that voucher is ruled out for this invoice; matching carries on with the others
+    const stmts = [];
+    for (const d of await D.all(`SELECT id, mid, rejected FROM gst_docs WHERE ${where}`, rid, ...ids)) {
+      const rejected = [...new Set([...jload(d.rejected, []), ...(d.mid ? [d.mid] : [])].map(String))].slice(-20);
+      stmts.push(D.stmt("UPDATE gst_docs SET mid=NULL, method=NULL, status='missing', level=0, rejected=? WHERE id=? AND return_id=?", JSON.stringify(rejected), d.id, rid));
+    }
+    stmts.push(D.updateStmt("gst_returns", rid, { matched_at: null }));
+    await D.batch(stmts);
+    return { ok: true };
+  }
   else if (a === "accept") sql = "UPDATE gst_docs SET status='accepted'";
   else if (a === "ignore") sql = "UPDATE gst_docs SET status='ignored'";
   else if (a === "reopen") sql = "UPDATE gst_docs SET status='new', method=CASE WHEN method='manual' AND mid IS NOT NULL THEN 'manual' ELSE NULL END";

@@ -242,6 +242,22 @@ export function existingGstr2bRequest(company,invoiceDate){
 }
 const KIND={"Debit Note":"dn","Credit Note":"cn","Journal":"jv"};
 const KIND_RE={dn:/debit note/i,cn:/credit note/i,jv:/journal/i,inv:/purchase/i};
+const fyOf=s=>{const m=/^(\d{4})-(\d{2})/.exec(String(s||""));return m?+m[1]-(+m[2]<4?1:0):null;};
+const dayGap=(a,b)=>Math.abs(Date.parse(a)-Date.parse(b))/864e5;
+/**
+ * Two invoices with the same number are different when they fall in different financial years and are more than
+ * 60 days apart: suppliers start numbering again every April (GST needs a number unique only within the year).
+ * The 60 days keep a 31 March bill entered in April (without its supplier date) recognised as the same bill.
+ */
+export function otherYear(a,b){
+  const fa=fyOf(a),fb=fyOf(b);
+  return fa!=null&&fb!=null&&fa!==fb&&dayGap(a,b)>60;
+}
+const partyAmount=entry=>{
+  const name=String(entry.party||"").trim().toUpperCase();
+  const line=(entry.e||[]).find(([n])=>String(n||"").trim().toUpperCase()===name);
+  return line?Math.abs(Number(line[1])||0):null;
+};
 export function findExistingPurchase(row,rows){
   const kind=KIND[row.vtype]||"inv";
   const invoice=invoiceKey(row.supplier_invoice);
@@ -259,10 +275,18 @@ export function findExistingPurchase(row,rows){
     const sameParty=(entry.gstin&&entry.gstin.toUpperCase()===gstin)||
       (entry.party&&entry.party.trim().toUpperCase()===party);
     if(!sameParty)continue;
-    // Supplier reference takes precedence. Fallback only when reference is absent.
+    // Supplier reference takes precedence. Without one, the Tally voucher number is taken as the reference only
+    // when the amount is the same too (most books number purchases 1, 2, 3… — not the supplier's number).
     const ref=invoiceKey(entry.ref||entry.number);
-    if(ref&&ref===invoice)return {...entry,reason:"Same supplier and invoice reference already recorded in Tally"};
-    if(ref&&original&&ref===original)return {...entry,reason:"The original invoice (before the supplier amended it) is already in Tally"};
+    const when=entry.refdate||entry.date;
+    if(!entry.ref){
+      const a=partyAmount(entry);
+      if(a!=null&&Math.abs(a-(+row.invoice||0))>1&&Math.abs(a-(+row.taxable||0))>1)continue;
+    }
+    if(ref&&ref===invoice&&!otherYear(when,row.date))
+      return {...entry,reason:"Same supplier and invoice no. already in Tally"};
+    if(ref&&original&&ref===original&&!(row.original_date&&otherYear(when,row.original_date)))
+      return {...entry,reason:"The original invoice (before the supplier amended it) is already in Tally"};
   }
   return null;
 }
