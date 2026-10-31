@@ -61,6 +61,20 @@ export function periodLabel(period) {
 export function addDays(iso, days) { return new Date(Date.parse(iso) + days * 864e5).toISOString().slice(0, 10); }
 export function addMonths(iso, n) { const d = new Date(Date.parse(iso)); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + n); return d.toISOString().slice(0, 10); }
 
+/** Rate-wise split of one document: [{ rt, txval, igst, cgst, sgst, cess }], same rate added together. */
+export function cleanRates(list) {
+  const by = new Map();
+  for (const x of Array.isArray(list) ? list : []) {
+    const rt = Number(String(x?.rt ?? "").replace(/%/g, "").trim());
+    if (!Number.isFinite(rt) || rt < 0 || rt > 100 || String(x?.rt ?? "").trim() === "") continue;
+    const k = r2(rt);
+    const t = by.get(k) || { rt: k, txval: 0, igst: 0, cgst: 0, sgst: 0, cess: 0 };
+    for (const f of ["txval", "igst", "cgst", "sgst", "cess"]) t[f] = r2(t[f] + amount(x[f]));
+    by.set(k, t);
+  }
+  return [...by.values()].sort((a, b) => a.rt - b.rt);
+}
+
 const cleanGstin = (g) => String(g || "").replace(/[^0-9A-Za-z]/g, "").toUpperCase();
 const yn = (v) => { const s = String(v ?? "").trim().toUpperCase(); return s === "Y" || s === "YES" ? "Y" : s === "N" || s === "NO" ? "N" : s ? s[0] : ""; };
 
@@ -74,6 +88,8 @@ function doc(sec, base) {
     supprd: String(base.supprd || "").trim(), supfildt: isoDate(base.supfildt), irn: String(base.irn || "").trim(),
     compare: base.compare !== false,
   };
+  const rates = cleanRates(base.rates);
+  if (rates.length) d.rates = rates;
   // credit / debit note type: "C" | "D" (Excel says "Credit note" / "Debit note")
   if (d.note) d.note = /^c/i.test(d.note) ? "C" : /^d/i.test(d.note) ? "D" : "";
   return d;
@@ -95,6 +111,13 @@ function sumItems(x) {
   return t;
 }
 
+function itemRates(x) {
+  return (x.items || x.itms || []).map((it) => {
+    const d = it.itm_det || it;
+    return { rt: d.rt, txval: d.txval, igst: d.igst ?? d.iamt, cgst: d.cgst ?? d.camt, sgst: d.sgst ?? d.samt, cess: d.cess ?? d.csamt };
+  });
+}
+
 /** Portal JSON (2B; 2A works too) → { kind, gstin, period, gendt, docs, rejected }. */
 export function fromJson(obj) {
   const root = obj?.data?.docdata ? obj.data : obj?.docdata ? obj : obj?.data?.data?.docdata ? obj.data.data : obj?.data || obj || {};
@@ -110,7 +133,7 @@ export function fromJson(obj) {
           num: x.inum ?? x.ntnum ?? x.nt_num, dt: x.dt ?? x.idt ?? x.nt_dt, onum: x.oinum ?? x.ontnum, odt: x.oidt ?? x.ontdt,
           note: list === "nt" ? (x.typ ?? x.ntty) : "", typ: list === "nt" ? x.suptyp : x.typ ?? x.inv_typ,
           val: x.val, txval: x.txval, igst: x.igst, cgst: x.cgst, sgst: x.sgst, cess: x.cess,
-          pos: x.pos, rev: x.rev ?? x.rchrg, itc: x.itcavl, rsn: x.rsn, irn: x.irn, ...sumItems(x),
+          pos: x.pos, rev: x.rev ?? x.rchrg, itc: x.itcavl, rsn: x.rsn, irn: x.irn, rates: itemRates(x), ...sumItems(x),
         }));
       }
     }
@@ -118,7 +141,7 @@ export function fromJson(obj) {
   // GSTR-2A credit/debit notes
   for (const sup of (kind === "GSTR-2A" && dd.cdn) || []) {
     for (const x of sup.nt || []) {
-      docs.push(doc("CDNR", { ctin: sup.ctin, name: sup.trdnm || sup.cname, num: x.nt_num, dt: x.nt_dt, note: x.ntty, val: x.val, rev: x.rchrg, ...sumItems(x) }));
+      docs.push(doc("CDNR", { ctin: sup.ctin, name: sup.trdnm || sup.cname, num: x.nt_num, dt: x.nt_dt, note: x.ntty, val: x.val, rev: x.rchrg, rates: itemRates(x), ...sumItems(x) }));
     }
   }
   // shown for information only: ITC from imports and from an Input Service Distributor
@@ -164,6 +187,7 @@ function fieldFor(key, taken) {
   if (key.includes("place of supply")) return pick("pos");
   if (key.includes("reverse charge")) return pick("rev");
   if (key.includes("taxable value")) return pick("txval");
+  if (/(^| > )(tax )?rate ?\(%\)$|(^| > )rate$|^gst rate/.test(key) && !key.includes("applicable")) return pick("rt");
   const tax = /tax amount|input tax distribution|amount of tax/.test(key) && !key.includes("itc reduction");
   if (tax || /^(integrated|central|state\/ut) tax$|^cess$/.test(key)) {
     if (key.includes("integrated")) return pick("igst");
@@ -196,7 +220,26 @@ function readSheet(sec, rows) {
     if (!String(base.num || "").trim()) continue;
     if (sec !== "IMPG" && !/^[0-9]{2}[A-Z0-9]{13}$/i.test(cleanGstin(base.ctin))) continue;
     if (sec === "IMPG") base.name = "Imports";
+    if (base.rt != null && String(base.rt).trim() !== "") base.rates = [{ rt: base.rt, txval: base.txval, igst: base.igst, cgst: base.cgst, sgst: base.sgst, cess: base.cess }];
     out.push(doc(sec, { ...base, compare: sec !== "ISD" && sec !== "IMPG", note: sec.startsWith("CDNR") ? base.note : sec === "ISD" && /credit/i.test(base.note || "") ? "C" : "" }));
+  }
+  return mergeRows(out);
+}
+
+/**
+ * The portal's Excel repeats an invoice on one row per GST rate (5% and 18% items on one bill → two rows,
+ * same number and invoice value). Those rows are one document: amounts are added, the rate split kept.
+ */
+export function mergeRows(docs) {
+  const out = [], seen = new Map();
+  for (const d of docs) {
+    const key = [d.sec, d.ctin, invoiceKey(d.num), d.dt, d.note].join("|");
+    const prev = seen.get(key);
+    if (!prev) { seen.set(key, d); out.push(d); continue; }
+    if (prev.val !== d.val) prev.val = r2(prev.val + d.val);
+    for (const f of ["txval", "igst", "cgst", "sgst", "cess"]) prev[f] = r2(prev[f] + d[f]);
+    const rates = cleanRates([...(prev.rates || []), ...(d.rates || [])]);
+    if (rates.length) prev.rates = rates; else delete prev.rates;
   }
   return out;
 }

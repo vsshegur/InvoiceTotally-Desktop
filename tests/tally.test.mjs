@@ -24,7 +24,7 @@ test("anything that could change or delete existing data, or post elsewhere, is 
     [voucher.replace("<DATE>", "<GUID>abc</GUID><DATE>"), "VIPUL TEXTILES", /GUID is not allowed/],
     [voucher.replace("<DATE>", "<MASTERID>5</MASTERID><DATE>"), "VIPUL TEXTILES", /MASTERID is not allowed/],
     [voucher.replace('VCHTYPE="Receipt"', 'VCHTYPE="Receipt" REMOTEID="x"'), "VIPUL TEXTILES", /REMOTEID/],
-    [voucher.replace(/VCHTYPE="Receipt"/, 'VCHTYPE="Journal"').replace("<VOUCHERTYPENAME>Receipt", "<VOUCHERTYPENAME>Journal"), "VIPUL TEXTILES", /only Purchase, Debit Note, Sales/],
+    [voucher.replace(/VCHTYPE="Receipt"/, 'VCHTYPE="Stock Journal"').replace("<VOUCHERTYPENAME>Receipt", "<VOUCHERTYPENAME>Stock Journal"), "VIPUL TEXTILES", /only Purchase, Debit Note, Sales/],
     [voucher.replace("<TALLYREQUEST>Import Data</TALLYREQUEST>", "<TALLYREQUEST>Export</TALLYREQUEST>"), "VIPUL TEXTILES", /only Import Data/],
     ['<!DOCTYPE x [<!ENTITY a "b">]>' + voucher, "VIPUL TEXTILES", /DOCTYPE|ENTITY/],
     [voucher.replace("</TALLYMESSAGE>", "<TDLMESSAGE/></TALLYMESSAGE>"), "VIPUL TEXTILES", /TDLMESSAGE/],
@@ -37,10 +37,10 @@ test("anything that could change or delete existing data, or post elsewhere, is 
 });
 
 test("Tally's replies: UTF-16, odd control characters, masters and GST vouchers", () => {
-  const xml = '<ENVELOPE><LEDGER NAME="R&amp;D Traders"><PARENT>Sundry Creditors</PARENT><PARTYGSTIN>27AAPFR1234K1Z5</PARTYGSTIN><LEDSTATENAME>&#4; Maharashtra</LEDSTATENAME></LEDGER></ENVELOPE>';
+  const xml = '<ENVELOPE><LEDGER NAME="R&amp;D Traders"><PARENT>Sundry Creditors</PARENT><PARTYGSTIN>27AAPFR1234K1Z5</PARTYGSTIN><LEDSTATENAME>&#4; Maharashtra</LEDSTATENAME><LEDGSTREGDETAILS.LIST><GSTREGISTRATIONTYPE>Regular</GSTREGISTRATIONTYPE></LEDGSTREGDETAILS.LIST></LEDGER></ENVELOPE>';
   const u16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, "utf16le")]);
   const rows = TL.masterRows("export_ledgers", TL.toText(u16));
-  assert.deepEqual(rows, [{ name: "R&D Traders", parent: "Sundry Creditors", gstin: "27AAPFR1234K1Z5", state: "Maharashtra" }]);
+  assert.deepEqual(rows, [{ name: "R&D Traders", parent: "Sundry Creditors", gstin: "27AAPFR1234K1Z5", state: "Maharashtra", reg_type: "Regular" }]);
   const stock = TL.masterRows("export_stock", '<X><STOCKITEM NAME="Towel"><BASEUNITS>PCS</BASEUNITS><GSTDETAILS.LIST><HSNCODE>6302</HSNCODE><RATEDETAILS.LIST><GSTRATEDUTYHEAD>CGST</GSTRATEDUTYHEAD><GSTRATE>2.5</GSTRATE></RATEDETAILS.LIST></GSTDETAILS.LIST></STOCKITEM></X>');
   assert.deepEqual(stock, [{ name: "Towel", parent: "", hsn: "6302", gst_rate: 5, unit: "PCS" }]);
   assert.deepEqual(TL.companiesIn('<ENVELOPE><COMPANY NAME="B Co"/><COMPANY><NAME>A Co</NAME></COMPANY><COMPANY NAME="B Co"/></ENVELOPE>'), ["A Co", "B Co"]);

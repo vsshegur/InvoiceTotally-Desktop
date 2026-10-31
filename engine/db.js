@@ -146,6 +146,13 @@ export const MIGRATIONS = [
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN vtype TEXT NOT NULL DEFAULT 'Purchase'",
   "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN credit_verified INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE bank_lines ADD COLUMN confirmed_new INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE gst_docs ADD COLUMN rates TEXT",
+  "ALTER TABLE masters ADD COLUMN reg_type TEXT",
+  "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN rates TEXT",
+  "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN rcm INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN itc_n INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN jkind TEXT",
+  "ALTER TABLE gstr2b_purchase_vouchers ADD COLUMN pos TEXT",
   "CREATE INDEX IF NOT EXISTS ix_bank_key ON bank_lines(company_id, key)",
   "CREATE INDEX IF NOT EXISTS ix_jobs_status ON jobs(status, created_at)",
 ];

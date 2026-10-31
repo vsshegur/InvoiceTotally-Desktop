@@ -1,4 +1,5 @@
 // InvoiceTotally for Windows — the JSON API behind the app window (served on this PC only; see desktop/main.mjs).
+import { gstinContext, invoiceGstinCheck } from "./gstin-check.js";
 import { db, newId, now, jload } from "./db.js";
 import { featuresForRequest, cleanDisabled, FEATURES } from "./features.js";
 import * as P from "./pipeline.js";
@@ -105,7 +106,7 @@ async function companyView(D, id) {
     masters: { ledger: counts.ledger || 0, stock_item: counts.stock_item || 0, group: counts.group || 0, unit: counts.unit || 0 } };
 }
 
-function invoiceSummary(inv) {
+function invoiceSummary(inv, gctx = null) {
   const h = inv.data;
   const state = { pending: "Waiting to be read", reading: "Reading", review: inv.steps.ready ? "Ready to sync" : "Ready to review",
     queued: "Queued for Tally", synced: "In Tally", failed: "Failed", error: "Could not read" }[inv.status] || inv.status;
@@ -113,7 +114,8 @@ function invoiceSummary(inv) {
     total: h.total != null ? h.total : inv.computed_total, status: inv.status, state, steps: inv.steps, error: inv.sync_error,
     warnings: h.warnings || [], date_review:inv.date_review||invoiceDateReview(inv), page_ids: inv.page_ids, rechecked: !!h.rechecked, ai: h.ai || null,
     // every line to a ledger (stationery, packing material…): posted as an accounting voucher, not an item invoice
-    as_voucher: inv.lines.length > 0 && inv.lines.every((l) => l.kind === "ledger") };
+    as_voucher: inv.lines.length > 0 && inv.lines.every((l) => l.kind === "ledger"),
+    party_gstin: h.party_gstin || "", ledger_gstin: inv.party_ledger_gstin || null, gstin_from_tally: !!h.gstin_from_tally, gstin_check: gctx && !["pending", "reading", "error"].includes(inv.status) ? invoiceGstinCheck(inv, gctx) : null };
 }
 
 const REVIEWABLE = ["review", "failed"];
@@ -410,9 +412,9 @@ route("GET", "/api/batches/:bid", async ({ D, p }) => {
     ["SELECT id, filename, status, error, note, attempts, pages FROM files WHERE batch_id=? ORDER BY idx", p.bid],
     ["SELECT count(*) n FROM pages WHERE batch_id=?", p.bid]]);
   must(b);
-  const [invs, company] = await Promise.all([P.loadBatchInvoices(D, p.bid), companyView(D, b.company_id)]);
+  const [invs, company, gctx] = await Promise.all([P.loadBatchInvoices(D, p.bid), companyView(D, b.company_id), gstinContext(D, b.company_id)]);
   const ai_cost_usd = Math.round(invs.reduce((s, i) => s + (i.data.ai?.cost_usd || 0), 0) * 1e4) / 1e4;
-  return json({ ...b, files, pages: pg.n, invoices: invs.map(invoiceSummary), company, ai_cost_usd,
+  return json({ ...b, files, pages: pg.n, invoices: invs.map((i) => invoiceSummary(i, gctx)), company, ai_cost_usd,
     have_a_look:invs.filter(i=>(i.date_review||invoiceDateReview(i)).needs_review).length });
 });
 async function deleteBatch(D, bid) {
@@ -439,13 +441,15 @@ route("GET", "/api/batches/:bid/activity", async ({ D, p }) => json(await D.all(
 route("GET", "/api/batches/:bid/review/:step", async ({ D, p }) => {
   const b = must(await D.first("SELECT * FROM batches WHERE id=?", p.bid));
   const step = p.step;
-  if (step === "sync") return json({ items: (await P.loadBatchInvoices(D, p.bid)).map(invoiceSummary) });
+  if (step === "sync") { const gctx = await gstinContext(D, b.company_id); return json({ items: (await P.loadBatchInvoices(D, p.bid)).map((i) => invoiceSummary(i, gctx)) }); }
   const invs = await P.loadBatchInvoices(D, p.bid, REVIEWABLE);
   if (step === "party") {
     const groups = {};
+    const gctx = await gstinContext(D, b.company_id);
     for (const i of invs) {
       const h = i.data, k = partyKey(h);
       const g = groups[k] ||= { key: k, name: h.party_name, gstin: h.party_gstin, gstin_valid: h.party_gstin ? gstinValid(h.party_gstin) : null,
+        gstin_check: invoiceGstinCheck(i, gctx), ledger_gstin: i.party_ledger ? gctx.byLedger.get(i.party_ledger) || null : null,
         address: h.party_address, state: h.party_state, ledger: i.party_ledger, method: i.party_method, proposed: i.party_proposed, invoice_ids: [], total: 0 };
       g.invoice_ids.push(i.id);
       g.total += h.total || 0;
@@ -516,6 +520,17 @@ route("POST", "/api/batches/:bid/party-fix", async ({ D, p, body }) => {
   stmts.push(D.stmt("INSERT INTO activity (batch_id, invoice_id, message, at) VALUES (?,?,?,?)", p.bid, null, "Party details corrected", now()));
   await D.batch(stmts);
   return json({ ok: true });
+});
+// "Use GSTIN from Tally": the party ledger's GSTIN (and state) replace what the AI read on these invoices.
+route("POST", "/api/invoices/gstin-from-tally", async ({ D, body }) => {
+  const ids = (body.invoice_ids || []).slice(0, 2000);
+  let changed = 0;
+  for (const iid of ids) {
+    const inv = must(await D.first("SELECT status FROM invoices WHERE id=?", iid));
+    if (["queued", "synced"].includes(inv.status)) continue;
+    if (await P.gstinFromLedger(D, iid, true)) changed++;
+  }
+  return json({ ok: true, changed });
 });
 route("POST", "/api/batches/:bid/party", async ({ D, p, body }) => {
   const b = must(await D.first("SELECT * FROM batches WHERE id=?", p.bid));
@@ -592,7 +607,14 @@ route("POST", "/api/batches/:bid/ledger", async ({ D, body }) => {
   }
   if (!ledger) throw new HttpError(400, "Pick a ledger");
   const stmts = [D.stmt(`UPDATE lines SET ledger=?, ledger_state='resolved' WHERE id IN (${inList(ids)})`, ledger, ...ids)];
-  if (first.kind === "ledger") stmts.push(M.aliasSetStmt(D, cid, "charge", M.norm(first.description), ledger));
+  if (first.kind === "ledger") {
+    stmts.push(M.aliasSetStmt(D, cid, "charge", M.norm(first.description), ledger));
+    if (body.remember_fee !== false) {
+      // remembered for each party these lines came from: their next bill puts this fee on this ledger by itself
+      const parties = await D.all(`SELECT DISTINCT i.party_ledger p FROM lines l JOIN invoices i ON i.id=l.invoice_id WHERE l.id IN (${inList(ids)}) AND i.party_ledger IS NOT NULL`, ...ids);
+      for (const r of parties) stmts.push(M.aliasSetStmt(D, cid, "party_charge", M.partyChargeKey(first.voucher_type, r.p, first.description), ledger));
+    }
+  }
   else if (first.stock_item) stmts.push(M.aliasSetStmt(D, cid, "ledger", `item:${first.voucher_type}:${first.stock_item}`, ledger));
   if (body.remember_for_party && first.party_ledger) stmts.push(M.aliasSetStmt(D, cid, "ledger", `party:${first.voucher_type}:${first.party_ledger}`, ledger));
   // This supplier sells no stock items (stationery, packing material, printing): every line of their bills goes to this
@@ -657,6 +679,7 @@ async function invoiceFull(D, iid) {
   inv.batch = batch;
   inv.company = company;
   inv.gstin_valid = inv.data.party_gstin ? gstinValid(inv.data.party_gstin) : null;
+  inv.gstin_check = invoiceGstinCheck(inv, await gstinContext(D, inv.company_id));
   return inv;
 }
 route("GET", "/api/invoices/:iid", async ({ D, p }) => json(await invoiceFull(D, p.iid)));

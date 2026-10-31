@@ -30,30 +30,38 @@ test("setup", async () => {
   ins.run(cid, "ledger", "SHREE TOWELS", "SHREETOWELS", "Sundry Creditors", "Sundry Creditors", "27AAAAA0000A1Z5");
 });
 
-test("a misread GSTIN is corrected on the Party step, saved on the invoice, and the alias remembers the right one", async () => {
-  // the AI read the GSTIN with an O for a 0
+test("a misread GSTIN is replaced by the GSTIN on the matched Tally ledger; the AI's reading is kept", async () => {
+  // the AI read the GSTIN with an I for a 1; the party still matches the Tally ledger by name
   const a = await bill("Kanakraj Textiles", "27ACKPS3I68H1Z6");
-  let g = (await call("GET", `/batches/${a.bid}/review/party`)).items[0];
-  assert.equal(g.gstin_valid, false);
-  // as if the person had already saved it once from the invoice page: that's when the checksum warning is recorded
-  await call("PATCH", `/invoices/${a.iid}`, { data: { party_gstin: "27ACKPS3I68H1Z6" } });
-  assert.ok((await P.loadInvoice(D, a.iid)).data.warnings.some((w) => /checksum/.test(w)));
-
-  const fixed = await call("POST", `/batches/${a.bid}/party-fix`, { invoice_ids: g.invoice_ids, gstin: "27ACKPS3168H1Z6" });
-  assert.equal(fixed.ok, true);
-
   const inv = await P.loadInvoice(D, a.iid);
-  assert.equal(inv.data.party_gstin, "27ACKPS3168H1Z6");
-  assert.equal(inv.data.warnings.some((w) => /checksum/.test(w)), false, "the stale checksum warning is gone");
-
-  g = (await call("GET", `/batches/${a.bid}/review/party`)).items[0];
-  assert.equal(g.gstin, "27ACKPS3168H1Z6");
-  await call("POST", `/batches/${a.bid}/party`, { invoice_ids: g.invoice_ids, ledger: "KANAKRAJ TEXTILES" });
+  assert.equal(inv.party_ledger, "KANAKRAJ TEXTILES");
+  assert.equal(inv.data.party_gstin, "27ACKPS3168H1Z6", "Tally's (verified) GSTIN");
+  assert.equal(inv.data.party_gstin_read, "27ACKPS3I68H1Z6");
+  assert.equal(inv.data.gstin_from_tally, true);
+  const g = (await call("GET", `/batches/${a.bid}/review/party`)).items[0];
+  assert.equal(g.gstin_valid, true);
+  assert.equal(g.ledger_gstin, "27ACKPS3168H1Z6");
+  assert.equal(g.gstin_check.status, "verified");
 
   // a later bill from the same party, GSTIN read correctly this time, matches straight to the ledger by the GSTIN alias
   const b = await bill("Kanakraj Textiles", "27ACKPS3168H1Z6");
   const inv2 = await P.loadInvoice(D, b.iid);
   assert.equal(inv2.party_ledger, "KANAKRAJ TEXTILES");
+});
+
+test("a valid GSTIN that is not the Tally ledger's holds the invoice until 'Use GSTIN from Tally' (or another party)", async () => {
+  const a = await bill("Kanakraj Textiles", "27BAYPG0715M1Z9"); // valid, but another business
+  let inv = await P.loadInvoice(D, a.iid);
+  await call("POST", `/batches/${a.bid}/party`, { invoice_ids: [a.iid], ledger: "KANAKRAJ TEXTILES" });
+  inv = await P.loadInvoice(D, a.iid);
+  assert.equal(inv.data.party_gstin, "27BAYPG0715M1Z9", "a valid GSTIN is never overwritten silently");
+  assert.ok(inv.steps.blockers.some((x) => /not the Tally ledger's \(27ACKPS3168H1Z6\)/.test(x)), JSON.stringify(inv.steps.blockers));
+  const r = await call("POST", "/invoices/gstin-from-tally", { invoice_ids: [a.iid] });
+  assert.equal(r.changed, 1);
+  inv = await P.loadInvoice(D, a.iid);
+  assert.equal(inv.data.party_gstin, "27ACKPS3168H1Z6");
+  assert.equal(inv.data.party_state, "Maharashtra");
+  assert.ok(!inv.steps.blockers.some((x) => /Tally ledger's/.test(x)));
 });
 
 test("fixing a GSTIN after a ledger was already picked clears the match so it's picked again", async () => {

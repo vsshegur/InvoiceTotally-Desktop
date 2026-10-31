@@ -68,3 +68,23 @@ test("leaving a normal line out and back does not mark it as confirmed",async()=
 test("sameBankEntry says unknown when only one side has numbers",()=>{
   assert.equal(sameBankEntry({narration:"CASH"},{narration:"Chq : 12345"}),"unknown");
 });
+
+// Kotak-style narrations carry the UPI / IMPS reference without a "UTR" or "Ref" label. (Made-up names and numbers.)
+test("two UPI receipts of the same amount on the same day from different people are two entries",async()=>{
+  const first="UPI/SAMPLE PERSON A/612300000001/Payment from Ph";
+  await line("k1","UPI/SAMPLE PERSON B/612300000002/Payment from Ph","UPI-612300000002");
+  assert.equal((await W.beforeBankPosting(D,{invoice_id:"k1"},async()=>tally(first))).blocked,false);
+  await line("k2","IMPS-612300000003-SAMPLE PERSON C-KKBK-XXXXXX1234-Bill");
+  assert.equal((await W.beforeBankPosting(D,{invoice_id:"k2"},async()=>tally(first))).blocked,false);
+  await line("k3","NEFT HDFCN52026102500000001 SAMPLE TRADERS");
+  assert.equal((await W.beforeBankPosting(D,{invoice_id:"k3"},async()=>tally("NEFT HDFCN52026102500000009 OTHER TRADERS"))).blocked,false);
+});
+
+test("the same UPI reference is the same entry; a hand-typed Tally narration is still held",async()=>{
+  await line("k4","UPI/SAMPLE PERSON A/612300000001/Payment from Ph");
+  assert.equal((await W.beforeBankPosting(D,{invoice_id:"k4"},async()=>tally("Received 612300000001 via UPI"))).blocked,true);
+  await line("k5","UPI/SAMPLE PERSON D/612300000005/Payment");
+  assert.equal((await W.beforeBankPosting(D,{invoice_id:"k5"},async()=>tally("Being amount received"))).blocked,true,"no reference and no bank narration in Tally: hold");
+  assert.equal(sameBankEntry({narration:"UPI/ALPHA TRADERS/Payment"},{narration:"UPI/BETA STORES/Payment"}),"different");
+  assert.equal(sameBankEntry({narration:"UPI/SAMPLE PERSON A/Payment"},{narration:"UPI/SAMPLE PERSON A/Payment"}),"unknown");
+});

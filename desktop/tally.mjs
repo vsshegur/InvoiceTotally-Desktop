@@ -180,7 +180,7 @@ function tallyError(s) {
 }
 
 // ------------------------------------------------------------------ posting safety
-const POSTABLE = new Set(["Purchase", "Debit Note", "Sales", "Credit Note", "Receipt", "Payment", "Contra"]);
+const POSTABLE = new Set(["Purchase", "Debit Note", "Sales", "Credit Note", "Receipt", "Payment", "Contra", "Journal"]);
 const FORBIDDEN_TAGS = new Set(["TDL", "TDLMESSAGE", "OBJECT", "SYSTEM", "COLLECTION", "REPORT", "FORM", "FUNCTION", "ACTION",
   "GUID", "REMOTEID", "MASTERID", "ALTERID", "VCHKEY", "OLDNAME", "REMOTEALTGUID"]);
 
@@ -221,7 +221,7 @@ export function validatePosting(xml, tallyCompany) {
   if (obj.name === "VOUCHER") {
     if (report !== "Vouchers") throw new TallyError("vouchers must use the Vouchers report");
     const vt = (obj.attr.VCHTYPE || "").trim();
-    if (!POSTABLE.has(vt) || child(obj, "VOUCHERTYPENAME") !== vt) throw new TallyError(`only Purchase, Debit Note, Sales, Credit Note, Receipt, Payment and Contra vouchers can be posted (got "${vt}")`);
+    if (!POSTABLE.has(vt) || child(obj, "VOUCHERTYPENAME") !== vt) throw new TallyError(`only Purchase, Debit Note, Sales, Credit Note, Receipt, Payment, Contra and Journal vouchers can be posted (got "${vt}")`);
     return `${vt} voucher`;
   }
   if (["LEDGER", "STOCKITEM", "UNIT"].includes(obj.name)) {
@@ -258,7 +258,7 @@ export function masterRows(kind, reply) {
     const name = nodeName(n);
     if (!name) return false;
     const row = { name, parent: first(n, "PARENT") };
-    if (tag === "LEDGER") { row.gstin = first(n, "PARTYGSTIN", "GSTIN"); row.state = first(n, "LEDSTATENAME", "STATENAME", "STATE"); }
+    if (tag === "LEDGER") { row.gstin = first(n, "PARTYGSTIN", "GSTIN"); row.state = first(n, "LEDSTATENAME", "STATENAME", "STATE"); row.reg_type = first(n, "GSTREGISTRATIONTYPE"); }
     if (tag === "STOCKITEM") { row.hsn = first(n, "HSNCODE", "HSN"); row.gst_rate = gstRate(n); row.unit = first(n, "BASEUNITS"); }
     out.push(row);
     return false;

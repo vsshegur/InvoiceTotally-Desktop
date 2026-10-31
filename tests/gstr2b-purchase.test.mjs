@@ -18,6 +18,7 @@ const cid="g2bp-test-company";
 const goodResponse="<RESPONSE><CREATED>1</CREATED><ALTERED>0</ALTERED><ERRORS>0</ERRORS><EXCEPTIONS>0</EXCEPTIONS></RESPONSE>";
 const empty="<ENVELOPE><COLLECTION></COLLECTION></ENVELOPE>";
 async function fixture(){
+ G.forgetRegister();
  const DB=makeD1(),D=db({DB});
  await D.insert("companies",{id:cid,name:"VIJAYALAXMI TEXTILES",tally_company:"VIJAYALAXMI TEXTILES",
   bridge_token:"g2bp-test-token",gstin:COMPANY_GSTIN,settings:"{}"});
@@ -26,7 +27,8 @@ async function fixture(){
   ["Input CGST","Duties & Taxes",""],
   ["Input SGST","Duties & Taxes",""],
   ["Input IGST","Duties & Taxes",""],
-  ["Round Off","Indirect Expenses",""]
+  ["Round Off","Indirect Expenses",""],
+  ["RCM IGST Payable","Duties & Taxes",""]
  ])await D.insert("masters",{company_id:cid,kind:"ledger",name,uname:name.toUpperCase(),
   parent,primary_group:parent,gstin,pending:0});
  await D.insert("gst_returns",{id:"apr-gst2b",company_id:cid,period:PERIOD,gstin:COMPANY_GSTIN,
@@ -46,7 +48,7 @@ async function fixture(){
  });
  return {DB,D};
 }
-test("fixed PURCHASE-GSTR2B accounting voucher balances including separate GST and round-off",()=>{
+test("GSTR-2B purchase voucher: rate ledger, separate GST and round-off, state and place of supply",()=>{
  const row={period:PERIOD,date:"2026-03-22",supplier_gstin:SUPPLIER_GSTIN,
   supplier_invoice:"149",party_ledger:"Vanita Textile",voucher_number:"G2B-2604-001",
   taxable:26017.20,invoice:27318,cgst:650.43,sgst:650.43,igst:0,cess:0};
@@ -54,7 +56,9 @@ test("fixed PURCHASE-GSTR2B accounting voucher balances including separate GST a
  assert.equal(TL.validatePosting(xml,"VIJAYALAXMI TEXTILES"),"Purchase voucher");
  assert.match(xml,/ACTION="Create"/);
  assert.match(xml,/OBJVIEW="Accounting Voucher View"/);
- assert.match(xml,/<LEDGERNAME>PURCHASE-GSTR2B<\/LEDGERNAME>/);
+ assert.match(xml,/<LEDGERNAME>GSTR2B 5%<\/LEDGERNAME>/);
+ assert.match(xml,/<STATENAME>Maharashtra<\/STATENAME>/);
+ assert.match(xml,/<PARTYGSTIN>27BAYPG0715M1Z9<\/PARTYGSTIN>/);
  assert.match(xml,/<REFERENCE>149<\/REFERENCE>/);
  assert.match(xml,/<REFERENCEDATE>20260322<\/REFERENCEDATE>/);
  assert.match(xml,/<DATE>20260322<\/DATE>/);
@@ -98,38 +102,42 @@ test("prepare, create purchase ledger, map input taxes, approve, queue, verify a
   const again=await G.prepare(D,cid,{return_id:"apr-gst2b"});
   assert.equal(again.id,prepared.id);
   const d=await G.view(D,prepared.id);
-  assert.equal(d.fixedPurchaseLedger,"PURCHASE-GSTR2B");
-  assert.equal(d.ledgerPresent,false);
-  assert.equal(d.rows.length,7);
-  assert.equal(d.rows.filter(r=>r.status==="ready").length,3);
+  assert.deepEqual(d.ledgers.map(l=>l.name),["GSTR2B 5%","GSTR2B RCM 5%"]);
+  assert.equal(d.ledgersReady,false);
+  assert.equal(d.rows.length,8,"reverse charge adds its GST journal");
+  assert.equal(d.rows.filter(r=>r.status==="ready").length,6);
   assert.equal(d.rows.find(r=>r.supplier_invoice==="CN-12").vtype,"Debit Note");
-  assert.equal(d.rows.filter(r=>r.status==="blocked").length,4);
+  assert.equal(d.rows.filter(r=>r.status==="blocked").length,2);
+  assert.equal(d.rows.find(r=>r.supplier_invoice==="99"&&r.vtype==="Purchase").rcm,1);
+  assert.equal(d.rows.find(r=>r.supplier_invoice==="ITC-NO").itc_n,1);
   const p149=d.rows.find(r=>r.supplier_invoice==="149");
   assert.equal(p149.round_off,-0.06);
   assert.equal(p149.date,"2026-03-22");
   assert.equal(p149.party_ledger,"Vanita Textile");
   const p38=d.rows.find(r=>r.supplier_invoice==="38");
   assert.equal(p38.round_off,0.10);
-  await assert.rejects(()=>G.queue(D,prepared.id,{ids:[p149.id],confirmed:true,confirmedDate:true}),/PURCHASE-GSTR2B/);
+  await assert.rejects(()=>G.queue(D,prepared.id,{ids:[p149.id],confirmed:true,confirmedDate:true}),/GSTR2B 5% is not in Tally/);
   await G.createPurchaseLedger(D,prepared.id);
-  assert.equal((await G.view(D,prepared.id)).ledgerPending,true);
-  const job=await D.first("SELECT * FROM jobs WHERE kind='import_master' ORDER BY created_at LIMIT 1");
-  assert.match(job.payload,/<LEDGER NAME="PURCHASE-GSTR2B"/);
-  await P.jobResult(D,job,true,goodResponse);
-  assert.equal((await G.view(D,prepared.id)).ledgerPresent,true);
-  await assert.rejects(()=>G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input CGST",igst:"Input IGST",round:"Round Off"}),/distinct/);
-  await G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input SGST",igst:"Input IGST",round:"Round Off"});
+  assert.equal((await G.view(D,prepared.id)).ledgersPending,true);
+  const jobs=await D.all("SELECT * FROM jobs WHERE kind='import_master' ORDER BY created_at");
+  assert.match(jobs[0].payload,/<LEDGER NAME="GSTR2B 5%"/);
+  for(const job of jobs)await P.jobResult(D,job,true,goodResponse);
+  assert.equal((await G.view(D,prepared.id)).ledgersReady,true);
+  await assert.rejects(()=>G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input CGST",igst:"Input IGST",round:"Round Off",rcm_igst:"RCM IGST Payable"}),/distinct/);
+  await G.saveMapping(D,prepared.id,{cgst:"Input CGST",sgst:"Input SGST",igst:"Input IGST",round:"Round Off",rcm_igst:"RCM IGST Payable"});
   await assert.rejects(()=>G.queue(D,prepared.id,{ids:[p149.id],confirmed:true}),/confirm posting/);
   const posted=await G.queue(D,prepared.id,{ids:[p149.id,p38.id],confirmed:true,confirmedDate:true});
   assert.equal(posted.queued,2);
   await assert.rejects(()=>G.queue(D,prepared.id,{ids:[p149.id],confirmed:true,confirmedDate:true}),/not ready/);
   const j=await D.first("SELECT * FROM jobs WHERE kind='import_gstr2b_purchase' AND invoice_id=?",p149.id);
-  assert.match(j.payload,/<LEDGERNAME>PURCHASE-GSTR2B<\/LEDGERNAME>/);
+  assert.match(j.payload,/<LEDGERNAME>GSTR2B 5%<\/LEDGERNAME>/);
   assert.equal((await G.beforePosting(D,j,"VIJAYALAXMI TEXTILES",async()=>empty)).duplicate,false);
   const tallyDuplicate='<ENVELOPE><COLLECTION><VOUCHER><MASTERID>777</MASTERID>'+
     '<DATE>20260417</DATE><VOUCHERNUMBER>X-1</VOUCHERNUMBER><VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>'+
     '<REFERENCE>149</REFERENCE><PARTYLEDGERNAME>Vanita Textile</PARTYLEDGERNAME>'+
     '<PARTYGSTIN>'+SUPPLIER_GSTIN+'</PARTYGSTIN></VOUCHER></COLLECTION></ENVELOPE>';
+  // the register read is reused for 90 seconds during a posting run; a fresh read finds the hand-entered copy
+  G.forgetRegister();
   assert.equal((await G.beforePosting(D,j,"VIJAYALAXMI TEXTILES",async()=>tallyDuplicate)).duplicate,true);
   await G.jobResult(D,j,true,goodResponse);
   assert.equal((await D.first("SELECT status FROM gstr2b_purchase_vouchers WHERE id=?",p149.id)).status,"synced");
@@ -163,7 +171,7 @@ test("GSTR-2B purchase APIs require licence, company scope, and posting permissi
   assert.equal(legal.status,200);
   const detail=await call("GET","/gstr2b-purchases/"+prepared.data.id);
   assert.equal(detail.status,200);
-  assert.equal(detail.data.rows.length,7);
+  assert.equal(detail.data.rows.length,8);
   const badTenant=await call("GET","/gstr2b-purchases/doesnotexist");
   assert.equal(badTenant.status,404);
  }finally{DB.close();}
@@ -180,7 +188,7 @@ test("Invoices offers two upload choices and GSTR-2B parser is reused, not repla
  assert.match(index,/gstr2b-purchase\.js/);
  const frontend=fs.readFileSync(new URL("../public/gstr2b-purchase.js",import.meta.url),"utf8");
  assert.doesNotThrow(()=>new vm.Script(frontend,{filename:"gstr2b-purchase.js"}),"Purchase UI script must parse before the app boots");
- assert.match(frontend,/PURCHASE-GSTR2B/);
+ assert.match(frontend,/GSTR2B 18%/);
   assert.match(frontend,/data-post-one/);
   assert.match(frontend,/data-mark-credit/);
   assert.match(frontend,/data-create-supplier/);

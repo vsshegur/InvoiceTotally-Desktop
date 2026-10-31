@@ -145,9 +145,23 @@ export function compare(d, b, tol = 1) {
  * books: buildBooks() output, opts: { tol, period, usedElsewhere:Set(mid) }.
  * → { results: Map(docId → {status, mid, level, diffs, notes, method}), booksOnly: [book], byMid: Map }
  */
-export function reconcile(docs, books, { tol = 1, period = "", usedElsewhere = new Set() } = {}) {
+// GST journals the app posts from GSTR-2B (reverse-charge tax, ISD, import IGST) are numbered "G2BJ-…".
+export const isGstr2bJournal = (b) => b.kind === "jv" && /^G2BJ-/i.test(String(b.number || ""));
+
+export function reconcile(docs, books0, { tol = 1, period = "", usedElsewhere = new Set() } = {}) {
   const results = new Map();
   const used = new Set();
+  // Reverse charge: the purchase carries no GST (the supplier didn't charge it); the GST is in the
+  // app's RCM journal for the same supplier invoice. Together they are the 2B document.
+  const rcmJournals = new Map();
+  for (const b of books0) if (isGstr2bJournal(b)) rcmJournals.set(invoiceKey(b.num), b);
+  const books = books0.filter((b) => !isGstr2bJournal(b));
+  const withRcm = (d, b) => {
+    if (!d.rev || b.tax > 0.005) return b;
+    const j = rcmJournals.get(invoiceKey(d.num));
+    if (!j) return b;
+    return { ...b, igst: j.igst, cgst: j.cgst, sgst: j.sgst, cess: j.cess, tax: j.tax, val: d.val, rcmJournal: j.number };
+  };
   const byMid = new Map(books.map((b) => [b.id, b]));
   const byGstin = new Map();
   for (const b of books) {
@@ -159,7 +173,7 @@ export function reconcile(docs, books, { tol = 1, period = "", usedElsewhere = n
   const notesFor = (d, b, c) => {
     const n = [];
     if (d.itc === "N") n.push(`ITC not available as per 2B${d.rsn ? ` (${d.rsn})` : ""}`);
-    if (d.rev) n.push("Reverse charge");
+    if (d.rev) n.push(b?.rcmJournal ? `Reverse charge — GST booked by journal ${b.rcmJournal}` : "Reverse charge");
     if (d.sec.endsWith("A")) n.push(`Amended by the supplier${d.onum ? ` (was ${d.onum})` : ""}`);
     if (b && c) {
       if (c.level === 1) n.push(`Invoice no. written differently in Tally: ${b.num}`);
@@ -172,13 +186,14 @@ export function reconcile(docs, books, { tol = 1, period = "", usedElsewhere = n
   };
   const settle = (d, b, c, method) => {
     used.add(b.id);
+    if (b.rcmJournal) byMid.set(b.id, b);
     const status = c.level === 0 ? (c.ok ? "probable" : "mismatch") : c.ok ? "matched" : "mismatch";
     results.set(d.id, { status, mid: b.id, level: c.level, diffs: c.diffs, notes: notesFor(d, b, c), method });
   };
 
   // manual links stay as they are
   for (const d of active) {
-    if (d.method === "manual" && d.mid && byMid.has(d.mid)) settle(d, byMid.get(d.mid), compare(d, byMid.get(d.mid), tol), "manual");
+    if (d.method === "manual" && d.mid && byMid.has(d.mid)) { const b = withRcm(d, byMid.get(d.mid)); settle(d, b, compare(d, b, tol), "manual"); }
     else if (d.method === "manual" && d.status === "missing") { results.set(d.id, { status: "missing", mid: null, level: 0, diffs: [], notes: notesFor(d), method: "manual" }); }
   }
   const candidates = (d) => {
@@ -190,7 +205,8 @@ export function reconcile(docs, books, { tol = 1, period = "", usedElsewhere = n
   const pairs = [];
   for (const d of active) {
     if (results.has(d.id)) continue;
-    for (const b of candidates(d)) {
+    for (const b0 of candidates(d)) {
+      const b = withRcm(d, b0);
       const c = compare(d, b, tol);
       if (c.level > 0) pairs.push({ d, b, c });
       else if (c.ok && c.taxGap <= tol && c.dateGap <= 31 && totals(d) > 0) pairs.push({ d, b, c, amountOnly: true });

@@ -25,7 +25,7 @@ async function sample(section="ECO"){
    note:"",itc:"Y",rev:0,compare:1,status:"missing",val:893.48,txval:757.19,igst:136.29,cgst:0,sgst:0,cess:0});
  return {D,DB};
 }
-test("Flipkart supplier credit reverses PURCHASE-GSTR2B, ITC, and supplier as Tally Debit Note",()=>{
+test("Flipkart supplier credit reverses the 18% purchase ledger, ITC, and supplier as Tally Debit Note",()=>{
  const row={vtype:"Debit Note",date:"2026-07-31",period:"2026-07",supplier_gstin:FL,
    supplier_invoice:REF,party_ledger:"FLIPKART INTERNET PRIVATE LIMITED",
    voucher_number:"G2B-2607-EXAMPLE",taxable:757.19,invoice:893.48,igst:136.29,cgst:0,sgst:0,cess:0};
@@ -33,7 +33,7 @@ test("Flipkart supplier credit reverses PURCHASE-GSTR2B, ITC, and supplier as Ta
  assert.equal(TL.validatePosting(xml,CO),"Debit Note voucher");
  assert.match(xml,/VCHTYPE="Debit Note" ACTION="Create"/);
  assert.match(xml,/<LEDGERNAME>FLIPKART INTERNET PRIVATE LIMITED<\/LEDGERNAME><ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE><ISPARTYLEDGER>Yes<\/ISPARTYLEDGER><AMOUNT>-893.48<\/AMOUNT>/);
- assert.match(xml,/<LEDGERNAME>PURCHASE-GSTR2B<\/LEDGERNAME><ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE><AMOUNT>757.19<\/AMOUNT>/);
+ assert.match(xml,/<LEDGERNAME>GSTR2B 18%<\/LEDGERNAME><ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE><AMOUNT>757.19<\/AMOUNT>/);
  assert.match(xml,/<LEDGERNAME>Input IGST<\/LEDGERNAME><ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE><AMOUNT>136.29<\/AMOUNT>/);
  assert.doesNotMatch(xml,/STOCKITEMNAME|ACTION="Alter"|ACTION="Delete"/);
  const existing='<ENVELOPE><COLLECTION><VOUCHER><DATE>20260731</DATE><VOUCHERTYPENAME>Debit Note</VOUCHERTYPENAME>'+
@@ -42,13 +42,14 @@ test("Flipkart supplier credit reverses PURCHASE-GSTR2B, ITC, and supplier as Ta
  assert.equal(T.findExistingPurchase(row,T.parseExistingPurchases(existing)).number,"DN-9");
  assert.equal(T.findExistingPurchase({...row,vtype:"Purchase"},T.parseExistingPurchases(existing)),null);
 });
-test("Previously blocked ECO row can be explicitly classified, supplier safely created and posted",async()=>{
+test("ECO row is a Purchase by default, can be classified as a credit, supplier safely created and posted",async()=>{
  const {D,DB}=await sample();
  try {
   const b=await G.prepare(D,CID,{return_id:"july2b"});
   let v=await G.view(D,b.id);
   const row=v.rows[0];
-  assert.equal(row.status,"blocked");
+  assert.equal(row.status,"review","needs the supplier, otherwise postable");
+  assert.equal(row.vtype,"Purchase");
   await assert.rejects(()=>G.setVoucherType(D,b.id,{id:row.id,vtype:"Debit Note"}),/Confirm/);
   await G.setVoucherType(D,b.id,{id:row.id,vtype:"Debit Note",confirmCredit:true});
   v=await G.view(D,b.id);
@@ -65,7 +66,7 @@ test("Previously blocked ECO row can be explicitly classified, supplier safely c
   assert.equal(v.rows[0].party_ledger,"FLIPKART INTERNET PRIVATE LIMITED");
   assert.equal(v.rows[0].vtype,"Debit Note");
   await G.createPurchaseLedger(D,b.id);
-  const jp=await D.first("SELECT * FROM jobs WHERE kind='import_master' AND payload LIKE '%PURCHASE-GSTR2B%'");
+  const jp=await D.first("SELECT * FROM jobs WHERE kind='import_master' AND payload LIKE '%GSTR2B 18%%'");
   await P.jobResult(D,jp,true,ok);
   await G.saveMapping(D,b.id,{igst:"Input IGST"});
   assert.equal((await G.queue(D,b.id,{ids:[row.id],confirmed:true,confirmedDate:true})).queued,1);

@@ -9,28 +9,54 @@ const day=x=>{const n=Date.parse(iso(x)+"T00:00:00Z");return Number.isFinite(n)?
 export const normRef=identity;
 export const money2=money;
 
-/** Cheque numbers, bank sequence numbers and UTR/reference numbers that a narration spells out ("Chq : 100001, Seq : 1111..."). */
+/**
+ * Numbers that identify one bank transaction, as narrations spell them out:
+ *  chq / seq / utr — labelled ("Chq : 100001", "Seq : 1111…", "UTR: …")
+ *  ref — unlabelled transaction references: a UPI / IMPS reference (12 digits, "UPI/RAMESH/612345678901/…")
+ *        or a NEFT / RTGS UTR ("HDFCN52026102512345", "KKBKR52026…")
+ */
 export function bankIdentifiers(text){
-  const t=String(text||"").toUpperCase(),out={chq:new Set(),seq:new Set(),utr:new Set()};
+  const t=String(text||"").toUpperCase(),out={chq:new Set(),seq:new Set(),utr:new Set(),ref:new Set()};
   for(const m of t.matchAll(/\b(?:CHQ|CHEQUE|CHK)\.?\s*(?:NO\.?|NUMBER|#)?\s*[:.\-]?\s*0*(\d{4,})/g))out.chq.add(m[1]);
   for(const m of t.matchAll(/\bSEQ\.?\s*(?:NO\.?)?\s*[:.\-]?\s*(\d{6,})/g))out.seq.add(m[1]);
   for(const m of t.matchAll(/\b(?:UTR|RRN|REF(?:ERENCE)?)\.?\s*(?:NO\.?)?\s*[:.\-]?\s*([A-Z0-9]{8,})/g))out.utr.add(m[1]);
+  for(const m of t.matchAll(/(?<![A-Z0-9])([A-Z0-9]{12,22})(?![A-Z0-9])/g)){
+    const tok=m[1],digits=tok.replace(/\D/g,"").length;
+    if(/^\d{12}$/.test(tok)||(/^[A-Z]{4}[A-Z0-9]/.test(tok)&&digits>=9&&tok.length-digits<=6))out.ref.add(tok);
+  }
+  for(const v of out.utr)out.ref.add(v);
   return out;
+}
+const KIND=/\b(UPI|NEFT|RTGS|IMPS|NACH|ECS|ACH|MMT|INB|NETBANKING|CLG|CLEARING|CHQ|TRF|TRANSFER|POS|BIL|BILLPAY)\b/;
+const NOT_A_NAME=new Set(("UPI NEFT RTGS IMPS NACH ECS ACH MMT INB NETBANKING CLG CLEARING CHQ CHEQUE TRF TRANSFER POS BIL BILLPAY "+
+  "BANK LTD LIMITED PVT PRIVATE THE AND FOR FROM PAYMENT PAY PAID RECEIVED SENT CREDIT DEBIT REF NO NUMBER OUT INWARD OUTWARD "+
+  "P2A P2P P2M YES OKAXIS OKSBI OKHDFCBANK OKICICI YBL IBL AXL PAYTM YESBANK APL RAZORPAY BY TO VIA REMARKS NOTE MOBILE "+
+  "HDFC ICICI SBI KOTAK KKBK AXIS UTIB SBIN HDFC0 BRANCH SAVINGS CURRENT ACCOUNT").split(" "));
+/** Counterparty words of a bank-style narration ("UPI/RAMESH KUMAR/6123…/Payment" → RAMESH, KUMAR). */
+function nameWords(text){
+  const t=String(text||"").toUpperCase();
+  if(!KIND.test(t))return new Set();
+  return new Set((t.match(/[A-Z]{3,}/g)||[]).filter(w=>!NOT_A_NAME.has(w)&&!/@/.test(w)));
 }
 /**
  * Are a statement line and a Tally bank entry of the same amount and date the same entry?
- * "same": they share a cheque / sequence / UTR number. "different": both name such numbers and none agree
- * (two cheques of ₹11,340 on one day are two entries). "unknown": not enough to tell, so the caller keeps its safety hold.
+ * "same": they share a cheque / sequence / UTR / UPI reference number. "different": both carry such numbers and none
+ * agree (two cheques of ₹11,340 on one day; two UPI receipts of ₹500 from different people), or both are bank
+ * narrations naming different people. "unknown": not enough to tell, so the caller keeps its safety hold.
  */
 export function sameBankEntry(line,tally){
-  const a=bankIdentifiers((line.narration||"")+" "+(line.ref||"")),b=bankIdentifiers((tally.narration||"")+" "+(tally.reference||""));
+  const sa=(line.narration||"")+" "+(line.ref||""),sb=(tally.narration||"")+" "+(tally.reference||"");
+  const a=bankIdentifiers(sa),b=bankIdentifiers(sb);
   let conflict=false;
-  for(const k of ["chq","seq","utr"]){
+  for(const k of ["chq","seq","utr","ref"]){
     if(!a[k].size||!b[k].size)continue;
     if([...a[k]].some(v=>b[k].has(v)))return "same";
     conflict=true;
   }
-  return conflict?"different":"unknown";
+  if(conflict)return "different";
+  const na=nameWords(sa),nb=nameWords(sb);
+  if(na.size&&nb.size&&![...na].some(w=>nb.has(w)))return "different";
+  return "unknown";
 }
 
 export function bankVouchers(xml,bankLedger){

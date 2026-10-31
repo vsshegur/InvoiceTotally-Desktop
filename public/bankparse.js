@@ -7,14 +7,15 @@
 // rows add up is trusted; anything else goes to the AI reader.
 
 const KEYS = {
-  date: [/^(txn|tran|transaction|trans|post(ing)?|book(ing)?)?\s*\.?\s*date$/, /^date$/, /^(txn|tran|transaction)\s*dt\.?$/, /^dt\.?$/],
+  date: [/^(txn|tran|transaction|trans|post(ing|ed)?|book(ing)?)?\s*\.?\s*(posted\s*)?date$/, /^date$/, /^(txn|tran|transaction)\s*dt\.?$/, /^dt\.?$/,
+    /^date\s*(of\s*)?(txn|tran|transaction)$/, /^(txn|tran|transaction)\s*(posted|post|value)?\s*date\b/],
   vdate: [/^value\s*(date|dt\.?)$/],
-  narration: [/narration/, /description/, /particular/, /remark/, /details/, /^transaction$/, /^naration$/],
-  ref: [/ch(e)?q(ue)?\.?\s*(\/|&|and)?\s*(ref)?/, /ref(erence)?\.?\s*(no|number)?/, /instrument/, /^instr\.?(\s*no\.?)?$/, /utr/],
-  debit: [/withdrawal/, /^debits?(\s*amount)?(\s*\(.*\))?$/, /^dr\.?(\s*(amount|amt\.?))?$/, /paid\s*out/, /^debit\b/],
-  credit: [/deposits?/, /^credits?(\s*amount)?(\s*\(.*\))?$/, /^cr\.?(\s*(amount|amt\.?))?$/, /paid\s*in/, /^credit\b/],
-  amount: [/^(txn|transaction)?\s*amount(\s*\(.*\))?$/, /^amt\.?$/],
-  drcr: [/^(dr|cr)\s*\/\s*(cr|dr)$/, /^type$/, /^d\/c$/, /^c\/d$/, /^txn\s*type$/],
+  narration: [/narrat/, /description/, /particular/, /remark/, /details/, /^transaction$/, /^naration$/, /^beneficiary|^remitter/],
+  ref: [/ch(e)?q(ue)?\.?\s*(\/|&|and)?\s*(ref)?/, /ref(erence)?\.?\s*(no|number|id)?/, /instrument/, /^instr\.?(\s*no\.?)?$/, /utr/],
+  debit: [/withdrawal/, /^debits?(\s*amount|\s*amt\.?)?(\s*\(.*\))?$/, /^dr\.?(\s*(amount|amt\.?))?(\s*\(.*\))?$/, /paid\s*out/, /^debit\b/, /money\s*out/, /outflow/, /^amount\s*debited/],
+  credit: [/deposits?/, /^credits?(\s*amount|\s*amt\.?)?(\s*\(.*\))?$/, /^cr\.?(\s*(amount|amt\.?))?(\s*\(.*\))?$/, /paid\s*in/, /^credit\b/, /money\s*in/, /inflow/, /^amount\s*credited/],
+  amount: [/^(txn|tran|transaction)?\s*amount(\s*\(.*\))?$/, /^amt\.?$/, /^amount\s*(in\s*)?(rs|inr)\.?$/],
+  drcr: [/^(dr|cr)\s*\/\s*(cr|dr)$/, /^type$/, /^d\/c$/, /^c\/d$/, /^(txn|tran|transaction)\s*type$/, /^(dr|cr)\s*\/?\s*(cr|dr)?\s*indicator$/, /^debit\s*\/\s*credit$/, /^credit\s*\/\s*debit$/],
   balance: [/balance/, /^bal\.?(\s*(amount|amt\.?))?$/],
 };
 
@@ -69,23 +70,46 @@ function kindOf(cell) {
   for (const k of ["vdate", "balance", "date", "drcr", "debit", "credit", "amount", "ref", "narration"]) {
     if (KEYS[k].some((re) => re.test(t))) return k;
   }
+  // any other heading with "date" in it ("Txn Posted Date", "Date of Transaction") — after everything else
+  if (/\bdate\b/.test(t) && !/value/.test(t)) return "date";
   return null;
 }
 
-/** Finds the header row and which column holds what. */
+/**
+ * Finds the header row and which column holds what. A heading split over two rows ("Amount" above "Withdrawals |
+ * Deposits", or "Date" above a blank) is read as one: the lower row's word wins where it has one.
+ */
 export function findHeader(rows) {
   let best = null;
-  for (let i = 0; i < Math.min(rows.length, 80); i++) {
+  const mapOf = (cells) => {
     const map = {};
-    rows[i].forEach((c, j) => {
+    cells.forEach((c, j) => {
       const k = kindOf(c);
       if (k && map[k] == null) map[k] = j;
       else if (k === "date" && map.date != null && map.vdate == null) map.vdate = j;
     });
     if (map.date == null && map.vdate != null) { map.date = map.vdate; delete map.vdate; }
+    if (map.debit != null && map.credit != null) delete map.amount;
+    return map;
+  };
+  const scoreOf = (map) => {
     const money = (map.debit != null && map.credit != null) || map.amount != null;
-    const score = (map.date != null) * 3 + (map.narration != null) * 2 + money * 3 + (map.balance != null) * 2 + (map.ref != null);
-    if (map.date != null && money && score >= 8 && (!best || score > best.score)) best = { row: i, map, score };
+    // separate debit and credit columns say more than one "Amount" column (a two-row heading's lower row names them)
+    const score = (map.date != null) * 3 + (map.narration != null) * 2 + money * 3 + (map.balance != null) * 2 + (map.ref != null) +
+      (map.debit != null && map.credit != null) * 0.5;
+    return map.date != null && money && score >= 8 ? score : 0;
+  };
+  for (let i = 0; i < Math.min(rows.length, 80); i++) {
+    const row = rows[i] || [];
+    const map = mapOf(row), score = scoreOf(map);
+    if (score && (!best || score > best.score)) best = { row: i, map, score };
+    const next = rows[i + 1];
+    if (next && next.some((c) => kindOf(c)) && !next.some((c) => date(c))) {
+      const width = Math.max(row.length, next.length);
+      const merged = Array.from({ length: width }, (_, j) => (kindOf(next[j]) ? next[j] : row[j] ?? ""));
+      const m2 = mapOf(merged), s2 = scoreOf(m2);
+      if (s2 && (!best || s2 > best.score)) best = { row: i + 1, map: m2, score: s2 };
+    }
   }
   return best;
 }

@@ -223,8 +223,12 @@ export async function autoMatch(D, invId, onlyUnresolved = false) {
   const lineStmts = await Promise.all(inv.lines.map(async (l) => {
     const upd = {};
     if (voucherLedger && !(l.kind === "item" && l.stock_state === "resolved")) {
-      if (l.kind !== "ledger" || l.ledger_state !== "resolved")
-        return D.updateStmt("lines", l.id, { kind: "ledger", stock_item: null, stock_state: null, ledger: voucherLedger, ledger_state: "resolved" });
+      if (l.kind !== "ledger" || l.ledger_state !== "resolved") {
+        // a fee remembered on its own (Flipkart "Shipping fee" → its ledger) wins over "every line from this party"
+        const own = await M.aliasGet(D, comp.id, "party_charge", M.partyChargeKey(vt, party, l.description));
+        const ledger = own && (await D.first("SELECT 1 x FROM masters WHERE company_id=? AND kind='ledger' AND name=?", comp.id, own)) ? own : voucherLedger;
+        return D.updateStmt("lines", l.id, { kind: "ledger", stock_item: null, stock_state: null, ledger, ledger_state: "resolved" });
+      }
       return null;
     }
     if (l.kind === "item" && l.stock_state !== "resolved") {
@@ -238,6 +242,31 @@ export async function autoMatch(D, invId, onlyUnresolved = false) {
     return Object.keys(upd).length ? D.updateStmt("lines", l.id, upd) : null;
   }));
   await D.batch([...stmts, ...lineStmts.filter(Boolean)]);
+  if (party) await gstinFromLedger(D, invId);
+}
+
+/**
+ * The party's GSTIN from its Tally ledger, where you verified it. Without `force` only when the bill's GSTIN is missing
+ * or misread (fails the check digit); with `force` (the "Use GSTIN from Tally" button) always. The AI's reading is kept.
+ */
+export async function gstinFromLedger(D, invId, force = false) {
+  const inv = await D.first("SELECT id, company_id, party_ledger, data, tax_lines FROM invoices WHERE id=?", invId);
+  if (!inv?.party_ledger) return false;
+  const led = await D.first("SELECT gstin, state FROM masters WHERE company_id=? AND kind='ledger' AND name=?", inv.company_id, inv.party_ledger);
+  const g = cleanGstin(led?.gstin);
+  if (!g || !gstinValid(g)) return false;
+  const h = jload(inv.data, {});
+  const cur = cleanGstin(h.party_gstin);
+  if (cur === g || (!force && cur && gstinValid(cur))) return false;
+  h.party_gstin_read = h.party_gstin_read || h.party_gstin || "";
+  h.party_gstin = g;
+  h.party_state = led.state || stateName(g.slice(0, 2)) || h.party_state;
+  h.gstin_from_tally = true;
+  h.warnings = (h.warnings || []).filter((w) => !/^GSTIN .* fails the checksum/.test(w));
+  await D.update("invoices", invId, { data: JSON.stringify(h) });
+  await D.log(`GSTIN ${g} taken from Tally ledger ${inv.party_ledger}${h.party_gstin_read ? ` (bill read ${h.party_gstin_read})` : ""}`, { invoice_id: invId });
+  if (inv.tax_lines) await calculateTax(D, invId).catch(() => null); // IGST vs CGST+SGST may change with the state
+  return true;
 }
 
 export async function loadInvoice(D, invId) {
@@ -249,6 +278,7 @@ export async function loadInvoice(D, invId) {
   inv.page_ids = jload(inv.page_ids, []);
   inv.tax_lines = jload(inv.tax_lines, null);
   inv.lines = lines;
+  if (inv.party_ledger) inv.party_ledger_gstin = (await D.first("SELECT gstin FROM masters WHERE company_id=? AND kind='ledger' AND name=?", inv.company_id, inv.party_ledger))?.gstin || null;
   inv.date_review=invoiceDateReview(inv);
   inv.steps = stepStatus(inv);
   inv.computed_total = computedTotal(inv);
@@ -263,11 +293,18 @@ export async function loadBatchInvoices(D, batchId, statuses = null) {
   if (statuses) invs = invs.filter((i) => statuses.includes(i.status));
   const by = {};
   for (const l of lines) (by[l.invoice_id] ||= []).push(l);
+  const parties = [...new Set(invs.map((i) => i.party_ledger).filter(Boolean))];
+  const gstinOf = new Map();
+  for (let k = 0; k < parties.length; k += 400) {
+    const part = parties.slice(k, k + 400);
+    for (const r of await D.all(`SELECT name, gstin FROM masters WHERE company_id=? AND kind='ledger' AND name IN (${part.map(() => "?").join(",")})`, invs[0].company_id, ...part)) gstinOf.set(r.name, r.gstin);
+  }
   for (const inv of invs) {
     inv.data = jload(inv.data, {});
     inv.page_ids = jload(inv.page_ids, []);
     inv.tax_lines = jload(inv.tax_lines, null);
     inv.lines = by[inv.id] || [];
+    if (inv.party_ledger) inv.party_ledger_gstin = gstinOf.get(inv.party_ledger) || null;
     inv.date_review=invoiceDateReview(inv);
     inv.steps = stepStatus(inv);
     inv.computed_total = computedTotal(inv);
@@ -295,6 +332,9 @@ export function stepStatus(inv) {
   const dateOk = !!dateReview.date&&!dateReview.needs_review&&!dateReview.hard_mismatch;
   const blockers = [];
   if (!party) blockers.push("pick the party ledger");
+  const billGstin = cleanGstin(h.party_gstin), tallyGstin = cleanGstin(inv.party_ledger_gstin);
+  if (party && billGstin && tallyGstin && billGstin !== tallyGstin)
+    blockers.push(`GSTIN on the bill (${billGstin}) is not the Tally ledger's (${tallyGstin}) — use Tally's GSTIN, or pick the right party`);
   if (!stock) blockers.push("map every line to a stock item");
   if (!ledger) blockers.push("pick a ledger for every line");
   if (!tax) blockers.push(inv.tax_lines ? "map every tax head to a ledger" : "calculate tax");
@@ -394,10 +434,10 @@ export async function storeMastersChunk(D, cid, jobKind, rows, part) {
   for (const r of rows) {
     if (!r.name) continue;
     stmts.push(D.stmt("DELETE FROM masters WHERE company_id=? AND kind=? AND name=? AND pending=1", cid, kind, r.name));
-    stmts.push(D.stmt(`INSERT INTO masters (company_id, kind, name, uname, parent, primary_group, gstin, state, hsn, gst_rate, unit, pending)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,0)`, cid, kind, r.name, M.norm(r.name), r.parent || "",
+    stmts.push(D.stmt(`INSERT INTO masters (company_id, kind, name, uname, parent, primary_group, gstin, state, hsn, gst_rate, unit, reg_type, pending)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,0)`, cid, kind, r.name, M.norm(r.name), r.parent || "",
       kind === "ledger" ? T.resolvePrimary(groups, r.parent || "") : null, cleanGstin(r.gstin) || null, r.state || null,
-      r.hsn || null, r.gst_rate ?? null, r.unit || null));
+      r.hsn || null, r.gst_rate ?? null, r.unit || null, r.reg_type || null));
   }
   await D.batch(stmts);
 }
@@ -427,20 +467,27 @@ export async function createMaster(D, cid, kind, name, kw = {}) {
 
 export async function buildVoucherXml(D, inv) {
   const names = inv.lines.filter((l) => l.kind === "item").map((l) => l.stock_item);
-  const [[c0], unitRows, [led0]] = await D.many([
+  const ledgerNames = [...new Set(inv.lines.filter((l) => l.kind === "ledger").map((l) => l.ledger).filter(Boolean))];
+  const [[c0], unitRows, [led0], groupRows] = await D.many([
     ["SELECT * FROM companies WHERE id=?", inv.company_id],
     names.length ? [`SELECT name, unit FROM masters WHERE company_id=? AND kind='stock_item' AND name IN (${names.map(() => "?").join(",")})`, inv.company_id, ...names]
       : ["SELECT name, unit FROM masters WHERE 0"],
-    ["SELECT gstin, state FROM masters WHERE company_id=? AND kind='ledger' AND name=?", inv.company_id, inv.party_ledger]]);
+    ["SELECT gstin, state, reg_type FROM masters WHERE company_id=? AND kind='ledger' AND name=?", inv.company_id, inv.party_ledger],
+    ledgerNames.length ? [`SELECT name, primary_group FROM masters WHERE company_id=? AND kind='ledger' AND name IN (${ledgerNames.map(() => "?").join(",")})`, inv.company_id, ...ledgerNames]
+      : ["SELECT name, primary_group FROM masters WHERE 0"]]);
   const c = { ...c0, settings: jload(c0.settings, {}) };
   const units = Object.fromEntries(unitRows.map((r) => [r.name, r.unit]));
+  const groupOf = Object.fromEntries(groupRows.map((r) => [r.name, r.primary_group || ""]));
   const h = inv.data;
   const led = led0 || {};
-  const gstin = h.party_gstin || led.gstin || "";
-  const st = h.party_state || led.state || stateName(stateCode(gstin));
+  // Tally's ledger is the truth for the party's GST registration (you verify GSTINs there); the bill's reading is the fallback.
+  const gstin = cleanGstin(led.gstin) || cleanGstin(h.party_gstin) || "";
+  const st = led.state || stateName(stateCode(gstin)) || h.party_state;
   return T.voucher(c.tally_company || "", inv.voucher_type,
-    { number: h.number, date: h.date, party_gstin: gstin, party_state: st, place_of_supply: h.place_of_supply, narration: h.narration },
-    inv.party_ledger, inv.lines, inv.tax_lines || [], { sendDescriptions: c.settings.send_descriptions !== false, units });
+    { number: h.number, date: h.date, party_gstin: gstin, party_state: st, party_reg_type: led.reg_type || "", place_of_supply: h.place_of_supply, narration: h.narration },
+    inv.party_ledger, inv.lines, inv.tax_lines || [], { sendDescriptions: c.settings.send_descriptions !== false, units,
+      reg: T.companyRegistration({ gstin: c.gstin, settings: c.settings }),
+      supplyOf: (name) => (/purchase accounts|sales accounts/i.test(groupOf[name] || "") ? "Goods" : "Services") });
 }
 
 export async function pushInvoice(D, invId, force = false) {

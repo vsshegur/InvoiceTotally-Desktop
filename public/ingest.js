@@ -208,6 +208,20 @@ const Ingest = (() => {
     return out;
   }
 
+  /** Old Excel (.xls) — a real 97–2003 workbook, or the HTML / text files banks often name .xls (see xls.js). */
+  async function readXls(file) {
+    if (typeof XLS === "undefined") throw new Error(`${file.name}: old .xls format — open it in Excel and "Save As" .xlsx`);
+    return XLS.read(new Uint8Array(await file.arrayBuffer()), { csvRows, name: file.name.replace(/\.[^.]+$/, ""),
+      parseHtml: (t) => new DOMParser().parseFromString(t, "text/html") });
+  }
+  function sheetsText(sheets) {
+    const lines = [];
+    for (const s of sheets) {
+      if (sheets.length > 1) lines.push(`### Sheet ${s.name}`);
+      for (const cells of s.rows) if (cells.some((x) => x)) lines.push(cells.join("\t"));
+    }
+    return lines.join("\n");
+  }
   async function fromXlsx(file) {
     const sheets = await readWorkbook(file);
     const lines = [];
@@ -218,21 +232,27 @@ const Ingest = (() => {
     return lines.join("\n");
   }
 
-  async function fromCsv(file) {
-    const text = await file.text();
-    const delim = (text.split("\n")[0].match(/;/g) || []).length > (text.split("\n")[0].match(/,/g) || []).length ? ";" : ",";
+  /** CSV / tab-separated text → rows of cells (quotes, "" escapes, line breaks inside quotes, BOM). */
+  function csvRows(text) {
+    text = String(text || "").replace(/^\uFEFF/, "");
+    const first = text.split("\n").find((l) => l.trim()) || "";
+    const count = (c) => first.split(c).length - 1;
+    const delim = [",", ";", "\t", "|"].sort((a, b) => count(b) - count(a))[0];
     const rows = [];
     let row = [], cur = "", q = false;
     for (let i = 0; i < text.length; i++) {
       const ch = text[i];
       if (q) { if (ch === '"' && text[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') q = false; else cur += ch; }
-      else if (ch === '"') q = true;
+      else if (ch === '"' && !cur.trim()) q = true;
       else if (ch === delim) { row.push(cur); cur = ""; }
       else if (ch === "\n") { row.push(cur); rows.push(row); row = []; cur = ""; }
       else if (ch !== "\r") cur += ch;
     }
     if (cur || row.length) { row.push(cur); rows.push(row); }
-    return rows.filter((r) => r.some((x) => x.trim())).map((r) => r.map((x) => x.replace(/\t/g, " ").trim()).join("\t")).join("\n");
+    return rows.filter((r) => r.some((x) => x.trim())).map((r) => r.map((x) => x.trim()));
+  }
+  async function fromCsv(file) {
+    return csvRows(await file.text()).map((r) => r.map((x) => x.replace(/\t/g, " ")).join("\t")).join("\n");
   }
 
   const kind = (f) => {
@@ -248,6 +268,7 @@ const Ingest = (() => {
 
   return {
     kind,
+    csvRows,
     pdfBank,
     async image(file) { return (await fromImage(file))[0].image_b64; },
     async pages(file, onPage) {
@@ -269,15 +290,17 @@ const Ingest = (() => {
     },
     async workbook(file) {
       const k = kind(file);
-      if (k === "xls") throw new Error(`${file.name}: old .xls format — open it in Excel and "Save As" .xlsx`);
-      if (k !== "xlsx") throw new Error(`${file.name}: not an Excel (.xlsx) file`);
+      if (k === "xls") return readXls(file);
+      // a CSV download (Amazon's GST reports, for one) is a workbook with one sheet
+      if (k === "csv") return [{ name: file.name.replace(/\.[^.]+$/, ""), rows: csvRows(await file.text()) }];
+      if (k !== "xlsx") throw new Error(`${file.name}: not an Excel (.xlsx) or CSV file`);
       return readWorkbook(file);
     },
     async sheet(file) {
       const k = kind(file);
       if (k === "xlsx") return fromXlsx(file);
       if (k === "csv") return fromCsv(file);
-      if (k === "xls") throw new Error(`${file.name}: old .xls format — open it in Excel and "Save As" .xlsx`);
+      if (k === "xls") return sheetsText(await readXls(file));
       throw new Error(`${file.name}: not an Excel or CSV file`);
     },
   };

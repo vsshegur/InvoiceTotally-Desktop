@@ -46,6 +46,8 @@ export async function aliasGet(D, cid, kind, key) {
   const hit = rows.find((r) => r.kind === kind && r.key === key);
   return hit ? hit.value : null;
 }
+/** Key of a fee/charge line remembered for one party: "Purchase:FLIPKART INTERNET…:ad service fee". */
+export const partyChargeKey = (vt, party, description) => `${vt}:${party || ""}:${norm(description)}`;
 export function aliasSetStmt(D, cid, kind, key, value) {
   return D.stmt("INSERT OR REPLACE INTO aliases (company_id, kind, key, value) VALUES (?,?,?,?)", cid, kind, key, value);
 }
@@ -148,8 +150,12 @@ export async function stockCandidates(D, cid, line, limit = 8, query = null) {
 // ---------------------------------------------------------------- value ledgers
 export async function matchValueLedger(D, cid, vt, line, partyLedger, settings = {}) {
   if (line.kind === "ledger") {
-    const v = await aliasGet(D, cid, "charge", norm(line.description));
-    if (v && (await exists(D, cid, "ledger", v))) return { ledger: v, state: "resolved" };
+    // "Ad service fee" from Flipkart → its own ledger; the same words from another party may go elsewhere
+    for (const [kind, key] of [[partyLedger && "party_charge", partyChargeKey(vt, partyLedger, line.description)], ["charge", norm(line.description)]]) {
+      if (!kind) continue;
+      const v = await aliasGet(D, cid, kind, key);
+      if (v && (await exists(D, cid, "ledger", v))) return { ledger: v, state: "resolved" };
+    }
     const pool = await candidates(D, cid, "ledger", line.description,
       { groups: ["Indirect Expenses", "Direct Expenses", "Indirect Incomes", "Direct Incomes", accountGroup(vt)] });
     let best = null, bs = 0;
