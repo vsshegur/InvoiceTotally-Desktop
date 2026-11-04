@@ -494,3 +494,8 @@ From Tally's own reasons (GSTR-3B → Uncertain Transactions):
 - **"Party GSTIN/UIN and Company GSTIN/UIN cannot be same":** a sales bill shows your own GSTIN as the seller's, and it could be read as the customer's. Your GSTIN is never sent as the party's now, and the bill is held back before posting until the customer's GSTIN is on it or on the Tally ledger (or the Tally ledger has your GSTIN by mistake).
 - **"Mismatch between Expected Tax Amount and Modified Tax Amount":** before posting, a bill whose GST is not taxable value × rate is flagged, and a line whose ledger has a different GST rate in Tally.
 - GSTR-2B rate ledgers ("GSTR2B 5%") that carry their rate in Tally are no longer overridden either.
+
+## Version 4.6.5 — GST to the paisa as Tally works it out
+- **"Mismatch between Expected Tax Amount and Modified Tax Amount"** for a single paisa: a Flipkart fee bill prints IGST ₹2,060.21 on ₹11,445.69, Tally works out ₹2,060.22. GST is now posted as Tally works it out (taxable × rate, to the paisa) and the paisa goes to round off, so the bill total stays the same — as when the bill is keyed in Tally by hand. Bills already in review: press **Recalculate** on step 4 Tax.
+- GSTR-2B → Tally does the same when a round-off ledger is chosen (GST within ₹1 of GSTR-2B; the match with GSTR-2B allows ₹1).
+- The check before posting now flags any paisa difference between GST and taxable × rate.

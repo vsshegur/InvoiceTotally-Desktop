@@ -124,6 +124,17 @@ export function purchaseVoucherXml(company,row,mapping,opts={}){
     lines.push(ledger(name,-direction*p.taxable,false,"",gstLineXml(p.rate,rcm?"Services":"Goods",opts.ledgerRates?.[name])));total=round2(total-direction*p.taxable);
   }
   if(!rcm){
+    // GST as Tally works it out on each rate ledger (taxable × rate, to the paisa). GSTR-2B often has a paisa more
+    // or less (the supplier rounded line by line): that goes to round off, as when keyed in Tally by hand. Otherwise
+    // Tally lists the voucher under "Mismatch between Expected Tax Amount and Modified Tax Amount".
+    if(mapping.round){
+      for(const head of ["igst","cgst","sgst"]){
+        if(!(+r[head]))continue;
+        const exp=round2(parts.reduce((a,p)=>a+round2(p.taxable*p.rate/(head==="igst"?100:200)),0));
+        const gap=round2(exp-r[head]);
+        if(gap&&Math.abs(gap)<=1){r[head]=exp;r.round_off=round2(r.round_off-gap);}
+      }
+    }
     for(const head of HEADS){
       const tax=round2(r[head]);
       if(tax===0)continue;
