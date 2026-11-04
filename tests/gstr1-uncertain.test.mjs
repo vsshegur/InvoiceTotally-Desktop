@@ -59,5 +59,22 @@ test("before posting: own GSTIN as the party's, ledger rate, GST not taxable × 
   assert.doesNotMatch(msgs(gstIssues(inv({ data: { party_gstin: OUR } }), ctx({ "Sample Buyer": buyer }))), /your own company/);
   assert.match(msgs(gstIssues(inv(), ctx({ "Sample Buyer": buyer, "Sales 5%": { gst_rate: 12, primary_group: "Sales Accounts" } }))), /warn: Ledger “Sales 5%” is 12% GST in Tally, but this line is 5%/);
   const off = [{ head: "CGST", rate: 2.5, amount: 30, ledger: "Output CGST" }, { head: "SGST", rate: 2.5, amount: 30, ledger: "Output SGST" }];
-  assert.match(msgs(gstIssues(inv({ tax_lines: off }), ctx({ "Sample Buyer": buyer }))), /warn: GST on the bill \(₹60\.00\) is not the taxable value × GST rate \(₹50\.00\)/);
+  assert.match(msgs(gstIssues(inv({ tax_lines: off }), ctx({ "Sample Buyer": buyer }))), /warn: CGST is ₹30\.00; taxable value × rate is ₹25\.00/);
+  // a paisa is enough for Tally
+  const flip = [{ head: "IGST", rate: 18, amount: 2060.21, ledger: "Output CGST" }];
+  const fl = [{ kind: "ledger", ledger: "Fees", amount: 9865, gst_rate: 18 }, { kind: "ledger", ledger: "Fees", amount: 515.69, gst_rate: 18 }, { kind: "ledger", ledger: "Fees", amount: 1065, gst_rate: 18 }];
+  assert.match(msgs(gstIssues(inv({ lines: fl, tax_lines: flip }), ctx({ "Sample Buyer": buyer }))), /IGST is ₹2060\.21; taxable value × rate is ₹2060\.22/);
+  assert.doesNotMatch(msgs(gstIssues(inv({ lines: fl, tax_lines: [{ ...flip[0], amount: 2060.22 }] }), ctx({ "Sample Buyer": buyer }))), /Expected Tax/);
+});
+
+test("GSTR-2B: a paisa of GST rounding goes to round off, as Tally works the GST out", () => {
+  const row = { vtype: "Purchase", date: "2026-09-30", supplier_gstin: "29AACCF0683K1ZD", supplier_invoice: "FK-1", party_ledger: "Marketplace",
+    voucher_number: "G2B-2609-2", taxable: 11445.69, invoice: 13505.90, igst: 2060.21, cgst: 0, sgst: 0, cess: 0 };
+  const map = { igst: "Input IGST", round: "Round Off" };
+  const x = GT.purchaseVoucherXml("X", row, map);
+  assert.match(x, /<LEDGERNAME>Input IGST<\/LEDGERNAME><ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE><AMOUNT>-2060.22<\/AMOUNT>/);
+  assert.match(x, /<LEDGERNAME>Round Off<\/LEDGERNAME><ISDEEMEDPOSITIVE>No<\/ISDEEMEDPOSITIVE><AMOUNT>0.01<\/AMOUNT>/);
+  assert.match(x, /<ISPARTYLEDGER>Yes<\/ISPARTYLEDGER><AMOUNT>13505.90<\/AMOUNT>/, "the supplier is still owed the bill amount");
+  // no round-off ledger chosen: GSTR-2B's figure as it is
+  assert.match(GT.purchaseVoucherXml("X", row, { igst: "Input IGST" }), /<AMOUNT>-2060.21<\/AMOUNT>/);
 });

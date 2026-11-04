@@ -80,19 +80,28 @@ export function gstIssues(inv,ctx){
   const taxedT=(inv.tax_lines||[]).filter(t=>["IGST","CGST","SGST"].includes(t.head)&&+t.amount);
   const billRates=[...new Set(taxedT.map(t=>t.head==="IGST"?+t.rate:2*+t.rate).filter(r=>Number.isFinite(r)))];
   const billRate=billRates.length===1?billRates[0]:null;
-  let expected=0,known=true;
+  const byRate=new Map();let known=true;
   for(const l of inv.lines){
     if(!(+l.amount))continue;
     const s=l.kind==="item"?ctx.stock.get(l.stock_item):null;
     const lr=l.kind==="ledger"?ctx.ledgers.get(l.ledger):null;
     const rate=l.gst_rate!=null&&l.gst_rate!==""?+l.gst_rate:s?.gst_rate!=null?+s.gst_rate:lr?.gst_rate!=null?+lr.gst_rate:billRate;
     if(rate==null||!Number.isFinite(rate)){known=false;continue;}
-    expected+=(+l.amount)*rate/100;
+    byRate.set(rate,(byRate.get(rate)||0)+(+l.amount));
     if(lr&&!lr.pending&&lr.gst_rate!=null&&taxTotal>0&&Math.abs(+lr.gst_rate-rate)>0.01)
       warn(`Ledger “${l.ledger}” is ${+lr.gst_rate}% GST in Tally, but this line is ${rate}% — pick the ledger for ${rate}%, or Tally lists the bill under “GST Rate Details are overridden”.`);
   }
-  if(known&&taxTotal>0&&Math.abs(expected-taxTotal)>1)
-    warn(`GST on the bill (₹${taxTotal.toFixed(2)}) is not the taxable value × GST rate (₹${expected.toFixed(2)}). Check each line's rate and amount — Tally lists such a bill under “Mismatch between Expected Tax Amount and Modified Tax Amount”.`);
+  // what Tally expects per head: taxable at each rate × rate, to the paisa
+  if(known&&taxTotal>0){
+    const r2=x=>Math.round(x*100)/100,heads=sum.IGST?["IGST"]:["CGST","SGST"];
+    for(const hd of heads){
+      const exp=r2([...byRate].reduce((a,[rate,t])=>a+r2(t*rate/(hd==="IGST"?100:200)),0));
+      if(Math.abs(exp-sum[hd])>0.005){
+        warn(`${hd} is ₹${sum[hd].toFixed(2)}; taxable value × rate is ₹${exp.toFixed(2)}. Tally lists such a bill under “Mismatch between Expected Tax Amount and Modified Tax Amount” — press Recalculate on step 4 Tax (the paise go to round off), or check each line's rate and amount.`);
+        break;
+      }
+    }
+  }
   for(const l of inv.lines){
     if(l.kind!=="item"||!l.stock_item)continue;
     const s=ctx.stock.get(l.stock_item);

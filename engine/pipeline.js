@@ -383,11 +383,10 @@ export async function calculateTax(D, invId) {
     if (inter) heads.push({ head: "IGST", rate: +rate, amount: r2((taxable * rate) / 100) });
     else { const half = r2((taxable * rate) / 200); heads.push({ head: "CGST", rate: rate / 2, amount: half }, { head: "SGST", rate: rate / 2, amount: half }); }
   }
-  for (const head of ["CGST", "SGST", "IGST"]) {
-    const printed = h[head.toLowerCase()];
-    const rows = heads.filter((x) => x.head === head);
-    if (printed && rows.length === 1 && Math.abs(rows[0].amount - printed) <= 1) rows[0].amount = r2(printed);
-  }
+  // GST stays as Tally works it out (taxable × rate, to the paisa). A bill whose printed GST is a few paise off
+  // (the supplier rounded line by line) keeps its total through round off — the way it is keyed in Tally by hand.
+  // Taking the printed figure instead puts the bill in GSTR-3B "Mismatch between Expected Tax Amount and Modified
+  // Tax Amount".
   if (h.cess) heads.push({ head: "CESS", rate: null, amount: r2(h.cess) });
   const pre = r2(inv.lines.reduce((a, l) => a + (l.amount || 0), 0) + heads.reduce((a, x) => a + x.amount, 0));
   let ro = 0;

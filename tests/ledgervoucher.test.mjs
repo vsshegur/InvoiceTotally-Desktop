@@ -45,25 +45,28 @@ async function euphoria(D, lineRates) {
     await S.insert("lines", { id: "l" + i, invoice_id: "i1", idx: i, kind: "ledger", description: d, hsn: "39232100", qty: q, unit: "pc", rate: r, amount: a,
       gst_rate: lineRates[i], ledger: "PACKING MATERIAL @ 18%", ledger_state: "resolved" });
   await S.insert("masters", { company_id: "c1", kind: "ledger", name: "IGST", uname: "igst", parent: "Duties & Taxes", primary_group: "Duties & Taxes" });
+  await S.insert("masters", { company_id: "c1", kind: "ledger", name: "Round Off", uname: "round off", parent: "Indirect Expenses", primary_group: "Indirect Expenses" });
 }
 
 for (const [label, rates] of [["the ledger name (@ 18%)", [null, null]], ["the printed IGST", [null, null], "PACKING MATERIAL"]]) {
-  test(`Euphoria invoice: IGST ₹1,730.74 is posted even when the lines have no rate — from ${label}`, async () => {
+  test(`Euphoria invoice: IGST is posted even when the lines have no rate — from ${label}`, async () => {
     const D = db({ DB: makeD1() });
     await euphoria(D, rates);
     if (label.startsWith("the printed")) await D.run("UPDATE lines SET ledger='PACKING MATERIAL'");
     const heads = await P.calculateTax(D, "i1");
     const igst = heads.find((h) => h.head === "IGST");
     assert.ok(igst, "IGST line is there");
-    assert.deepEqual([igst.rate, igst.amount, igst.ledger], [18, 1730.74, "IGST"]);
-    assert.equal(heads.find((h) => h.head === "ROUND"), undefined, "11,346.00 needs no round off");
+    // the bill prints ₹1,730.74; Tally works out 9,615.26 × 18% = ₹1,730.75 and would flag ₹1,730.74 as a
+    // "Mismatch between Expected Tax Amount and Modified Tax Amount": Tally's figure, the paisa to round off
+    assert.deepEqual([igst.rate, igst.amount, igst.ledger], [18, 1730.75, "IGST"]);
+    assert.equal(heads.find((h) => h.head === "ROUND").amount, -0.01, "the bill total stays ₹11,346.00");
     const inv = await P.loadInvoice(D, "i1");
     assert.equal(inv.computed_total, 11346);
     assert.equal(inv.steps.total_ok, true);
     const xml = T.voucher("VIJAYALAXMI TEXTILES", "Purchase", inv.data, inv.party_ledger, inv.lines, heads);
     assert.match(xml, /<PERSISTEDVIEW>Accounting Voucher View<\/PERSISTEDVIEW>/);
     assert.match(xml, /<ISPARTYLEDGER>Yes<\/ISPARTYLEDGER><AMOUNT>11346.00<\/AMOUNT>/);
-    assert.match(xml, /<LEDGERNAME>IGST<\/LEDGERNAME><ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE><AMOUNT>-1730.74<\/AMOUNT>/);
+    assert.match(xml, /<LEDGERNAME>IGST<\/LEDGERNAME><ISDEEMEDPOSITIVE>Yes<\/ISDEEMEDPOSITIVE><AMOUNT>-1730.75<\/AMOUNT>/);
     assert.equal(Math.round(entries(xml).reduce((a, b) => a + b, 0) * 100) + 0, 0, "debits = credits");
   });
 }
@@ -83,4 +86,19 @@ test("a supplier remembered as 'post to this ledger, as a voucher' needs no Stoc
   assert.equal(inv.steps.stock, true, "nothing left for the Stock step");
   assert.equal(inv.steps.ledger, true);
   assert.ok(T.isLedgerOnly(inv.lines), "posts as a voucher");
+});
+
+test("Flipkart fee bill: GST as Tally works it out, the paisa printed differently goes to round off", async () => {
+  const D = db({ DB: makeD1() });
+  await D.insert("companies", { id: "c1", name: "SAMPLE CO", gstin: "27ACKPS3168H1Z6", state_code: "27", bridge_token: "t" + Math.random(), settings: "{}" });
+  await D.insert("batches", { id: "b1", company_id: "c1", name: "PURCHASE", voucher_type: "Purchase", stage: "review" });
+  await D.insert("invoices", { id: "i1", batch_id: "b1", company_id: "c1", status: "review", party_ledger: "Marketplace",
+    data: JSON.stringify({ number: "FK-2", date: "2026-09-30", party_gstin: "29AACCF0683K1ZD", igst: 2060.21, total: 13505.90 }) });
+  for (const [i, a] of [9865, 515.69, 1065].entries())
+    await D.insert("lines", { id: "l" + i, invoice_id: "i1", idx: i, kind: "ledger", description: "Fee " + i, amount: a, gst_rate: 18, ledger: "Marketplace Fees", ledger_state: "resolved" });
+  await D.insert("masters", { company_id: "c1", kind: "ledger", name: "Round Off", uname: "round off", parent: "Indirect Expenses", primary_group: "Indirect Expenses" });
+  const heads = await P.calculateTax(D, "i1");
+  assert.equal(heads.find((h) => h.head === "IGST").amount, 2060.22);
+  assert.equal(heads.find((h) => h.head === "ROUND").amount, -0.01);
+  assert.equal((await P.loadInvoice(D, "i1")).computed_total, 13505.9);
 });
