@@ -475,21 +475,25 @@ export async function buildVoucherXml(D, inv) {
     names.length ? [`SELECT name, unit FROM masters WHERE company_id=? AND kind='stock_item' AND name IN (${names.map(() => "?").join(",")})`, inv.company_id, ...names]
       : ["SELECT name, unit FROM masters WHERE 0"],
     ["SELECT gstin, state, reg_type FROM masters WHERE company_id=? AND kind='ledger' AND name=?", inv.company_id, inv.party_ledger],
-    ledgerNames.length ? [`SELECT name, primary_group FROM masters WHERE company_id=? AND kind='ledger' AND name IN (${ledgerNames.map(() => "?").join(",")})`, inv.company_id, ...ledgerNames]
-      : ["SELECT name, primary_group FROM masters WHERE 0"]]);
+    ledgerNames.length ? [`SELECT name, primary_group, gst_rate FROM masters WHERE company_id=? AND kind='ledger' AND name IN (${ledgerNames.map(() => "?").join(",")})`, inv.company_id, ...ledgerNames]
+      : ["SELECT name, primary_group, gst_rate FROM masters WHERE 0"]]);
   const c = { ...c0, settings: jload(c0.settings, {}) };
   const units = Object.fromEntries(unitRows.map((r) => [r.name, r.unit]));
   const groupOf = Object.fromEntries(groupRows.map((r) => [r.name, r.primary_group || ""]));
+  const rateOfLedger = Object.fromEntries(groupRows.map((r) => [r.name, r.gst_rate]));
   const h = inv.data;
   const led = led0 || {};
   // Tally's ledger is the truth for the party's GST registration (you verify GSTINs there); the bill's reading is the fallback.
-  const gstin = cleanGstin(led.gstin) || cleanGstin(h.party_gstin) || "";
+  // never our own GSTIN (a sales bill shows ours as the seller's)
+  const own = cleanGstin(c.gstin);
+  const gstin = [cleanGstin(led.gstin), cleanGstin(h.party_gstin)].find((g) => g && g !== own) || "";
   const st = led.state || stateName(stateCode(gstin)) || h.party_state;
   return T.voucher(c.tally_company || "", inv.voucher_type,
     { number: h.number, date: h.date, party_gstin: gstin, party_state: st, party_reg_type: led.reg_type || "", place_of_supply: h.place_of_supply, narration: h.narration },
     inv.party_ledger, inv.lines, inv.tax_lines || [], { sendDescriptions: c.settings.send_descriptions !== false, units,
       reg: T.companyRegistration({ gstin: c.gstin, settings: c.settings }),
-      supplyOf: (name) => (/purchase accounts|sales accounts/i.test(groupOf[name] || "") ? "Goods" : "Services") });
+      supplyOf: (name) => (/purchase accounts|sales accounts/i.test(groupOf[name] || "") ? "Goods" : "Services"),
+      rateOf: (name) => rateOfLedger[name] ?? null });
 }
 
 export async function pushInvoice(D, invId, force = false) {

@@ -14,7 +14,7 @@ export async function gstContext(D,cid,invs){
   for(const i of invs){
     if(i.party_ledger)ledgerNames.add(i.party_ledger);
     for(const t of i.tax_lines||[])if(t.ledger)ledgerNames.add(t.ledger);
-    for(const l of i.lines||[])if(l.kind==="item"&&l.stock_item)items.add(l.stock_item);
+    for(const l of i.lines||[]){if(l.kind==="item"&&l.stock_item)items.add(l.stock_item);if(l.kind==="ledger"&&l.ledger)ledgerNames.add(l.ledger);}
   }
   const pick=async(kind,names,cols)=>{
     const out=new Map(),list=[...names];
@@ -25,7 +25,7 @@ export async function gstContext(D,cid,invs){
     return out;
   };
   return {company:{gstin:cleanGstin(c.gstin),state_code:c.state_code||(c.gstin?String(c.gstin).slice(0,2):"")},
-    ledgers:await pick("ledger",ledgerNames,"name,gstin,state,reg_type,parent,primary_group,pending"),
+    ledgers:await pick("ledger",ledgerNames,"name,gstin,state,reg_type,parent,primary_group,gst_rate,pending"),
     stock:await pick("stock_item",items,"name,hsn,gst_rate,pending")};
 }
 
@@ -38,7 +38,17 @@ export function gstIssues(inv,ctx){
   const purchase=!/^sale/i.test(inv.voucher_type||"");
   if(!ctx.company.gstin)warn("Your company's GSTIN is not set in Settings — Tally can't tell which GST registration this voucher belongs to.");
   const led=inv.party_ledger?ctx.ledgers.get(inv.party_ledger):null;
-  const tallyG=cleanGstin(led?.gstin),billG=cleanGstin(h.party_gstin);
+  const own=ctx.company.gstin;
+  let tallyG=cleanGstin(led?.gstin),billG=cleanGstin(h.party_gstin);
+  // "Party GSTIN/UIN and Company GSTIN/UIN cannot be same"
+  if(own&&tallyG===own){
+    err(`Tally ledger “${inv.party_ledger}” has your own company's GSTIN (${own}). Put ${purchase?"the supplier's":"the customer's"} GSTIN on that ledger in Tally, then Import masters.`);
+    tallyG="";
+  }
+  if(own&&billG===own){
+    if(!tallyG)err(`The GSTIN read from the bill (${own}) is your own company's — ${purchase?"the supplier's":"the customer's"} GSTIN is needed. Enter it on the bill or on the Tally ledger “${inv.party_ledger||"…"}”; clear it if the party is unregistered.`);
+    billG="";
+  }
   const gstin=tallyG||billG;
   if(led&&!led.pending&&PARTY_GROUP.test(led.primary_group||led.parent||"")){
     if(!tallyG&&billG&&gstinValid(billG))
@@ -66,6 +76,23 @@ export function gstIssues(inv,ctx){
     const named=HEAD_OF(t.ledger);
     if(named&&t.head!=="CESS"&&named!==t.head)err(`${t.head} is going to “${t.ledger}”, which looks like a ${named} ledger.`);
   }
+  // the rate on each ledger line against the ledger's own rate in Tally, and GST = taxable × rate
+  const taxedT=(inv.tax_lines||[]).filter(t=>["IGST","CGST","SGST"].includes(t.head)&&+t.amount);
+  const billRates=[...new Set(taxedT.map(t=>t.head==="IGST"?+t.rate:2*+t.rate).filter(r=>Number.isFinite(r)))];
+  const billRate=billRates.length===1?billRates[0]:null;
+  let expected=0,known=true;
+  for(const l of inv.lines){
+    if(!(+l.amount))continue;
+    const s=l.kind==="item"?ctx.stock.get(l.stock_item):null;
+    const lr=l.kind==="ledger"?ctx.ledgers.get(l.ledger):null;
+    const rate=l.gst_rate!=null&&l.gst_rate!==""?+l.gst_rate:s?.gst_rate!=null?+s.gst_rate:lr?.gst_rate!=null?+lr.gst_rate:billRate;
+    if(rate==null||!Number.isFinite(rate)){known=false;continue;}
+    expected+=(+l.amount)*rate/100;
+    if(lr&&!lr.pending&&lr.gst_rate!=null&&taxTotal>0&&Math.abs(+lr.gst_rate-rate)>0.01)
+      warn(`Ledger “${l.ledger}” is ${+lr.gst_rate}% GST in Tally, but this line is ${rate}% — pick the ledger for ${rate}%, or Tally lists the bill under “GST Rate Details are overridden”.`);
+  }
+  if(known&&taxTotal>0&&Math.abs(expected-taxTotal)>1)
+    warn(`GST on the bill (₹${taxTotal.toFixed(2)}) is not the taxable value × GST rate (₹${expected.toFixed(2)}). Check each line's rate and amount — Tally lists such a bill under “Mismatch between Expected Tax Amount and Modified Tax Amount”.`);
   for(const l of inv.lines){
     if(l.kind!=="item"||!l.stock_item)continue;
     const s=ctx.stock.get(l.stock_item);
