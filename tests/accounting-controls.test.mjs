@@ -302,11 +302,32 @@ test("pre-post invoice guard blocks actual Tally duplicates but not same amount 
     '<PARTYLEDGERNAME>SUPPLIER A</PARTYLEDGERNAME></VOUCHER></COLLECTION></ENVELOPE>';
   const job={payload:xml};
   assert.equal((await DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async request=>{
-    assert.match(request,/ITECommerceExisting/);
+    assert.match(request,/ITExistingInvoices/);
+    assert.match(request,/\$\$IsPurchase:\$VoucherTypeName/,"only vouchers of the posted kind");
     assert.match(request,/<SVFROMDATE TYPE="Date">20260727<\/SVFROMDATE><SVTODATE TYPE="Date">20261025</,"45 days either side");return reply;
   })).duplicate,true);
   assert.equal((await DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async()=>
     "<ENVELOPE><COLLECTION></COLLECTION></ENVELOPE>")).duplicate,false);
+  // Tally's reply has no COLLECTION wrapper when nothing is found: still an answer
+  assert.equal((await DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async()=>
+    "<ENVELOPE><HEADER><VERSION>1</VERSION><STATUS>1</STATUS></HEADER><BODY><DESC></DESC><DATA></DATA></BODY></ENVELOPE>")).duplicate,false);
+  // the 90-day list unusable: the bill's own date is checked the earlier way
+  let asked=[];
+  assert.equal((await DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async request=>{
+    asked.push(/ITExistingInvoices/.test(request)?"window":"day");
+    return asked.length===1?"<RESPONSE>Unknown Request</RESPONSE>":reply;
+  })).duplicate,true);
+  assert.deepEqual(asked,["window","day"]);
+  // neither answer usable: stopped, saying what Tally sent
   await assert.rejects(DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async()=>
-    "<HTML>connection error</HTML>"),/could not confirm/);
+    "<HTML>connection error</HTML>"),/could not confirm.*Tally replied: connection error/);
+  await assert.rejects(DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async()=>""),/empty reply/);
+  // Tally not open: waits (not a failure)
+  const down=Object.assign(new Error("down"),{down:true});
+  await assert.rejects(DUP.guardExternalDuplicate(job,"VIPUL TEXTILES",async()=>{throw down;}),e=>e===down);
+  // not past today
+  const soon=new Date(Date.now()+5.5*36e5).toISOString().slice(0,10);
+  const today=xml.replace("20260910",soon.replace(/-/g,""));
+  await DUP.guardExternalDuplicate({payload:today},"VIPUL TEXTILES",async request=>{
+    assert.match(request,new RegExp('<SVTODATE TYPE="Date">'+soon.replace(/-/g,"")+"<"));return reply;});
 });

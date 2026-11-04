@@ -268,6 +268,10 @@ class H(BaseHTTPRequestHandler):
             frm = re.search(r'<SVFROMDATE TYPE="Date">(\d+)', xml).group(1)
             to = re.search(r'<SVTODATE TYPE="Date">(\d+)', xml).group(1)
             out = purchases_gst(frm, to)
+        elif "ITExistingInvoices" in xml:
+            m = re.search(r'<SVFROMDATE TYPE="Date">(\d+)', xml)
+            t = re.search(r'<SVTODATE TYPE="Date">(\d+)', xml)
+            out = ecommerce_entries(m.group(1), t.group(1))
         elif "ITECommerceExisting" in xml:
             m = re.search(r'<SVFROMDATE TYPE="Date">(\d+)', xml)
             t = re.search(r'<SVTODATE TYPE="Date">(\d+)', xml)
