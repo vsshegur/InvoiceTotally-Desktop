@@ -483,3 +483,8 @@ From Tally's own reasons (GSTR-3B → Uncertain Transactions):
 - **Tally is read again by itself** when a GSTR-2B → Tally posting run finishes, so the match shows what was just posted.
 - **"Not this voucher"** now rules out that voucher only; the invoice still matches its own voucher once it is in Tally. Before, it meant "never match" — an invoice later posted from GSTR-2B kept showing "Not in Tally". Invoices marked that way earlier now match a voucher with the same invoice no.
 - The match no longer pairs an invoice with last year's bill of the same number.
+
+## Version 4.6.3 — invoices: "Tally could not confirm existing vouchers"
+- Before posting a bill, Tally is searched 45 days either side for the same bill (since 4.6.0). On some Tally data that list came back in a form the app refused, and every bill failed with "Tally existing-invoice verification failed: Tally could not confirm existing vouchers". The search now asks only for vouchers of the same kind (Purchase, Sales, …) with just the fields it needs, in the same form as the GSTR-2B purchase read, and never past today.
+- If Tally still can't give that list, the bill's own date is checked the way earlier versions did, and posting goes ahead when that answers. Only when Tally can't answer either is posting stopped — and the message now says what Tally sent.
+- Bills that failed this way: select them on Sync and press **Push to Tally** again.
