@@ -20,7 +20,7 @@ const companyVar = (c) => (c ? `<SVCURRENTCOMPANY>${esc(c)}</SVCURRENTCOMPANY>` 
 export const EXPORTS = {
   export_groups: ["Group", ["Name", "Parent"]],
   export_units: ["Unit", ["Name", "IsSimpleUnit"]],
-  export_ledgers: ["Ledger", ["Name", "Parent", "PartyGSTIN", "LedStateName", "StateName", "GSTRegistrationType", "LedGSTRegDetails", "TaxType", "GSTDutyHead", "GSTApplicable", "GSTTypeOfSupply"]],
+  export_ledgers: ["Ledger", ["Name", "Parent", "PartyGSTIN", "LedStateName", "StateName", "GSTRegistrationType", "LedGSTRegDetails", "TaxType", "GSTDutyHead", "GSTApplicable", "GSTTypeOfSupply", "GSTDetails"]],
   export_stock: ["StockItem", ["Name", "Parent", "BaseUnits", "GSTDetails", "HSNDetails"]],
 };
 
@@ -147,7 +147,9 @@ export function stateOf(v) {
  * state; sales: the customer's state.
  */
 export function gstHeader({ vtype, party = {}, reg = null, pos = "" }) {
-  const gstin = String(party.gstin || "").toUpperCase().trim();
+  let gstin = String(party.gstin || "").toUpperCase().trim();
+  // our own GSTIN is never the party's ("Party GSTIN/UIN and Company GSTIN/UIN cannot be same")
+  if (gstin && reg?.gstin && gstin === String(reg.gstin).toUpperCase().trim()) gstin = "";
   const pstate = stateOf(party.state) || STATE_NAMES[gstin.slice(0, 2)] || "";
   const regType = /composition/i.test(party.regType || "") ? "Composition" : gstin ? "Regular" : "Unregistered/Consumer";
   const purchase = /^(purchase|debit note|journal)$/i.test(vtype || "") || /purchase/i.test(vtype || "");
@@ -166,8 +168,11 @@ export function companyRegXml(reg) {
  * GST treatment written on a ledger line (fees, freight, a "GSTR2B 18%" purchase ledger…), so Tally knows it is taxable at
  * this rate even when the ledger itself has no GST details ("Taxability Type is invalid or not specified").
  */
-export function gstLineXml(rate, supply = "Services") {
+export function gstLineXml(rate, supply = "Services", ledgerRate = null) {
   if (rate == null || !Number.isFinite(+rate)) return "";
+  // the ledger already carries this rate in Tally: nothing to override (an override is itself an "uncertain
+  // transaction" in GSTR-1 / GSTR-3B: "GST Rate Details are overridden in transaction")
+  if (ledgerRate != null && Number.isFinite(+ledgerRate) && Math.abs(+ledgerRate - +rate) < 0.01) return "";
   const r = +rate;
   const heads = [["CGST", r / 2], ["SGST/UTGST", r / 2], ["IGST", r], ["Cess", 0]].map(([h, v]) =>
     `<RATEDETAILS.LIST><GSTRATEDUTYHEAD>${h}</GSTRATEDUTYHEAD><GSTRATEVALUATIONTYPE>Based on Value</GSTRATEVALUATIONTYPE><GSTRATE>${qtyStr(v)}</GSTRATE></RATEDETAILS.LIST>`).join("");
@@ -176,7 +181,7 @@ export function gstLineXml(rate, supply = "Services") {
 
 export const isLedgerOnly = (lines) => lines.length > 0 && lines.every((l) => l.kind === "ledger");
 
-export function voucher(company, vtype, inv, partyLedger, lines, taxLines, { sendDescriptions = true, units = {}, reg = null, supplyOf = () => "Services" } = {}) {
+export function voucher(company, vtype, inv, partyLedger, lines, taxLines, { sendDescriptions = true, units = {}, reg = null, supplyOf = () => "Services", rateOf = () => null } = {}) {
   vtype = /^sale/i.test(vtype) ? "Sales" : "Purchase";
   const side = vtype === "Purchase" ? -1 : 1;
   const total = voucherTotal(lines, taxLines);
@@ -208,7 +213,7 @@ export function voucher(company, vtype, inv, partyLedger, lines, taxLines, { sen
     if (l.kind === "ledger") {
       const rate = l.gst_rate != null && l.gst_rate !== "" ? +l.gst_rate : billRate;
       x += `<LEDGERENTRIES.LIST><LEDGERNAME>${esc(l.ledger)}</LEDGERNAME><ISDEEMEDPOSITIVE>${deemed(a)}</ISDEEMEDPOSITIVE><AMOUNT>${amt(a)}</AMOUNT>` +
-        `${gstLineXml(rate, supplyOf(l.ledger))}</LEDGERENTRIES.LIST>`;
+        `${gstLineXml(rate, supplyOf(l.ledger), rateOf(l.ledger))}</LEDGERENTRIES.LIST>`;
       continue;
     }
     const unit = units[l.stock_item] || l.unit || "";

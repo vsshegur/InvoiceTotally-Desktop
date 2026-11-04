@@ -121,7 +121,7 @@ export function purchaseVoucherXml(company,row,mapping,opts={}){
   for(const p of parts){
     const name=rateLedgerName(p.rate,rcm);
     if(name.toLowerCase()===party.toLowerCase())throw new Error("Supplier ledger cannot be a purchase ledger");
-    lines.push(ledger(name,-direction*p.taxable,false,"",gstLineXml(p.rate,rcm?"Services":"Goods")));total=round2(total-direction*p.taxable);
+    lines.push(ledger(name,-direction*p.taxable,false,"",gstLineXml(p.rate,rcm?"Services":"Goods",opts.ledgerRates?.[name])));total=round2(total-direction*p.taxable);
   }
   if(!rcm){
     for(const head of HEADS){

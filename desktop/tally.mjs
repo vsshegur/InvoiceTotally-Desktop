@@ -234,7 +234,10 @@ export function validatePosting(xml, tallyCompany) {
 // ------------------------------------------------------------------ replies → rows
 const MASTER_TAG = { export_groups: "GROUP", export_ledgers: "LEDGER", export_stock: "STOCKITEM", export_units: "UNIT" };
 
-function gstRate(n) {
+function gstRate(n0) {
+  // several GST details (rate changed over the years): the latest one counts
+  let n = n0, latest = "";
+  walk(n0, (x) => { if (x.name === "GSTDETAILS.LIST") { const f = child(x, "APPLICABLEFROM"); if (f >= latest) { latest = f; n = x; } return false; } });
   let found = null, best = null;
   walk(n, (x) => {
     if (found != null) return false;
@@ -260,7 +263,9 @@ export function masterRows(kind, reply) {
     const row = { name, parent: first(n, "PARENT") };
     if (tag === "LEDGER") { row.gstin = first(n, "PARTYGSTIN", "GSTIN"); row.state = first(n, "LEDSTATENAME", "STATENAME", "STATE"); row.reg_type = first(n, "GSTREGISTRATIONTYPE");
       const opt = (t) => { const v = first(n, t); if (v) row[{ TAXTYPE: "tax_type", GSTDUTYHEAD: "duty_head", GSTAPPLICABLE: "gst_app" }[t]] = v; };
-      opt("TAXTYPE"); opt("GSTDUTYHEAD"); opt("GSTAPPLICABLE"); }
+      opt("TAXTYPE"); opt("GSTDUTYHEAD"); opt("GSTAPPLICABLE");
+      // the GST rate set on the ledger itself (Sales 5%, GSTR2B 18%…), when it has one
+      const r = gstRate(n); if (r != null) row.gst_rate = r; }
     if (tag === "STOCKITEM") { row.hsn = first(n, "HSNCODE", "HSN"); row.gst_rate = gstRate(n); row.unit = first(n, "BASEUNITS"); }
     out.push(row);
     return false;

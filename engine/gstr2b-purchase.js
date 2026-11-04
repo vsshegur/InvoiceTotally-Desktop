@@ -428,7 +428,9 @@ export async function queue(D,id,input){
   if(rows.length!==ids.length)throw new Purchase2bError("Some selected invoices are not in this batch");
   rows.sort((a,b)=>a.seq-b.seq);
   await assertLedgersReady(D,b.company_id,rows);
-  const opts={companyState:companyState(c),reg:companyRegistration({gstin:c.gstin,settings:jload(c.settings,{})})};
+  const opts={companyState:companyState(c),reg:companyRegistration({gstin:c.gstin,settings:jload(c.settings,{})}),
+    // rate ledgers that carry their rate in Tally need no override on the voucher
+    ledgerRates:Object.fromEntries((await D.all("SELECT name,gst_rate FROM masters WHERE company_id=? AND kind='ledger' AND gst_rate IS NOT NULL AND name LIKE 'GSTR2B %'",b.company_id)).map(x=>[x.name,x.gst_rate]))};
   const regTypes=new Map((await D.all("SELECT name,reg_type FROM masters WHERE company_id=? AND kind='ledger' AND reg_type IS NOT NULL",b.company_id)).map(x=>[x.name,x.reg_type]));
   const journals=new Map((await D.all("SELECT source_key,voucher_number FROM gstr2b_purchase_vouchers WHERE batch_id=? AND jkind='rcm'",id)).map(x=>[x.source_key,x.voucher_number]));
   const stmts=[],skipped=[];
